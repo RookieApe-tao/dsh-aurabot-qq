@@ -191,10 +191,13 @@ test('行为状态落盘位置一致：status 的今日次数来自 behavior.jso
 })
 
 // 面板前端是单文件 client/client.js（数据目录里没有构建产物），源码契约直接断言，防合并时把卡片丢了
-test('面板源码契约：桌宠页有「行为动作」与「被收走的图标」两张卡，9 个动作一个不落', async () => {
+test('面板源码契约：桌宠页有「行为大脑」与「行为记录」卡（重排后含原两卡内容），9 个动作一个不落', async () => {
   const src = readFileSync(new URL('../client/client.js', import.meta.url), 'utf8')
-  assert.ok(src.includes("title: '行为动作'"), '缺「行为动作」卡')
-  assert.ok(src.includes("title: '被收走的图标'"), '缺「被收走的图标」卡')
+  // 2026-10-30 面板重排：「行为动作」并入「行为大脑」卡，「被收走的图标」并入「行为记录」卡（分区标题仍在）
+  assert.ok(src.includes("title: '行为大脑'"), '缺「行为大脑」卡')
+  assert.ok(src.includes("'行为与安全'"), '缺「行为与安全」分区')
+  assert.ok(src.includes("title: '行为记录'"), '缺「行为记录」卡')
+  assert.ok(src.includes("'被收走的图标'"), '缺「被收走的图标」分区')
   assert.ok(src.includes('隔离区空空的，桌宠很乖'), '缺隔离区空态文案')
   assert.ok(src.includes("post('/panel/pet/behavior'"), '「试一下」要走面板代理，不直连模块路由')
   assert.ok(src.includes("post('/panel/pet/behavior/actions'"), '每动作 AI 开关要走面板代理')
@@ -236,7 +239,8 @@ test('关窗记录：/playback 带 detail → 面板状态里能看到窗口名/
 
 test('面板源码契约（第三批）：有「关窗记录」卡与道歉按钮；三个窗口动作不再写「还没实现」', async () => {
   const src = readFileSync(new URL('../client/client.js', import.meta.url), 'utf8')
-  assert.ok(src.includes("title: '关窗记录'"), '缺「关窗记录」卡')
+  // 2026-10-30 面板重排：「关窗记录」从独立卡改为「行为记录」卡里的分区标题
+  assert.ok(src.includes("'关窗记录'"), '缺「关窗记录」分区')
   assert.ok(src.includes("post('/panel/pet/behavior/apologize'"), '道歉按钮要走面板代理')
   assert.ok(src.includes('还没关过任何窗口'), '缺关窗记录空态文案')
   assert.ok(!src.includes('第三批，还没实现'), '第三批已实现，不该再有「还没实现」的硬编码文案')
@@ -280,9 +284,38 @@ test('行为与安全：开关关着时 /behavior 下发关窗直接 400（物�
 
 test('面板源码契约（行为与安全）：有卡片、走 /panel/pet/config、开关文案写清高危', async () => {
   const src = readFileSync(new URL('../client/client.js', import.meta.url), 'utf8')
-  assert.ok(src.includes("title: '行为与安全'"), '缺「行为与安全」卡')
+  // 2026-10-30 面板重排：「行为与安全」从独立卡改为「行为大脑」卡里的分区标题，断言改认子串
+  assert.ok(src.includes("'行为与安全'"), '缺「行为与安全」分区')
   assert.ok(src.includes('behaviorCloseWindowEnabled'), '缺关窗物理闸的开关')
   assert.ok(src.includes('behaviorWindowWhitelist'), '缺白名单输入')
   assert.ok(src.includes('saveBehCfg'), '开关要走 saveBehCfg（存完清草稿 + 重拉状态）')
   assert.ok(src.includes('物理闸：AI 与「试一下」都绕不过去'), '高危提示不能省')
+})
+
+// ---------- 聊天联动：主人聊天时她可能顺带做个小动作（独立开关/范围/冷却/上限） ----------
+
+test('聊天联动：/panel/pet/config 能写聊天联动键，数字按范围钳制，类型不对的不收', async () => {
+  const r = await call('/panel/pet/config', {
+    chatBehaviorEnabled: true,
+    chatBehaviorCooldownMinutes: 99999, // 钳到 1440
+    chatBehaviorMaxPerDay: -5,          // 钳到 0（= 不动）
+    chatBehaviorWhitelist: 'private:12345\ngroup:67890',
+    chatBehaviorFoo: 1, // 不存在的键 → 无视
+  })
+  assert.equal(r.ok, true, JSON.stringify(r))
+  const b = (await call('/panel/pet/behavior/status')).behavior
+  assert.equal(b.chatBehaviorEnabled, true)
+  assert.equal(b.chatBehaviorCooldownMinutes, 1440, '冷却钳到 1440')
+  assert.equal(b.chatBehaviorMaxPerDay, 0, '每日上限钳到 0')
+  assert.equal(b.chatBehaviorWhitelistText, 'private:12345\ngroup:67890', '范围白名单原样存（含换行）')
+  // 复原
+  await call('/panel/pet/config', { chatBehaviorEnabled: false, chatBehaviorCooldownMinutes: 5, chatBehaviorMaxPerDay: 20, chatBehaviorWhitelist: '' })
+})
+
+test('面板源码契约（聊天联动）：有卡、开关走 /panel/pet/config、写清「只读旁观不影响聊天」', async () => {
+  const src = readFileSync(new URL('../client/client.js', import.meta.url), 'utf8')
+  assert.ok(src.includes("title: '聊天联动'"), '缺「聊天联动」卡')
+  assert.ok(src.includes('chatBehaviorEnabled'), '缺聊天联动开关')
+  assert.ok(src.includes('chatBehaviorWhitelist'), '缺生效范围输入')
+  assert.ok(src.includes('不影响'), '要写清「不影响聊天」的承诺')
 })

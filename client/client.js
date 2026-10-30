@@ -1897,8 +1897,8 @@ h(Card, { title: '群里什么时候必回', desc: '被 @、有人引用回复�
                   h(Btn, { small: true, disabled: busy === 'pk', onClick: () => act('pk', '/panel/pet/fetch-pack', '素材包已就位') }, busy === 'pk' ? '下载中…' : okPack ? '重新下载素材包' : '下载素材包'),
                   h('span', { className: 'ab-muted ab-small' }, '落位到 modules-data/pet/packs/，下完自动生效')))
             })()),
-        // ---------- 行为动作（面板测试通道）：状态行 + 逐动作「试一下」/ AI 开关 + 行内最近回执 ----------
-        h(Card, { title: '行为动作', desc: '她的「行为大脑」每隔一会儿自己挑一个动作演：追鼠标、叼鼠标、叼图标、推窗口……这里可以逐个「试一下」（绕过专注模式与安静时段，立刻下发），也可以把某个动作从 AI 的动作表里拿掉——「试一下」按钮不受影响。桌宠没在跑时点按钮只是下发排队，等她跑起来才演。右边「最近回执」是客户端演完或拒演回来的结果。AI 每次决策都在工作区里单独开一条「行为大脑」会话，能当场看到她怎么想的。' },
+        // ---------- 行为大脑（合并卡：上半是动作表与状态，下半「行为与安全」是模块级开关）----------
+        h(Card, { title: '行为大脑', desc: '她的「行为大脑」每隔一会儿自己挑一个动作演：追鼠标、叼鼠标、叼图标、推窗口……上半是动作表（可逐个「试一下」、可从 AI 动作表拿掉），下半「行为与安全」定她能闹到什么程度。桌宠没在跑时点按钮只是下发排队，等她跑起来才演。右边「最近回执」是客户端演完或拒演回来的结果。AI 每次决策都在工作区里单独开一条「行为大脑」会话，能当场看到她怎么想的。' },
           bhErr && !bh
             ? h('div', { className: 'ab-flex' }, h('span', { className: 'ab-muted ab-small' }, '行为动作接口还没就绪：' + bhErr + '（更新插件后刷新页面即可）'), h(Btn, { small: true, onClick: loadBehavior }, '重试'))
             : !bh ? h(Empty, { icon: '⏳', text: '加载中…' })
@@ -1943,16 +1943,15 @@ h(Card, { title: '群里什么时候必回', desc: '被 @、有人引用回复�
                   })),
                 ),
               ),
-        ),
-        // ---------- 行为与安全（模块级开关）----------
+          // ---- 分区：行为与安全（模块级开关，唯一入口）----
+          h('div', { className: 'ab-section-title' }, '行为与安全'),
         // 为什么放在面板：pet 是**内置模块**，DSH 面板只给「用户自己复制出来的模块」生成设置表单
         // （client.js 的 hasUi 要求 running==='user' && !builtin），所以 index.js 里那份 settings schema
-        // 在内置形态下没有任何 UI。不在这里补一张卡，关窗物理闸就永远打不开。
-        bh ? h(Card, {
-          title: '行为与安全',
-          desc: 'AI 只能从动作表里挑动作，闹到什么程度由这里定。开关即点即存，数字和白名单点「应用」。'
-            + '「允许 AI 关闭窗口」默认关，它是一道物理闸：AI 与手动「试一下」都绕不过去。',
-        },
+        // 在内置形态下没有任何 UI。不在这里补一节，关窗物理闸就永远打不开。
+        ...(bh ? [
+          h('div', { className: 'ab-muted ab-small', style: { marginBottom: 6 } },
+            'AI 只能从动作表里挑动作，闹到什么程度由下面这些开关定。开关即点即存，数字和白名单点「应用」。'
+            + '「允许 AI 关闭窗口」默认关，它是一道物理闸：AI 与手动「试一下」都绕不过去。'),
           h(Row, { label: '行为大脑', hint: '关掉后她不再自己挑动作（面板「试一下」仍可手动触发）' },
             h(Switch, { on: c.enabled !== false, onChange: (v) => saveBehCfg({ behaviorEnabled: v }, v ? '行为大脑已开' : '行为大脑已关，她只回应你') })),
           h(Row, { label: '行为间隔', hint: '最短不低于 1 分钟（铁律）' },
@@ -1984,9 +1983,33 @@ h(Card, { title: '群里什么时候必回', desc: '被 @、有人引用回复�
           h(Row, { label: '窗口操作白名单', hint: '一行一个进程名或标题关键词；留空 = 只碰普通窗口（DSH 自己、桌宠、资源管理器永远不碰）' },
             h('textarea', { className: 'ab-textarea', rows: 3, value: c.windowWhitelist ?? '', placeholder: 'notepad', onChange: (e) => setBcfg({ ...c, windowWhitelist: e.target.value }) }),
             h('div', { style: { marginTop: 6 } }, h(Btn, { small: true, disabled: busy === 'cfg', onClick: () => saveBehCfg({ behaviorWindowWhitelist: String(c.windowWhitelist ?? '') }, '白名单存好了') }, '保存白名单'))),
-        ) : null,
-        // ---------- 被收走的图标（第二批）：hide_icon 的隔离区，一键放回 ----------
-        h(Card, { title: '被收走的图标', desc: '「收图标」不是删除：她把桌面图标剪切到插件数据目录的隔离区，文件原样留着。这里可以随时放回原位（原位置被占了会自动改名「名字(归还)」），超过「隔离保留天数」（默认 7 天）她也会自己放回去。' },
+        ] : [h('div', { className: 'ab-muted ab-small' }, '行为状态还没读到，安全设置暂时看不到（刷新或稍后再试）')])),
+        // ---------- 聊天联动：主人聊天时她可能顺带做个小动作（只读旁观，独立开关/冷却/上限）----------
+        h(Card, { title: '聊天联动', desc: '主人在生效范围内的 QQ 聊天里说话时，她可能根据聊天内容与心情顺带在桌面上做个小动作（追鼠标、溜达、小动作、说一句话——只挑安分的，绝不碰图标和窗口）。她只是旁观聊天：不接管消息、不改回复、不阻塞回合，聊天功能完全不受影响。默认关；与上面的「行为大脑」总开关互相独立（关掉行为大脑不影响这边，反之亦然）。每次决策在工作区「聊天联动」会话里能看到她的取舍。' },
+          h('div', { className: 'ab-flex', style: { marginBottom: 6 } },
+            h('span', { className: 'ab-pill' }, h('i', { className: cx('ab-dot', c.chatBehaviorEnabled ? 'ok' : '') }), '聊天联动' + (c.chatBehaviorEnabled ? '开着' : '关着')),
+            h('span', { className: 'ab-pill' }, '今天 ' + (c.chatBehaviorToday || 0) + '/' + (c.chatBehaviorMaxPerDay ?? '?') + ' 次'),
+            c.chatBehaviorThinking ? h('span', { className: 'ab-pill' }, '正在想要不要动…') : null,
+            c.chatBehaviorLastAt ? h('span', { className: 'ab-muted ab-small' }, '上次 ' + timeAgo(c.chatBehaviorLastAt)) : null),
+          h(Row, { label: '开启聊天联动', hint: '开关即点即存；关掉后聊天时她只回复、不动' },
+            h(Switch, { on: c.chatBehaviorEnabled === true, onChange: (v) => saveBehCfg({ chatBehaviorEnabled: v }, v ? '聊天联动已开' : '聊天联动已关') })),
+          h(Row, { label: '生效范围', hint: '一行一个：private:QQ号 或 group:群号（写法同「权限」页白名单，冒号后带空格也能认）；留空 = 只有主人私聊生效。不符合格式的行会被忽略，不会报错' },
+            h('textarea', { className: 'ab-textarea', rows: 3, value: c.chatBehaviorWhitelistText ?? '', placeholder: 'private:12345\ngroup:67890', onChange: (e) => setBcfg({ ...c, chatBehaviorWhitelistText: e.target.value }) }),
+            h('div', { style: { marginTop: 6 } }, h(Btn, { small: true, disabled: busy === 'cfg', onClick: () => saveBehCfg({ chatBehaviorWhitelist: String(c.chatBehaviorWhitelistText ?? '') }, '生效范围存好了') }, '保存范围'))),
+          h(Row, { label: '冷却', hint: '两次联动动作之间至少隔这么久（1~1440 分钟），宁缺毋滥' },
+            h('input', { className: 'ab-input sm', type: 'number', min: 1, max: 1440, value: c.chatBehaviorCooldownMinutes ?? '', onChange: (e) => setBcfg({ ...c, chatBehaviorCooldownMinutes: e.target.value }) }),
+            h('span', { className: 'ab-muted' }, '分钟'),
+            h(Btn, { small: true, disabled: busy === 'cfg', onClick: () => saveBehCfg({ chatBehaviorCooldownMinutes: Number(c.chatBehaviorCooldownMinutes) }, '冷却改好了') }, '应用')),
+          h(Row, { label: '每天最多', hint: '0 = 聊天时她也不动' },
+            h('input', { className: 'ab-input sm', type: 'number', min: 0, max: 9999, value: c.chatBehaviorMaxPerDay ?? '', onChange: (e) => setBcfg({ ...c, chatBehaviorMaxPerDay: e.target.value }) }),
+            h('span', { className: 'ab-muted' }, '次'),
+            h(Btn, { small: true, disabled: busy === 'cfg', onClick: () => saveBehCfg({ chatBehaviorMaxPerDay: Number(c.chatBehaviorMaxPerDay) }, '上限改好了') }, '应用')),
+        ),
+        // ---------- 行为记录（合并卡：被收走的图标 + 关窗记录，她闹过的账都在这里）----------
+        h(Card, { title: '行为记录', desc: '她闹过的账都在这里：上半是被收走的桌面图标（绝不真删，随时放回），下半是关窗记录（可以让她道歉补偿心情）。' },
+          h('div', { className: 'ab-section-title' }, '被收走的图标'),
+          h('div', { className: 'ab-muted ab-small', style: { marginBottom: 6 } },
+            '「收图标」不是删除：她把桌面图标剪切到插件数据目录的隔离区，文件原样留着。这里可以随时放回原位（原位置被占了会自动改名「名字(归还)」），超过「隔离保留天数」（默认 7 天）她也会自己放回去。'),
           quarErr
             ? h('div', { className: 'ab-flex' }, h('span', { className: 'ab-muted ab-small' }, '隔离区清单读不了：' + quarErr), h(Btn, { small: true, onClick: loadBehavior }, '重试'))
             : quar === null ? h(Empty, { icon: '⏳', text: '加载中…' })
@@ -2002,9 +2025,10 @@ h(Card, { title: '群里什么时候必回', desc: '被 @、有人引用回复�
                     h('td', null, h(Btn, { small: true, onClick: () => restoreIcon(it.id) }, '放回去')),
                   ))),
                 ),
-        ),
-        // ---------- 关窗记录（第三批）：close_window 的账本 + 一键补偿道歉 ----------
-        h(Card, { title: '关窗记录', desc: '「关窗口」是高危动作：AI 只有在「允许 AI 关闭窗口」开着、且她心情低于 ' + (bh && bh.moodCloseWindowBelow != null ? bh.moodCloseWindowBelow : 35) + ' 时才会自己关；手动「试一下」不受心情限制，但同样要先开那个开关。关的方式等于点右上角 X（程序会自己问要不要保存）。DSH 自己的窗口、桌宠、资源管理器、全屏窗口永远不碰。' },
+          // ---- 分区：关窗记录（第三批，close_window 的账本 + 一键补偿道歉）----
+          h('div', { className: 'ab-section-title' }, '关窗记录'),
+          h('div', { className: 'ab-muted ab-small', style: { marginBottom: 6 } },
+            '「关窗口」是高危动作：AI 只有在「允许 AI 关闭窗口」开着、且她心情低于 ' + (bh && bh.moodCloseWindowBelow != null ? bh.moodCloseWindowBelow : 35) + ' 时才会自己关；手动「试一下」不受心情限制，但同样要先开那个开关。关的方式等于点右上角 X（程序会自己问要不要保存）。DSH 自己的窗口、桌宠、资源管理器、全屏窗口永远不碰。'),
           h('div', { className: 'ab-flex', style: { marginBottom: 8 } },
             h('span', { className: 'ab-pill' }, '今天关了 ' + ((bh && bh.closeToday) || 0) + ' 个'),
             h('span', { className: 'ab-pill' }, bh && bh.closeWindowEnabled ? 'AI 关窗：已允许' : 'AI 关窗：不允许（默认）'),

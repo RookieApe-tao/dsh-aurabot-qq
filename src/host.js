@@ -603,11 +603,16 @@ export function apply(ctx) {
       ['behaviorIdleCursorMinutes', 1, 240],
       ['behaviorMoodCloseWindowBelow', 0, 100],
       ['behaviorIconQuarantineDays', 1, 365],
+      ['chatBehaviorCooldownMinutes', 1, 1440], // 聊天联动冷却：1 分钟起，最长一天
+      ['chatBehaviorMaxPerDay', 0, 9999],       // 聊天联动每日上限：0 = 聊天时她也不动
     ]) {
       if (Number.isFinite(b[k])) patch[k] = Math.min(hi, Math.max(lo, Math.round(b[k])))
     }
     if (typeof b.behaviorWindowWhitelist === 'string') patch.behaviorWindowWhitelist = b.behaviorWindowWhitelist.slice(0, 2000)
     if (typeof b.behaviorDisabledActions === 'string') patch.behaviorDisabledActions = b.behaviorDisabledActions.slice(0, 500)
+    // 聊天联动动作（pet 内置模块 settings 表单不渲染，这里是唯一写入通道；生效范围白名单照「权限」页 chatId 写法）
+    if (typeof b.chatBehaviorEnabled === 'boolean') patch.chatBehaviorEnabled = b.chatBehaviorEnabled
+    if (typeof b.chatBehaviorWhitelist === 'string') patch.chatBehaviorWhitelist = b.chatBehaviorWhitelist.slice(0, 2000)
     if (!Object.keys(patch).length) return { ok: false, message: '没有可保存的字段' }
     setConfig(mergeFromPanel(cfg, { ext: { pet: patch } }))
     log.info(`面板已保存桌宠设置｜${Object.keys(patch).map((k) => k + '=' + String(patch[k]).slice(0, 20)).join(' ')}`)

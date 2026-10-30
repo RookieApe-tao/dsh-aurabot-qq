@@ -69,6 +69,11 @@ export default {
     behaviorIconQuarantineDays: 7,     // 隔离区自动归还天数（第二批生效）
     behaviorDisabledActions: '',       // 逗号分隔动作名：不进入 AI 动作表（手动按钮不受影响）
     behaviorWindowWhitelist: '',       // 窗口操作白名单，空=仅普通窗口（第三批生效）
+    // 聊天联动动作（跟着 QQ 聊天内容与心情挑一个安分小动作；独立开关与独立配额，默认关）
+    chatBehaviorEnabled: false,        // 总开关：只读旁观聊天，不影响回复；默认关
+    chatBehaviorWhitelist: '',         // 生效范围：一行一个 chatId（private:123 / group:456）；留空 = 只有主人私聊生效
+    chatBehaviorCooldownMinutes: 5,    // 两次聊天联动之间的全局冷却（分钟，1~1440）
+    chatBehaviorMaxPerDay: 20,         // 聊天联动每日上限
   },
   settings: [
     { key: 'carrier', label: '主动搭话载体', type: 'select', options: [{ value: 'qq', label: 'QQ 私聊' }, { value: 'pet', label: '桌宠气泡' }], hint: 'pet 时桌宠不在线会按下面的开关回落到 QQ；两边永不双发' },
@@ -98,6 +103,11 @@ export default {
     { key: 'behaviorIconQuarantineDays', label: '图标隔离归还天数', type: 'number', min: 1, max: 365, hint: '被收走的图标超过这么多天自动放回原位' },
     { key: 'behaviorDisabledActions', label: '禁用 AI 动作', type: 'textarea', hint: '这些动作不进入 AI 动作表（手动按钮不受影响）。逗号分隔动作名，如：hide_icon,steal_cursor' },
     { key: 'behaviorWindowWhitelist', label: '窗口操作白名单', type: 'textarea', hint: '一行一个进程/标题关键词；留空 = 只碰普通窗口。DSH 自己的窗口、桌宠、资源管理器永远不碰' },
+    // 聊天联动动作（内置形态的写入通道在 host.js /panel/pet/config + 面板「行为与安全」卡）
+    { key: 'chatBehaviorEnabled', label: '聊天联动动作', type: 'switch', hint: '主人在生效范围内的聊天说话时，她可能根据聊天内容与心情顺带做个小动作；只读旁观，不影响回复' },
+    { key: 'chatBehaviorWhitelist', label: '聊天联动生效范围', type: 'textarea', hint: '一行一个：private:QQ号 或 group:群号；留空 = 只有主人私聊生效' },
+    { key: 'chatBehaviorCooldownMinutes', label: '聊天联动冷却（分钟）', type: 'number', min: 1, max: 1440 },
+    { key: 'chatBehaviorMaxPerDay', label: '聊天联动每日上限', type: 'number', min: 0, max: 9999 },
   ],
 
 
@@ -1696,6 +1706,20 @@ export default {
         closeLog: closeLog.slice(-10).reverse(), // 新的在前
         closeToday: closeLog.filter((x) => Number(x.at) >= today0.getTime() && x.status === 'played').length,
         apologyDue: closeLog.some((x) => x.status === 'played' && !Number(x.apologizedAt || 0)),
+        // 聊天联动（面板「聊天联动」卡；独立开关/范围/冷却/每日上限，与定时行为大脑互不知晓）
+        ...(() => {
+          const cb = chatSettings()
+          const cs = loadChatBhv()
+          return {
+            chatBehaviorEnabled: cb.enabled,
+            chatBehaviorWhitelistText: cb.whitelistText,
+            chatBehaviorCooldownMinutes: cb.cooldownMinutes,
+            chatBehaviorMaxPerDay: cb.maxPerDay,
+            chatBehaviorToday: cs.count,
+            chatBehaviorLastAt: cs.lastAt,
+            chatBehaviorThinking: chatBusy,
+          }
+        })(),
       }
     }
     /** 关窗记录 + 一键补偿道歉：道歉把心情往上抬一点，并把最近一条未道歉的记录标记掉（不删记录）。 */
@@ -1717,6 +1741,144 @@ export default {
       } catch {}
       saveBehavior(st)
       return { ok: true, window: idx.x.window || '', at: idx.x.at, apologizedAt: now }
+    }
+
+    // ================= 聊天联动动作（跟着 QQ 聊天内容与心情挑一个安分小动作） =================
+    // 设计铁律：
+    //   1. 这里是聊天管线的**只读观察者**：监听 api.on('activity')（host 只广播，只看不拦），
+    //      fire-and-forget，绝不返回真值（不接管消息）、不改回复、不阻塞聊天回合，失败全静默。
+    //   2. 动作表是 BEHAVIOR_ACTIONS 的**安分子集**：不碰图标、不碰窗口、不叼走鼠标——
+    //      聊天是高频入口，高危动作只留给行为大脑的定时路径与心情/物理闸管着。
+    //   3. 独立开关 / 独立冷却 / 独立每日上限 / 独立状态文件（chat-behavior.json），与定时行为大脑互不知晓。
+    //   4. 决策走独立 key 的后台回合（key:'chatBehavior'），不与碎碎念/行为大脑抢同一条会话。
+    const CHAT_ACTIONS = new Set(['chase_cursor', 'wander', 'idle_anim', 'say'])
+    const CHAT_TURN_TITLE = '桌宠 · 聊天联动（主人在聊天）'
+    const chatFile = () => api.dataDir('chat-behavior.json')
+    let chatBusy = false // 决策回合进行中：不允许并发（仿 behaviorBusy）
+    function chatSettings() {
+      const s = api.settings()
+      const clamp = (v, d, lo, hi) => { const n = Number(v); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, Math.round(n))) : d }
+      // 生效范围白名单：一行一个 chatId（private:123 / group:456），格式照抄「权限」页的 allow 表；
+      // 每行先去掉所有空白（冒号后带空格这类手滑也能认），再按格式过滤——非法行（没有 private:/group: 前缀）
+      // 直接丢弃（面板 hint 有说明）。留空 = 只有主人私聊生效（与聊天白名单「主人永远能私聊」同口径）。
+      const whitelist = String(s.chatBehaviorWhitelist || '').split(/[\n,;；]/)
+        .map((x) => x.replace(/\s+/g, ''))
+        .filter((x) => /^(private|group):\d+$/.test(x))
+      return {
+        enabled: s.chatBehaviorEnabled === true, // 默认关
+        whitelist,
+        whitelistText: String(s.chatBehaviorWhitelist || ''),
+        cooldownMinutes: clamp(s.chatBehaviorCooldownMinutes, 5, 1, 1440),
+        maxPerDay: clamp(s.chatBehaviorMaxPerDay, 20, 0, 9999),
+      }
+    }
+    function loadChatBhv(now = Date.now()) {
+      const raw = readJson(chatFile(), null)
+      const st = raw && typeof raw === 'object' ? { ...raw } : {}
+      if (st.day !== dayKey(now)) { st.day = dayKey(now); st.count = 0 }
+      st.count = Math.max(0, Math.round(Number(st.count) || 0))
+      st.lastAt = Number(st.lastAt) || 0
+      st.lastChatId = String(st.lastChatId || '').slice(0, 40)
+      return st
+    }
+    const saveChatBhv = (st) => { try { writeJsonAtomic(chatFile(), st) } catch {} }
+    /** 生效范围判定：白名单非空按精确 chatId 匹配；留空 = 只有主人私聊。 */
+    function chatAllowed(chatId, cb) {
+      const id = String(chatId || '')
+      if (cb.whitelist.length) return cb.whitelist.includes(id)
+      const owner = String(api.config().ownerQQ || '')
+      return Boolean(owner) && id === `private:${owner}`
+    }
+    /** 宽松解析聊天联动的动作单：动作必须是 none 或安分子集；say 只保留 text，其余参数一律丢弃。 */
+    function parseChatAction(raw) {
+      const m = String(raw || '').match(/\{[\s\S]*\}/)
+      if (!m) return null
+      let obj
+      try { obj = JSON.parse(m[0]) } catch { return null }
+      if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null
+      const action = String(obj.action || '').trim()
+      if (action === 'none') return { action: 'none' }
+      if (!CHAT_ACTIONS.has(action)) return null
+      const params = action === 'say'
+        ? { text: String((obj.params && obj.params.text) || '').trim().slice(0, 60) }
+        : {}
+      if (action === 'say' && !params.text) return null // 「说话」没给内容 = 废单
+      let moodDelta = Number(obj.moodDelta)
+      if (!Number.isFinite(moodDelta)) moodDelta = 0
+      moodDelta = Math.max(-10, Math.min(10, Math.round(moodDelta)))
+      return { action, params, say: String(obj.say || '').slice(0, 60), moodDelta }
+    }
+    /** 聊天联动简报（一次约几百 token）：人格 + 心情 + 这条消息本身 + 安分动作表 + 大多数时候选 none。 */
+    function chatPrompt(msg) {
+      let persona = ''
+      try { persona = api.core?.personas?.current?.() || '' } catch {}
+      const table = BEHAVIOR_ACTIONS.filter((a) => CHAT_ACTIONS.has(a.action))
+        .map((a) => `- ${a.action}：${a.desc}（参数：${a.params}）`).join('\n')
+      const text = String(msg?.text || '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 200)
+      return [
+        '（这一轮是桌宠的「聊天联动」回合。主人的聊天回复由别处负责，你不回复消息；只决定要不要顺带在桌面上做个小动作，输出严格 JSON。）',
+        persona ? `【你的人格设定】\n${String(persona).slice(0, 800)}` : '',
+        '【你是一只待在主人电脑桌面角落的小桌宠（大肥鱼）】',
+        `【主人刚发来的消息（${msg?.chatId || ''}）】\n${text || '（这条没有文字，可能带图或表情）'}`,
+        `【现在】心情：${moodNow()}（数值 ${moodValue() ?? '未知'}）。`,
+        `【可用动作表（只能从这里选）】\n${table}`,
+        '【分寸】绝大多数时候选 none——主人认真谈事、只是普通问答、或最近已经动过时，都别打扰；只有消息里明显有情绪（夸你、逗你、喊你、闹脾气）且心情合适时才挑一个安分小动作。聊天是高频入口，宁缺毋滥。',
+        [
+          '【输出格式】只输出一个严格 JSON 对象，不要任何解释、不要代码块标记：',
+          '不做动作：{"action":"none"}',
+          '做动作：{"action":"idle_anim","params":{},"say":"（尾巴摇了摇）","moodDelta":1}',
+          'say 可为空串；moodDelta 是这轮对你心情的影响（-10~10 的整数）。',
+        ].join('\n'),
+      ].filter(Boolean).join('\n')
+    }
+    /**
+     * 聊天联动一轮。入参是 activity 事件对象 { kind:'in', chatId, text, ... }。
+     * 闸门顺序：开关→插件→生效范围→桌宠在线→专注→并发→每日上限→冷却；
+     * 故意不看安静时段与定时排程——主人在主动聊天，安静时段不该拦她的反应。
+     * @returns {Promise<{ok:boolean, reason?:string, action?:string, playbackId?:string}>}
+     */
+    async function chatBehaviorOnce(msg = {}) {
+      const cb = chatSettings()
+      if (!cb.enabled) return { ok: false, reason: 'disabled' }
+      if (api.config().enabled === false) return { ok: false, reason: 'plugin-off' }
+      if (!chatAllowed(msg.chatId, cb)) return { ok: false, reason: 'not-allowed' }
+      if (!online().online) return { ok: false, reason: 'pet-offline' } // 桌宠不在线没人演
+      if (focusOn()) return { ok: false, reason: 'focus' }
+      if (chatBusy) return { ok: false, reason: 'thinking' }
+      const st = loadChatBhv()
+      if (st.count >= cb.maxPerDay) return { ok: false, reason: 'daily-max' }
+      if (st.lastAt && Date.now() - st.lastAt < cb.cooldownMinutes * MIN_MS) return { ok: false, reason: 'cooldown' }
+      let raw = ''
+      chatBusy = true
+      try {
+        if (typeof api.think === 'function') raw = await api.think(chatPrompt(msg), { title: CHAT_TURN_TITLE, timeoutMs: 60_000, noTools: true, key: 'chatBehavior' })
+        else if (typeof api.ask === 'function') raw = await api.ask({ text: chatPrompt(msg), maxTokens: 120, temperature: 0.7 })
+      } catch (error) {
+        api.log.debug?.('聊天联动决策失败（忽略）：', String(error?.message || error))
+      } finally { chatBusy = false }
+      const plan = parseChatAction(raw)
+      // 铁律：模型选 none / 废单 → 安静收场，不记次数也不回落文案（聊天联动没有「必须演一个」的义务）
+      if (!plan || plan.action === 'none') return { ok: false, reason: plan ? 'declined' : 'parse' }
+      if (plan.moodDelta) {
+        try {
+          const m = api.use('mood')
+          if (m && typeof m.nudge === 'function') m.nudge(plan.moodDelta, '聊天联动')
+        } catch (error) { api.log.debug?.('聊天联动修心情失败（忽略）：', String(error?.message || error)) }
+      }
+      const r = await emitBehavior({ action: plan.action, params: plan.params, say: plan.say, force: true, reason: 'chat' })
+      if (!r || !r.ok) return { ok: false, reason: (r && r.reason) || 'dispatch-failed' }
+      const st2 = loadChatBhv()
+      st2.count += 1
+      st2.lastAt = Date.now()
+      st2.lastChatId = String(msg.chatId || '').slice(0, 40)
+      saveChatBhv(st2)
+      api.log.info(`聊天联动：${plan.action}（${st2.lastChatId}，今天第 ${st2.count} 次）`)
+      return { ok: true, action: plan.action, playbackId: r.playbackId, today: st2.count }
+    }
+    /** activity 事件的 fire-and-forget 入口：只认「收到消息」，任何异常都吞掉，绝不影响聊天管线。 */
+    function chatBehaviorFire(msg) {
+      if (!msg || msg.kind !== 'in') return
+      Promise.resolve(chatBehaviorOnce(msg)).catch((error) => api.log.debug?.('聊天联动出错（忽略）：', String(error?.message || error)))
     }
 
     // ================= 桌面图标隔离区（第二批：drag_icon / hide_icon 的服务端执行层） =================
@@ -2220,6 +2382,10 @@ export default {
     // 碎碎念：60s 心跳里只做「读一次状态文件 + 纯逻辑判断」，重活都别放进 tick
     const offWhisper = api.every(60_000, () => whisperTick(), '碎碎念')
     const offBehavior = api.every(60_000, () => behaviorTick(), '行为大脑')
+    // 聊天联动：只读观察 activity 事件（宿主广播，只看不拦）；旧宿主/fake api 没有 on 时静默跳过
+    if (typeof api.on === 'function') {
+      api.on('activity', (msg) => { try { chatBehaviorFire(msg) } catch {} })
+    }
     // 图标隔离区超期自动归还：10 分钟一扫（读 manifest 纯逻辑，重活不在 tick 里）
     const offIconSweep = api.every(600_000, () => { iconSweep().catch((e) => api.log.warn('图标超期归还出错：', String(e?.message || e))) }, '图标隔离区超期归还')
     api.onDispose(() => { offHostTimer(); offWhisper(); offBehavior(); offIconSweep(); waiters.clear(); presence.clear(); workMap.clear() })
@@ -2266,6 +2432,9 @@ export default {
       windowApologize,                        // 测试钩子：补偿道歉（POST /behavior/window/apologize 同函数）
       behaviorActionsForTest: () => BEHAVIOR_ACTIONS, // 测试钩子：动作表（含默认台词，锁「每个动作都有气泡」）
       behaviorSayForTest: (act) => BEHAVIOR_SAY[act] || '', // 测试钩子：动作默认台词
+      chatBehavior: chatBehaviorOnce,        // 测试/手动钩子：聊天联动一轮（activity 同函数，可 await）
+      chatBehaviorParse: parseChatAction,    // 测试钩子：聊天联动动作单解析
+      chatBehaviorSettings: chatSettings,    // 测试钩子：聊天联动有效配置（含白名单解析结果）
       onSessionEvent,                        // host.js 把 ctx.on('session/event') 转发进来
       workStatus: () => ({ ...workSnapshot(), label: WORK_STATE_LABEL[workSnap.state] || '', text: workEndText(workSnap) }),
       status: () => {
