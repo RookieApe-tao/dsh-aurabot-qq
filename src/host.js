@@ -275,6 +275,7 @@ export function apply(ctx) {
     hooks: {
       message: (msg) => mods.claim('message', msg),
       reply: (text, info) => mods.filter('reply', text, info),
+      secrets: () => [rulesText('private', cfg, rulesOpts('private')), rulesText('social', cfg, rulesOpts('social')), currentPersonaText(cfg.persona.current)],
       deniedTools: () => bridge?.deniedTools() || [],
       groupDecide: (decision, info) => mods.filter('group/decide', decision, info),
       prompt: (content, info) => mods.filter('prompt', content, info),

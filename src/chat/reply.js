@@ -42,6 +42,12 @@ export function isSilence(text) {
 /** 模型没真调工具、把调用写成了文字（<qq_draw_image"> <prompt>…</prompt>）：这些不能发到 QQ。 */
 export function stripToolText(text) {
   return String(text || '')
+    .replace(/<function_calls>[\s\S]*?<\/function_calls>/g, '')
+    .replace(/<invoke\b[\s\S]*?<\/invoke>/g, '')
+    .replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '')
+    .replace(/<｜[^>]*tool[^>]*begin｜>[\s\S]*?<｜[^>]*tool[^>]*end｜>/g, '')
+    .replace(/<｜DSML｜[\s\S]*?<\/｜DSML｜[^>]*>/g, '')
+    .replace(/\{\s*"name"\s*:\s*"[a-z][a-z0-9]*_[a-z0-9_]+"\s*,\s*"arguments"\s*:[\s\S]*?\}\s*\}/g, '')
     .replace(/<prompt>[\s\S]*?<\/prompt>/g, '')
     .replace(/<\/?[a-z][a-z0-9]*_[a-z0-9_]+"?\s*>/g, '')
 }

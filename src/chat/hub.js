@@ -28,6 +28,7 @@ import { createRecentMedia } from './recent-media.js'
 import { createTitleFilter } from './title-filter.js'
 import { isDefiniteFailure } from '../onebot/client.js'
 import { grantOwner } from '../core/workspace-move.js'
+import { createLeakGuard } from '../security/leak-guard.js'
 
 // QQ 会话的工作区目录，第一次收到消息时自动创建。面板「连接」页能改（config.workspaceDir，#32）；
 // 没填就用环境变量 AURABOT_WORKSPACE，再没有：老安装沿用 C:\Aurabot\qq-chats，新安装放在用户目录下（不用往 C 盘根目录写）
@@ -742,6 +743,8 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
   }
 
   /** 一轮回复落地：拆条、语音、表情。 */
+  const leakGuard = createLeakGuard(() => hooks?.secrets?.() || [])
+
   async function deliver(chatId, text, opts = {}) {
     if (disposed) return
     const cfg = getConfig()
@@ -755,6 +758,15 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
       }
     }
     if (disposed) return
+    // 主人私聊不拦：主人本来就能看提示词，调人设时让她念一段也正常
+    if (chatId !== `private:${cfg.ownerQQ}` && hooks?.secrets) {
+      const clean = leakGuard(text)
+      if (clean.dropped) {
+        log.warn(`${chatId}：回复里有 ${clean.dropped} 行在复述提示词，已拦下`)
+        if (!clean.text) return
+        text = clean.text
+      }
+    }
     const r = parseReply(text)
     if (r.silent) {
       log.info(`${chatId}：她选择不说话`)
