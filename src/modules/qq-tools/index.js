@@ -247,16 +247,19 @@ export default {
         },
       }))
 
-      if (level === 'full') tools.push(defineTool({
+      // 跨聊天发消息：主人私聊（full）和群聊都挂；群里只有「这一轮说话的人全是主人」才放行，和发文件同一条线
+      if (level === 'full' || chat.kind === 'group') tools.push(defineTool({
         name: 'qq_send_message',
-        description: '主动给某个 QQ 好友或群发一条消息（不是回复当前聊天时用）。target 写 private:QQ号 或 group:群号；只能发给白名单里的人和群。',
+        description: '主动给另一个 QQ 好友或群发一条消息（不是回复当前聊天时用）。主人让你去别的私聊或群说几句时用。target 写 private:QQ号 或 group:群号；只能发给白名单里的人和群。',
         properties: { target: str('private:QQ号 或 group:群号'), text: str('要发的话，可以用 ||| 分多条、<voice>…</voice> 发语音、<sticker:名字> 发表情') },
         required: ['target', 'text'],
         execute: async ({ target, text }) => {
+          if (chat.kind === 'group' && !hub.turnSendersAllOwner(sessionId)) return { ok: false, message: '只有主人开口时才能往别的聊天发，这一轮不是。' }
           const cfg = api.config()
           const [kind, id] = String(target || '').split(':')
           const okList = kind === 'group' ? cfg.allow.groups : kind === 'private' ? [cfg.ownerQQ, ...cfg.allow.private] : []
-          if (!okList.includes(String(id))) return { ok: false, message: '不在白名单里，不能发' }
+          if (!okList.map(String).includes(String(id))) return { ok: false, message: '不在白名单里，不能发' }
+          if (`${kind}:${id}` === chat.chatId) return { ok: false, message: '这就是当前聊天，直接回话就行，别用这个工具' }
           const r = await hub.deliver(`${kind}:${id}`, String(text || ''))
           if (!r) return { ok: false, message: '没发出去：这条被拦下了，或者内容是空的' }
           if (r.failed) return { ok: false, message: `没发出去（${r.failed} 条失败）：${r.errors[0]}。别说发过了，照实告诉对方` }

@@ -374,3 +374,27 @@ test('卡片里的地址只认网址，本机路径发不出去', async () => {
   assert.equal(sent.length, 1)
 })
 
+test('跨聊天发消息：群里只有主人那一轮能发，别人私聊没有这个工具', async () => {
+  const { default: mod } = await import('../src/modules/qq-tools/index.js')
+  const sent = []
+  let owner = false
+  let build
+  mod.setup({
+    core: { hub: { turnSendersAllOwner: () => owner, deliver: async (id, text) => { sent.push([id, text]); return {} } }, onebot: { call: async () => ({}) } },
+    config: () => ({ enabled: true, ownerQQ: '1', allow: { private: ['2'], groups: ['9', '8'] }, files: {} }),
+    tool: (fn) => { build = fn },
+  })
+  const group = { kind: 'group', groupId: '9', chatId: 'group:9' }
+  const tool = build({ chat: group, level: 'social', sessionId: 's' }).find((t) => t.name === 'qq_send_message')
+  assert.equal((await tool.execute({ target: 'group:8', text: '嗨' })).ok, false)
+  assert.equal(sent.length, 0)
+  owner = true
+  assert.equal((await tool.execute({ target: 'group:8', text: '嗨' })).ok, true)
+  assert.equal((await tool.execute({ target: 'private:2', text: '嗨' })).ok, true)
+  assert.equal((await tool.execute({ target: 'group:7', text: '嗨' })).ok, false, '白名单外')
+  assert.equal((await tool.execute({ target: 'group:9', text: '嗨' })).ok, false, '当前聊天')
+  assert.deepEqual(sent.map((x) => x[0]), ['group:8', 'private:2'])
+  const stranger = build({ chat: { kind: 'private', userId: '2', chatId: 'private:2' }, level: 'social', sessionId: 's' })
+  assert.equal(stranger.find((t) => t.name === 'qq_send_message'), undefined)
+})
+
