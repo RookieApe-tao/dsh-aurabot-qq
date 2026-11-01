@@ -210,6 +210,15 @@ export function createModules({ ctx, core, getConfig, setConfig, logger, version
     // 内置模块和替换它的版本用原来的路径（内置的面板页照常能用）；新模块放在 /ext/模块id/ 下
     const prefix = builtinDefs.has(id) || STABLE_ROUTES.has(id) ? '' : `/ext/${id}`
     const def = rec.def
+    // 模块拿到的 core：hub 的 runSubagentTurn 换成「宿主按模块身份封装」的版本——
+    // 模块不能自报 moduleId / source（一审 #177 复审第 1 条）。用 Object.create 保持对 core
+    // 后续挂在原型上的属性（bridge / modules 等）动态可见。
+    const scopedCore = Object.create(core || null)
+    if (core && core.hub && typeof core.hub.subagentFor === 'function') {
+      const scopedHub = Object.create(core.hub)
+      scopedHub.runSubagentTurn = (name, title, prompt, opts = {}) => core.hub.subagentFor(id)(name, title, prompt, opts)
+      Object.defineProperty(scopedCore, 'hub', { value: scopedHub, enumerable: true, configurable: true })
+    }
     const api = {
       id,
       source,
@@ -232,7 +241,7 @@ export function createModules({ ctx, core, getConfig, setConfig, logger, version
       use: (other) => exportsOf(other),
       lazy: (other) => lazyProxy(() => exportsOf(other)),
       has: (other) => live.has(other),
-      core,
+      core: scopedCore,
       dsh: ctx,
       lib,
       // ---- 往插件里加东西 ----

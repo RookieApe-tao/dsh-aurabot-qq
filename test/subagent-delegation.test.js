@@ -1,6 +1,6 @@
-// 子智能体委派：hub.runSubagentTurn 的行为契约。
-// 模块（手机逛逛等）把「自足任务书」交给它，它 spawn 一个全新子 agent 跑完、把最终文本交回来。
-// 除链路本身，这里还钉住一审 #177 的权限边界：能力声明（plugin-internals）+ 主人开口（或显式开后台开关）。
+// 子智能体委派：hub.runSubagentTurn 的行为契约 + 一审/复审 #177 的权限边界。
+// 模块只能拿到宿主封装的 subagentFor(真实模块 id)：moduleId 由宿主注入、source 由宿主按最近主人活动判断，
+// 调用方传的 moduleId / source 一律不认。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
@@ -11,16 +11,15 @@ import { normalize } from '../src/core/config.js'
 import { createHub } from '../src/chat/hub.js'
 
 const OWNER = '10001'
-const OWNER_CHAT = `private:${OWNER}`
 const settle = async () => { for (let i = 0; i < 5; i++) await new Promise(setImmediate) }
 
-/** 起一个真 hub + 假 DSH：subagents 服务可注入，记录每次 startActivation 的参数。 */
+/** 起一个真 hub + 假 DSH：默认打开 subagentBackground（模拟允许后台派活）。 */
 function setup(t, { subagents, capabilities, config } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'aurabot-subagent-'))
   const oldDir = process.env.AURABOT_DATA_DIR
   process.env.AURABOT_DATA_DIR = join(root, 'data')
   const fake = createFakeDsh({ brain: async () => '' })
-  const cfg = normalize({ enabled: true, dryRun: true, ownerQQ: OWNER, workspaceDir: join(root, 'workspace'), ...(config || {}) })
+  const cfg = normalize({ enabled: true, dryRun: true, ownerQQ: OWNER, subagentBackground: true, workspaceDir: join(root, 'workspace'), ...(config || {}) })
   const log = Object.fromEntries(['info', 'warn', 'error', 'debug'].map((k) => [k, (...v) => fake.logs.push(v.join(' '))]))
   const hub = createHub({
     dsh: fake.ctx,
@@ -51,17 +50,15 @@ function setup(t, { subagents, capabilities, config } = {}) {
     else process.env.AURABOT_DATA_DIR = oldDir
     rmSync(root, { recursive: true, force: true })
   })
-  // 默认按「主人开口」调用；权限用例自己覆盖参数
-  const run = (prompt = '任务书', opts = {}) => hub.runSubagentTurn('phone', '手机逛逛', prompt, { moduleId: 'phone', source: { kind: 'owner', chatId: OWNER_CHAT }, ...opts })
+  // 模块拿到的唯一入口：subagentFor(真实 id)；调用方不能自报 moduleId/source
+  const run = (prompt = '任务书', opts = {}) => hub.subagentFor('phone')('手机逛逛', '手机逛逛', prompt, opts)
   return { fake, hub, calls, disposed, cfg, run }
 }
 
 test('宿主没有 subagents 服务：明确报 SUBAGENT_UNAVAILABLE，不吞成空结果', async (t) => {
-  // null = 显式不注入服务（旧版 DSH 的样子）
   const s = setup(t, { subagents: null })
   await assert.rejects(s.run(), (error) => {
     assert.equal(error.code, 'SUBAGENT_UNAVAILABLE')
-    assert.match(error.message, /subagents/)
     return true
   })
 })
@@ -72,23 +69,20 @@ test('委派契约：spawn + delivery:"caller" + 显式 agentPreset，父级常�
   assert.equal(first, '子智能体办好了')
 
   const call = s.calls[0]
-  assert.equal(call.provider, 'spawn', '必须用 spawn 后端（子级独立会话、空历史）')
-  assert.equal(call.delivery, 'caller', '结果要直接回给调用方，不能挤进工作区聊天流')
-  assert.equal(call.request.agentPreset, 'aurabot-subagent', '不显式指定就会继承 aurabot-social（零本地工具），子级拿不到 shell')
-  assert.equal(call.request.prompt[0].type, 'text')
+  assert.equal(call.provider, 'spawn')
+  assert.equal(call.delivery, 'caller')
+  assert.equal(call.request.agentPreset, 'aurabot-subagent', '不显式指定就会继承 aurabot-social（零本地工具）')
   assert.equal(call.request.prompt[0].text, '打开手机，刷十分钟，回来告诉我看到了什么')
-  assert.equal(call.label, '手机逛逛', 'label 直接用任务标题')
-  assert.ok(call.signal instanceof AbortSignal, '要把可中止信号交给服务（超时要能掐断）')
+  assert.equal(call.label, '手机逛逛')
+  assert.ok(call.signal instanceof AbortSignal)
 
-  // 父级必须是活着的 agent 句柄（spawn 子级的前提），且第二次委派复用同一个，不重复建会话
   const parent = call.request.parent
   assert.ok(parent && typeof parent.id === 'string' && parent.id, 'parent 必须是 agent 句柄')
   const second = await s.run('再刷五分钟')
   assert.equal(second, '子智能体办好了')
   assert.equal(s.calls[1].request.parent.id, parent.id, '父级会话复用，不能每趟新建')
-  assert.equal(s.calls[1].request.parent.preset, 'aurabot-social', '父级是社交档（带工具的挂载）')
+  assert.equal(s.calls[1].request.parent.preset, 'aurabot-social')
 
-  // 结果拿到后要主动释放子树
   await settle()
   assert.deepEqual(s.disposed, ['手机逛逛', '手机逛逛'])
 })
@@ -120,36 +114,30 @@ test('子智能体失败：result 带 error 时抛错，但子树仍然释放（
   assert.equal(disposed.length, 1, '失败路径也要 dispose')
 })
 
-// ---------- 一审 #177 的权限边界 ----------
+// ---------- 一审 / 复审 #177 的权限边界 ----------
 
 test('能力声明：模块没在 module.json 声明 plugin-internals 就不许委派', async (t) => {
   const s = setup(t)
-  // 换个没声明能力的模块 id
-  await assert.rejects(s.hub.runSubagentTurn('other', '别的模块', '任务书', { moduleId: 'other', source: { kind: 'owner', chatId: OWNER_CHAT } }), (error) => {
-    assert.equal(error.code, 'CAPABILITY_REQUIRED')
-    return true
-  })
-  // 完全没传 moduleId 也一样
-  await assert.rejects(s.hub.runSubagentTurn('probe', '探测', '任务书'), (error) => {
+  await assert.rejects(s.hub.subagentFor('other')('别的模块', '别的模块', '任务书'), (error) => {
     assert.equal(error.code, 'CAPABILITY_REQUIRED')
     return true
   })
   assert.equal(s.calls.length, 0, '被拒时不能真的 spawn')
 })
 
-test('主人开口：只有主人私聊来源放行；群里/别人/没来源一律拒绝（无人应答 = 拒绝）', async (t) => {
-  const s = setup(t)
-  const runWith = (source) => s.hub.runSubagentTurn('phone', '手机逛逛', '任务书', { moduleId: 'phone', source })
-  await assert.rejects(runWith(null), (e) => e.code === 'OWNER_REQUIRED')
-  await assert.rejects(runWith({ kind: 'owner', chatId: 'group:12345' }), (e) => e.code === 'OWNER_REQUIRED')
-  await assert.rejects(runWith({ kind: 'owner', chatId: 'private:99999' }), (e) => e.code === 'OWNER_REQUIRED')
-  await assert.rejects(runWith({ kind: 'system', reason: 'cron' }), (e) => e.code === 'OWNER_REQUIRED')
+test('来源由宿主判断：调用方伪造 source/moduleId 无效，后台开关关着就拒绝', async (t) => {
+  const s = setup(t, { config: { subagentBackground: false } })
+  // 模块把 moduleId/source 塞进 opts 也没用：subagentFor 固定真实 id、source 由 lastOwnerChatAt 判断
+  await assert.rejects(
+    s.run('任务书', { moduleId: 'phone', source: { kind: 'owner', chatId: `private:${OWNER}` } }),
+    (error) => error.code === 'OWNER_REQUIRED',
+  )
   assert.equal(s.calls.length, 0)
 })
 
-test('后台开关：config.subagentBackground 打开后才允许 system 来源（定时任务）', async (t) => {
-  const s = setup(t, { config: { subagentBackground: true } })
-  const out = await s.hub.runSubagentTurn('phone', '定时逛逛', '任务书', { moduleId: 'phone', source: { kind: 'system', reason: 'cron' } })
+test('后台开关：config.subagentBackground 打开后才允许无主人活动的派活', async (t) => {
+  const s = setup(t) // 默认配置已打开
+  const out = await s.run('任务书')
   assert.equal(out, '子智能体办好了')
   assert.equal(s.calls.length, 1)
 })

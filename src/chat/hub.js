@@ -2051,6 +2051,22 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     return agent
   }
 
+  /** 现在这次调用算不算「主人开口」：最近 5 分钟有主人私聊消息算 owner，否则后台（一审 #177 复审：source 由宿主判断）。 */
+  const OWNER_ACTIVE_MS = 5 * 60_000
+  function ownerSourceNow() {
+    const qq = String(getConfig().ownerQQ || '')
+    if (qq && lastOwnerChatAt && Date.now() - lastOwnerChatAt <= OWNER_ACTIVE_MS) return { kind: 'owner', chatId: `private:${qq}` }
+    return { kind: 'system', reason: 'background' }
+  }
+
+  /**
+   * 宿主给模块的委派入口（模块 API 层唯一暴露的形态）：moduleId 由宿主注入、source 由宿主判断，
+   * 调用方传的 moduleId / source 一律不认——模块写 `moduleId: 'phone'` 也变不成别人（一审 #177 复审第 1 条）。
+   */
+  function subagentFor(moduleId) {
+    return (name, title, prompt, opts = {}) => runSubagentTurn(name, title, prompt, { ...opts, moduleId, source: ownerSourceNow() })
+  }
+
   /**
    * 子智能体委派：spawn 一个全新子 agent（空对话、继承工作目录与模型）跑一轮自足任务，
    * 结果经 Promise 直接返回给调用方——不占用工作区会话窗的常规聊天流（子级按 subagent 族归档展示）。
@@ -2180,6 +2196,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     titleFilter,
     runSystemTurn,
     runSubagentTurn,
+    subagentFor,
     turnSendersAllOwner,
     onNotice,
     turnHasOwner,
