@@ -173,6 +173,8 @@ export function apply(ctx) {
         }
         hub.onMessage(ev).catch((error) => log.error('处理消息出错：', error.message))
       }
+    } else if (ev.post_type === 'notice' && ev.notice_type === 'bot_offline') {
+      log.warn(`QQ 账号离线${ev.tag ? '（' + String(ev.tag).slice(0, 100) + '）' : ''}${ev.message ? '：' + String(ev.message).slice(0, 300) : ''}`)
     } else if (ev.post_type === 'notice' && ev.notice_type === 'notify' && ev.sub_type === 'poke') {
       hub.onPoke(ev).catch((error) => log.error('处理戳一戳出错：', error.message))
     } else if (ev.post_type === 'notice' && ev.notice_type === 'group_upload') {

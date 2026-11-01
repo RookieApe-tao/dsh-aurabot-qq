@@ -90,6 +90,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
   const groupEngaged = new Map() // groupId → 加入话题到什么时候（毫秒）
   const ENGAGE_MS = 3 * 60_000
   const groupNames = new Map()
+  const privateSources = new Map() // 私聊 QQ 号 → 最近一次临时会话的来源群
   const recentMedia = createRecentMedia({ log }) // 最近发来的图片和表情，短期落盘恢复
   const recentFiles = new Map() // chatId → 最近发来的文件
   // 「她挑 / 只听主人的」：这一轮收到的表情先按会话记着，她想收时凭编号来取。
@@ -554,7 +555,8 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
       return null
     }
     const action = tgt.kind === 'group' ? 'send_group_msg' : 'send_private_msg'
-    const params = tgt.kind === 'group' ? { group_id: Number(tgt.id), message } : { user_id: Number(tgt.id), message }
+    const sourceGroupId = tgt.kind === 'private' ? privateSources.get(tgt.id) : ''
+    const params = tgt.kind === 'group' ? { group_id: Number(tgt.id), message } : { user_id: Number(tgt.id), ...(sourceGroupId ? { group_id: Number(sourceGroupId) } : {}), message }
     try {
       const r = await onebot.call(action, params, timeoutMs ? { timeoutMs } : undefined)
       if (r && r.message_id !== undefined) {
@@ -1186,6 +1188,11 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     }
 
     const allowed = checkAllowed(cfg, msg)
+    if (msg.kind === 'private' && (allowed.allowed || event.sub_type === 'friend')) {
+      privateSources.delete(msg.userId)
+      if (allowed.allowed && msg.sourceGroupId) privateSources.set(msg.userId, msg.sourceGroupId)
+      if (privateSources.size > 500) privateSources.delete(privateSources.keys().next().value)
+    }
     // 偷表情：只从白名单里的会话偷；按 collectMode 分三种
     //   auto  = 全都偷（看到就收）
     //   ask   = 她挑（先记着，给她一句轻提示，她喜欢才凭编号收）
@@ -1279,7 +1286,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
         atOthers: cfg.group?.ignoreAtOthers ? msg.atOthers : false,
         repliedToBot: quotedBot,
         fromOwner: isOwner(cfg, msg.userId),
-        text: msg.text,
+        text: msg.wakeText,
         now,
         hour: new Date().getHours(),
         recentTimes: (groupBuf.get(msg.groupId) || []).map((x) => x.t),
@@ -1979,6 +1986,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     systemTurns.clear()
     systemStarting.clear()
     systemFailures.clear()
+    privateSources.clear()
     busy.clear()
     running.clear()
     recentMedia.dispose()
