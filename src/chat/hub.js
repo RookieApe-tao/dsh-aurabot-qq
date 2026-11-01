@@ -8,6 +8,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { appendFileSync, mkdirSync, readFileSync, existsSync, readdirSync, statSync, unlinkSync } from 'node:fs'
 import { basename, isAbsolute, join, relative, resolve } from 'node:path'
 import { homedir } from 'node:os'
+import { fileURLToPath } from 'node:url'
 import { dataDir, readJson, writeJson } from '../core/store.js'
 import { parseMessageEvent, gifFrames } from './inbound.js'
 import { parseReply, bubbleDelay, wantsVoice } from './reply.js'
@@ -752,6 +753,17 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     return true
   }
 
+  /** 她回复里写的本机图片：主人私聊之外只认工作区、允许目录和插件数据目录，防止被人诱导发出电脑上的图。 */
+  function localImageBlocked(chatId, src) {
+    const cfg = getConfig()
+    if (chatId === `private:${cfg.ownerQQ}`) return false
+    const s = String(src ?? '').trim()
+    if (!isAbsolute(s) && !/^file:/i.test(s)) return false
+    try {
+      return !insideRoots(/^file:/i.test(s) ? fileURLToPath(s) : s, [...fileRootsOf(cfg), dataDir()])
+    } catch (error) { return true }
+  }
+
   async function sendImage(chatId, src, replyId, userId) {
     if (disposed) return null
     try {
@@ -845,7 +857,10 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
           else await sendText(chatId, it.value, replyId, missedAt, userId)
         } else if (it.kind === 'sticker') await sendSticker(chatId, it.value, replyId, userId)
         else if (it.kind === 'poke') { if (!opts.simulate) await pokeBack(chatId) }
-        else if (it.kind === 'image') await sendImage(chatId, it.value, replyId, userId)
+        else if (it.kind === 'image') {
+          if (localImageBlocked(chatId, it.value)) log.warn(`${chatId}：回复里的本机图片不在允许的目录里，没发`)
+          else await sendImage(chatId, it.value, replyId, userId)
+        }
         if (i < items.length - 1 && !opts.simulate) await pause(bubbleDelay(items[i + 1].kind === 'text' ? items[i + 1].value : '') * mood().delay)
       }
     })

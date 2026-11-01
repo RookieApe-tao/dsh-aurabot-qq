@@ -424,3 +424,10 @@ test('白名单：没聊过的朋友不找，人设再完整也不凭空开口',
   assert.equal(hub.turns.length, 0)
   assert.equal(hub.delivered.length, 0)
 })
+
+test('内部备忘的标题不发到 QQ（#172）', () => {
+  assert.equal(cleanReply('正文\n内部备忘\n【目的】说说群里的事\n【状态】完成'), '正文')
+  assert.equal(cleanReply('正文\n【内部备忘】\n【目的】x'), '正文')
+  assert.equal(cleanReply('内部备忘\n【状态】跳过'), '')
+  assert.equal(cleanReply('这是我的内部备忘录哦'), '这是我的内部备忘录哦', '句子中间提到不算')
+})

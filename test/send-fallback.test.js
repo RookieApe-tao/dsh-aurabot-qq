@@ -96,3 +96,15 @@ test('语音传不上去：网关报 highway 失败（带 timeout 字样）也�
   assert.equal(result.failed || 0, 0)
 })
 
+test('群里回复写本机图片：允许目录外的不发，数据目录里的照发', async (t) => {
+  const s = setup(t, refused())
+  const outside = join(tmpdir(), 'aurabot-secret.png')
+  writeFileSync(outside, '图')
+  t.after(() => rmSync(outside, { force: true }))
+  await s.hub.deliver('group:9', `![图](${outside})`)
+  assert.equal(s.calls.length, 0)
+  assert.ok(s.logs.some((line) => line.includes('不在允许的目录里')))
+  await s.hub.deliver('group:9', `![图](${s.file})`)
+  assert.equal(s.calls.length, 1)
+})
+
