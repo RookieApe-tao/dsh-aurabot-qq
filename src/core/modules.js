@@ -159,6 +159,42 @@ export function rewriteImports(code, fromKey, keep = new Set()) {
  * @param {string} o.version     插件版本
  * @param {object[]} o.builtins  内置模块定义（按启动顺序）
  */
+/**
+ * 给单个模块的 core：hub 下发「白名单副本」，原始委派入口不下发、也不可经原型链摸回（三审 #177）。
+ * - scopedHub：平面对象，只转发 hub 的函数/取值器（跳过原始 runSubagentTurn / subagentFor），
+ *   再补一个固定模块 id 的 runSubagentTurn；原型就是 Object.prototype，没有可逃逸的入口。
+ * - scopedCore：Proxy 转发 core 的其余属性（bridge / modules 后挂的也可见），
+ *   但 getPrototypeOf 掐成 null —— Object.getPrototypeOf(api.core).hub 也绕不回去。
+ */
+export function scopeCoreForModule(core, id) {
+  if (!core || !core.hub || typeof core.hub.subagentFor !== 'function') return core || {}
+  const scopedHub = {}
+  for (const name of Object.getOwnPropertyNames(core.hub)) {
+    if (name === 'runSubagentTurn' || name === 'subagentFor') continue
+    const d = Object.getOwnPropertyDescriptor(core.hub, name)
+    if (!d) continue
+    if (typeof d.get === 'function') {
+      Object.defineProperty(scopedHub, name, { enumerable: true, configurable: true, get: () => core.hub[name] })
+    } else if (typeof d.value === 'function') {
+      const fn = d.value
+      Object.defineProperty(scopedHub, name, { enumerable: true, configurable: true, value: (...args) => fn.apply(core.hub, args) })
+    } else {
+      Object.defineProperty(scopedHub, name, { enumerable: true, configurable: true, get: () => core.hub[name], set: (v) => { core.hub[name] = v } })
+    }
+  }
+  Object.defineProperty(scopedHub, 'runSubagentTurn', {
+    enumerable: true, configurable: true,
+    value: (name, title, prompt, opts = {}) => core.hub.subagentFor(id)(name, title, prompt, opts),
+  })
+  return new Proxy(core, {
+    get(target, key, recv) {
+      if (key === 'hub') return scopedHub
+      return Reflect.get(target, key, recv)
+    },
+    getPrototypeOf() { return null }, // 摸原型拿回原始 hub 的路也堵死（三审 #177）
+  })
+}
+
 export function createModules({ ctx, core, getConfig, setConfig, logger, version, builtins }) {
   const log = logger.child('modules')
   const builtinDefs = new Map(builtins.map((d) => [d.id, d]))
@@ -210,15 +246,10 @@ export function createModules({ ctx, core, getConfig, setConfig, logger, version
     // 内置模块和替换它的版本用原来的路径（内置的面板页照常能用）；新模块放在 /ext/模块id/ 下
     const prefix = builtinDefs.has(id) || STABLE_ROUTES.has(id) ? '' : `/ext/${id}`
     const def = rec.def
-    // 模块拿到的 core：hub 的 runSubagentTurn 换成「宿主按模块身份封装」的版本——
-    // 模块不能自报 moduleId / source（一审 #177 复审第 1 条）。用 Object.create 保持对 core
-    // 后续挂在原型上的属性（bridge / modules 等）动态可见。
-    const scopedCore = Object.create(core || null)
-    if (core && core.hub && typeof core.hub.subagentFor === 'function') {
-      const scopedHub = Object.create(core.hub)
-      scopedHub.runSubagentTurn = (name, title, prompt, opts = {}) => core.hub.subagentFor(id)(name, title, prompt, opts)
-      Object.defineProperty(scopedCore, 'hub', { value: scopedHub, enumerable: true, configurable: true })
-    }
+    // 模块拿到的 core：hub 换成「宿主按模块身份封装」的白名单副本（三审 #177：原型链斩断，
+    // 模块摸不到原始 runSubagentTurn / subagentFor）；core 本体用 Proxy 转发，
+    // getPrototypeOf 也掐断，防 getPrototypeOf(api.core).hub 绕回原始入口。
+    const scopedCore = scopeCoreForModule(core, id)
     const api = {
       id,
       source,

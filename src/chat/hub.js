@@ -2143,6 +2143,9 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
   function dispose() {
     if (disposed) return
     disposed = true
+    // 三审 #177：常驻的子智能体父级 agent 一并置空——插件重装/重启后下次 spawn 重新建，
+    // 别攥着旧句柄不放（旧的父会话交给 DSH 自己的会话回收去清）。
+    subagentParentAgent = null
     for (const p of pending.values()) clearTimeout(p.timer)
     pending.clear()
     for (const key of [...typing.keys()]) stopTyping(key)

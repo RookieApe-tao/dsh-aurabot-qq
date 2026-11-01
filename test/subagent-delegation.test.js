@@ -142,6 +142,31 @@ test('后台开关：config.subagentBackground 打开后才允许无主人活动
   assert.equal(s.calls.length, 1)
 })
 
+test('模块可见的 core：委派原始入口被遮蔽，原型链也摸不回去（三审 #177）', async (t) => {
+  const { scopeCoreForModule } = await import('../src/core/modules.js')
+  const s = setup(t)
+  const core = { hub: s.hub }
+  const scoped = scopeCoreForModule(core, 'phone')
+
+  // 模块拿到的入口能用：固定 phone 身份，走宿主判定
+  const out = await scoped.hub.runSubagentTurn('手机逛逛', '手机逛逛', '任务书')
+  assert.equal(out, '子智能体办好了')
+  assert.equal(s.calls.length, 1)
+
+  // 原始入口不下发
+  assert.equal(scoped.hub.subagentFor, undefined, 'subagentFor 不对模块可见')
+  // 原型链摸不回去：scopedHub 的原型是 Object.prototype，scopedCore 的原型被掐成 null
+  assert.equal(Object.getPrototypeOf(scoped.hub).runSubagentTurn, undefined, '原型链上不能有原始 runSubagentTurn')
+  assert.equal(Object.getPrototypeOf(scoped.hub).subagentFor, undefined, '原型链上不能有原始 subagentFor')
+  assert.equal(Object.getPrototypeOf(scoped), null, 'core 的原型链要掐断（getPrototypeOf(api.core).hub 绕回）')
+  // 其余 hub 能力照常转发、core 的其他属性照常可见
+  assert.equal(typeof scoped.hub.sendText, 'function', 'hub 其余方法照常下发')
+  assert.equal(scoped.extra, undefined, 'core 上没有的属性不凭空出现')
+  // 原始 hub 不受影响
+  assert.equal(typeof core.hub.runSubagentTurn, 'function')
+  assert.equal(typeof core.hub.subagentFor, 'function')
+})
+
 test('cordis.patch.yml 里有专给子级的 aurabot-subagent preset：本机工具 + 无 QQ 人格', () => {
   const yml = readFileSync(new URL('../cordis.patch.yml', import.meta.url), 'utf8')
   assert.match(yml, /id:\s*preset-aurabot-subagent/, 'preset 条目必须存在')
