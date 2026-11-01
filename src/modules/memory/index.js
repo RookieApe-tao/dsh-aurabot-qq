@@ -12,17 +12,18 @@ export default {
   version: '1.0.0',
   description: '长期记忆：记事、想起、每日整理、小档案和相处经验',
   tab: 'mood',
-  files: ['features/memory.js'],
-  setup(api) {
+  files: ['features/memory.js', 'features/memory-vector.js'],
+  setup(api, { fetchImpl } = {}) {
     const { hub, http } = api.core
-    const memory = createMemoryStore({ dsh: api.dsh, getConfig: api.config, hub, log: api.log })
+    const memory = createMemoryStore({ dsh: api.dsh, getConfig: api.config, hub, log: api.log, fetchImpl })
 
     api.context(({ chat, sessionId }) => (chat.kind === 'system' ? '' : memory.contextFor(chat, sessionId)))
     // #79：随消息变化的相关记忆放在「交给她的内容」里，不放进每轮都会追加的运行时上下文快照
-    api.on('prompt', (content, info) => {
+    api.on('prompt', async (content, info) => {
       try {
         if (!info || !info.chat || info.chat.kind === 'system' || !Array.isArray(content)) return content
-        const hint = memory.recallHint(info.chat, info.queryText || '', info.prevText || '', info.sessionId, info.speakers || [])
+        const hits = await memory.vectorHits(info.queryText || '', { respectForget: true })
+        const hint = memory.recallHint(info.chat, info.queryText || '', info.prevText || '', info.sessionId, info.speakers || [], hits)
         if (!hint) return content
         return [{ type: 'text', text: hint }, ...content]
       } catch (error) { return content }
@@ -61,7 +62,8 @@ export default {
             // 群聊 / 非主人私聊里只翻「这个人自己」的记忆，不能把主人的私事翻出来
             const owner = chat.kind === 'private' && String(chat.userId) === String(api.config().ownerQQ || '')
             const onlyAbout = owner ? undefined : (chat.userId || '')
-            const hits = memory.recall(String(query || ''), { about: chat.userId, onlyAbout, requireAbout: !owner, excludeAbout: owner ? '' : api.config().ownerQQ, includeGroup: owner, groupChatId: chat.kind === 'group' ? current : '', limit: 8, where: current + '（翻记忆）' })
+            const vectorHits = await memory.vectorHits(query)
+            const hits = memory.recall(String(query || ''), { about: chat.userId, onlyAbout, requireAbout: !owner, excludeAbout: owner ? '' : api.config().ownerQQ, includeGroup: owner, groupChatId: chat.kind === 'group' ? current : '', limit: 8, where: current + '（翻记忆）', vectorHits })
             return hits.length ? { ok: true, message: hits.map((h) => memoryLine(h.it)).join('；') } : { ok: true, message: '没想起相关的事' }
           },
         }),

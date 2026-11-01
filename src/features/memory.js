@@ -1,5 +1,5 @@
 // 索引记忆库：本地 JSON 存储 + 倒排索引（中文按二元字组切词，英文数字按词）+ BM25 打分，
-// 再叠加「关于当前说话人」「重要程度」「新近程度」的加权。不依赖外部向量库，几千条也是毫秒级。
+// 再叠加「关于当前说话人」「重要程度」「新近程度」的加权。可选向量检索按意思补充召回。
 //
 // 记忆来源：她自己调 remember 工具记的、后台从聊天里自动提炼的、主人在面板里手动加的。
 // 召回时机：每一轮回复前，用「这一轮对方说的话」（太短就连上一句）检索最相关的几条，作为上下文悄悄告诉她。
@@ -16,6 +16,7 @@ import { randomUUID } from 'node:crypto'
 import { dataDir, readJson, writeJson } from '../core/store.js'
 import { askModel, lastEmptyInfo } from '../core/llm.js'
 import { clipText } from '../core/text.js'
+import { createVectorIndex } from './memory-vector.js'
 
 const NO_ARRAY = '提炼记忆时模型没有返回 JSON 数组'
 const EXTRACT_RETRY_TOKENS = 16000
@@ -87,7 +88,7 @@ export function buildIndex(items) {
  * 检索。
  * @param idx buildIndex() 的结果
  * @param {string} query
- * @param {{about?:string|string[], now?:number, limit?:number, minScore?:number, includeInvalid?:boolean}} [o]
+ * @param {{about?:string|string[], now?:number, limit?:number, minScore?:number, includeInvalid?:boolean, vectorHits?:{id:string, similarity:number}[]}} [o]
  *   about：关于这些人（QQ 号）的记忆加分；群里可以传这一段里所有说话的人
  */
 export function search(idx, query, o = {}) {
@@ -98,6 +99,10 @@ export function search(idx, query, o = {}) {
   const onlyAbout = o.onlyAbout
     ? new Set((Array.isArray(o.onlyAbout) ? o.onlyAbout : [o.onlyAbout]).map(String))
     : null
+  const vectors = new Map()
+  if (Array.isArray(o.vectorHits)) for (const hit of o.vectorHits) {
+    if (hit && Number.isFinite(hit.similarity) && hit.similarity >= 0.55 && (!vectors.has(hit.id) || vectors.get(hit.id) < hit.similarity)) vectors.set(hit.id, hit.similarity)
+  }
   const k1 = 1.4
   const b = 0.7
   const scored = []
@@ -124,12 +129,14 @@ export function search(idx, query, o = {}) {
     const it = d.it
     if (it.invalidAt && !o.includeInvalid) continue
     const aboutHit = Boolean(it.about) && aboutSet.has(String(it.about))
-    if (s <= 0) continue // 只「关于这个人」但和这句话无关的不算想起，人物小档案已经常驻了
+    const vector = vectors.get(it.id)
+    if (s <= 0 && vector === undefined) continue // 零关键词只能由足够相似的向量召回
     const importance = 0.6 + 0.8 * (Number(it.importance) || 0.5)
-    const score = (s + (aboutHit ? 0.8 : 0)) * importance * (0.55 + 0.45 * retention(it, now))
-    scored.push({ it, score, keyword: s, why: why.sort((x, y) => y[1] - x[1]).slice(0, 3).map((w) => w[0]).concat(aboutHit ? ['（关于这个人）'] : []) })
+    const score = ((s > 0 ? s : vector) + (aboutHit ? 0.8 : 0)) * importance * (0.55 + 0.45 * retention(it, now))
+    scored.push({ it, score, keyword: s, vector, why: why.sort((x, y) => y[1] - x[1]).slice(0, 3).map((w) => w[0]).concat(aboutHit ? ['（关于这个人）'] : [], vector !== undefined ? ['（语义相关）'] : []) })
   }
-  const hits = scored.filter((x) => x.score >= (o.minScore ?? 0.35))
+  // 关键词名次始终从关键词候选里算，向量候选不能改变原本的关键词排序。
+  const hits = scored.filter((x) => x.keyword > 0 && x.score >= (o.minScore ?? 0.35))
   if (o.rrf !== false) {
     const ranks = (value) => {
       const sorted = [...hits].sort((a, b) => value(b) - value(a))
@@ -141,7 +148,16 @@ export function search(idx, query, o = {}) {
     const fused = (h) => 1 / (60 + keywordRank.get(h)) + 1 / (60 + timeRank.get(h))
     hits.sort((a, b) => Math.floor(b.score * 10) - Math.floor(a.score * 10) || fused(b) - fused(a) || b.score - a.score)
   } else hits.sort((a, b) => b.score - a.score)
-  return hits.slice(0, o.limit ?? 6).map(({ keyword, ...hit }) => hit)
+  if (vectors.size) {
+    // 先保留原来的关键词排序，再与相似度排序按名次融合，分数不能直接相加。
+    const keywordRank = new Map(hits.map((h, i) => [h, i + 1]))
+    const have = new Set(hits)
+    for (const hit of scored) if (hit.vector !== undefined && !have.has(hit)) hits.push(hit)
+    const vectorRank = new Map(hits.filter((h) => h.vector !== undefined).sort((a, b) => b.vector - a.vector).map((h, i) => [h, i + 1]))
+    const fused = (h) => (keywordRank.has(h) ? 1 / (60 + keywordRank.get(h)) : 0) + (vectorRank.has(h) ? 1 / (60 + vectorRank.get(h)) : 0)
+    hits.sort((a, b) => fused(b) - fused(a) || b.score - a.score)
+  }
+  return hits.slice(0, o.limit ?? 6).map(({ keyword, vector, ...hit }) => hit)
 }
 
 /** 「刚才」「3 小时前」「昨天」这样的说法。 */
@@ -316,7 +332,8 @@ export function parseFacts(out) {
   return null
 }
 
-export function createMemoryStore({ dsh, getConfig, hub, log }) {
+export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl }) {
+  const vector = createVectorIndex({ getConfig, log, fetchImpl })
   const file = () => dataDir('memories.json')
   let transaction = null // 一批记忆和流水进度一起落盘，避免中断后重复提炼
   const load = () => transaction ? structuredClone(transaction) : readJson(file(), () => ({ items: [] }))
@@ -501,14 +518,18 @@ export function createMemoryStore({ dsh, getConfig, hub, log }) {
     writeJson(file(), s) // 只改命中计数，不动索引
   }
 
-  function recall(query, { about, limit, where = '', context = '', onlyAbout, requireAbout, shown = true, groupChatId = '', includeGroup = false, excludeAbout = '' } = {}) {
+  function recall(query, { about, limit, where = '', context = '', onlyAbout, requireAbout, shown = true, groupChatId = '', includeGroup = false, excludeAbout = '', vectorHits } = {}) {
     const max = limit ?? getConfig().memory.recallCount
     const id = String(where).split('（')[0]
     const owner = String(getConfig().ownerQQ || '')
     const ownerPrivate = Boolean(owner && id === `private:${owner}`)
     const excluded = [...(Array.isArray(excludeAbout) ? excludeAbout : excludeAbout ? [excludeAbout] : []), ...(!ownerPrivate && /^(private|group):/.test(id) && owner ? [owner] : [])]
     const options = { about, onlyAbout, requireAbout, groupChatId: getConfig().memory.groupMemory !== false && id === groupChatId && id.startsWith('group:') ? id : '', includeGroup: getConfig().memory.groupMemory !== false && includeGroup && ownerPrivate, excludeAbout: excluded, rrf: getConfig().memory.searchRrf !== false }
-    const hits = search(index(), query, { ...options, limit: max })
+    const idx = index()
+    // 查询结束到真正回忆之间，记忆可能刚被改写、忘掉或关闭向量检索。
+    const valid = Array.isArray(vectorHits) && vectorHits.length ? new Set(vector.validIds(idx.docs.map((d) => d.it))) : null
+    const currentHits = valid ? vectorHits.filter((h) => valid.has(h.id)) : []
+    const hits = search(idx, query, { ...options, limit: max, vectorHits: currentHits })
     // 这一句没想起几条（「嗯嗯」「然后呢」）：用上一句再找找，分数打折
     if (context && hits.length < max) {
       const have = new Set(hits.map((h) => h.it.id))
@@ -522,6 +543,22 @@ export function createMemoryStore({ dsh, getConfig, hub, log }) {
     saveRecalls()
     if (shown) touch(hits)
     return hits
+  }
+
+  /** 只查已同步且文字没变的记忆，查询失败就沿用原来的关键词回忆。 */
+  async function vectorHits(query, { respectForget = false } = {}) {
+    const q = String(query || '').trim()
+    if (!getConfig().memory.enabled || !getConfig().memory.vector?.enabled || !q || (respectForget && parseMemoryCommand(q)?.action === 'forget')) return []
+    try {
+      if (!vector.validIds(index().docs.map((d) => d.it)).length) return []
+      const vec = await vector.queryVector(q)
+      if (!vec) return []
+      const ids = vector.validIds(index().docs.map((d) => d.it))
+      return vector.search(vec, ids, ids.length).filter((h) => h.similarity >= 0.55)
+    } catch (error) {
+      log.debug?.('向量查询失败，暂时使用关键词检索')
+      return []
+    }
   }
 
   // ---------- 相处经验：按人（私聊按 QQ 号，群按群）归类的、概括性的「怎么和 TA 相处」，越聊越懂 ----------
@@ -733,7 +770,7 @@ export function createMemoryStore({ dsh, getConfig, hub, log }) {
    * 这一轮聊到的事相关的记忆（#79）：内容随每条消息变化，所以由模块在「交给她的内容」里附上，
    * 不放进每轮都会追加的运行时上下文快照。最多 4 条、总长 ≤ 300 字。
    */
-  function recallHint(chat, queryText, prevText = '', sessionId = '', speakers) {
+  function recallHint(chat, queryText, prevText = '', sessionId = '', speakers, vectorHits) {
     const cfg = getConfig().memory
     if (!cfg.enabled) return ''
     const q = String(queryText || '').trim()
@@ -749,7 +786,7 @@ export function createMemoryStore({ dsh, getConfig, hub, log }) {
     const requireAbout = !ownerPrivate
     // 「嗯嗯」「然后呢」这种短句单看检索不到东西，把上一句也带上
     const ctxText = q.length < 12 ? String(prevText || '').slice(-300) : ''
-    const hits = recall(q, { about, onlyAbout, requireAbout, where: (chat && chat.chatId) || '', context: ctxText, shown: false, groupChatId: chat?.kind === 'group' ? chat.chatId : '', includeGroup: ownerPrivate, excludeAbout: ownerPrivate ? '' : owner }).filter((h) => !shown.has(h.it.id)).slice(0, 4)
+    const hits = recall(q, { about, onlyAbout, requireAbout, where: (chat && chat.chatId) || '', context: ctxText, shown: false, groupChatId: chat?.kind === 'group' ? chat.chatId : '', includeGroup: ownerPrivate, excludeAbout: ownerPrivate ? '' : owner, vectorHits }).filter((h) => !shown.has(h.it.id)).slice(0, 4)
     touch(hits)
     if (recallLog[0]) { recallLog[0].shown = hits.map((h) => h.it.id); saveRecalls() }
     let body = hits.map((h) => memoryLine(h.it)).join('；')
@@ -1319,8 +1356,20 @@ export function createMemoryStore({ dsh, getConfig, hub, log }) {
   }
 
   /** 每分钟调一次：空闲聊天先提炼，定时整理保留兜底。 */
+  let tickBusy = false
   async function tick() {
+    if (tickBusy) return
+    if (!getConfig().memory.enabled || !getConfig().memory.vector?.enabled) return tickOnce()
+    tickBusy = true
+    try { return await tickOnce() } finally { tickBusy = false }
+  }
+
+  async function tickOnce() {
     const cfg = getConfig().memory
+    if (cfg.enabled && cfg.vector?.enabled) {
+      try { await vector.sync(load().items, () => load().items) }
+      catch (error) { log.debug?.('向量索引同步失败，稍后再试') }
+    }
     if (!cfg.enabled || !cfg.dailyConsolidate) {
       // 没开每日整理时也按 keepChatlogDays 清理：-1 不清、0 沿用原来的 14 天、N 按 N 天
       const keepDays = Number(getConfig().memory.keepChatlogDays)
@@ -1362,7 +1411,7 @@ export function createMemoryStore({ dsh, getConfig, hub, log }) {
   }
 
   return {
-    recallHint, handleCommand,
+    recallHint, handleCommand, vectorHits,
     add, addEvent, recentEvents, update, remove, restore, recall, contextFor, consolidate, tick, topicScore, importCandidates, importCommit,
     profiles: () => { const s = load(); return Object.entries(s.profiles || {}).map(([qq, p]) => ({ qq, ...p })).sort((a, b) => b.at - a.at) },
     setProfile, buildProfile,
@@ -1386,7 +1435,7 @@ export function createMemoryStore({ dsh, getConfig, hub, log }) {
     stats: () => {
       const items = load().items
       const live = items.filter((m) => !m.invalidAt)
-      return { count: live.length, auto: live.filter((m) => m.source === 'auto').length, events: live.filter((m) => m.source === 'event').length, outdated: items.length - live.length }
+      return { count: live.length, auto: live.filter((m) => m.source === 'auto').length, events: live.filter((m) => m.source === 'event').length, outdated: items.length - live.length, vector: vector.count(live) }
     },
   }
 }
