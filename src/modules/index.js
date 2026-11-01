@@ -5,6 +5,7 @@ import voice from './voice/index.js'
 import mood from './mood/index.js'
 import memory from './memory/index.js'
 import qqTools from './qq-tools/index.js'
+import qqApi from './qq-api/index.js'
 import imagegen from './imagegen/index.js'
 import diary from './diary/index.js'
 import qzoneSocial from './qzone-social/index.js'
@@ -16,4 +17,4 @@ import profile from './profile/index.js'
 import contacts from './contacts/index.js'
 import video from './video/index.js'
 
-export const BUILTINS = [stickers, voice, mood, memory, qqTools, imagegen, diary, qzoneSocial, speakup, purpose, bili, song, profile, contacts, video]
+export const BUILTINS = [stickers, voice, mood, memory, qqTools, qqApi, imagegen, diary, qzoneSocial, speakup, purpose, bili, song, profile, contacts, video]
