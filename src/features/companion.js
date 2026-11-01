@@ -73,7 +73,7 @@ export function createMood({ getConfig, dsh, log }) {
   /** 当前配置的基线：衰减、初始值、兜底、判断提示词四处统一读它。 */
   const base = () => {
     const v = Number(getConfig().mood?.base)
-    return Number.isFinite(v) && v >= 10 && v <= 90 ? v : MOOD_BASE
+    return Number.isFinite(v) ? Math.min(90, Math.max(10, v)) : MOOD_BASE // 面板是 10~90，手写超出时夹到边上，别退回默认
   }
   const load = () => readJson(file(), () => ({ value: base(), at: Date.now(), reason: '', history: [] }))
   const save = (s) => writeJson(file(), s)
