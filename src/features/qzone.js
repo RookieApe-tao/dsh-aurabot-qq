@@ -137,7 +137,7 @@ export function createQzone({ getConfig, onebot, hub, log, onDiary, pickImage, c
 
   function todayExcerpt(maxLines = 60) {
     const lines = hub.chatLogOf(dayKey())
-      .filter((l) => !String(l.chatId).startsWith('system:'))
+      .filter((l) => !l.forgottenAt && !String(l.chatId).startsWith('system:'))
       .slice(-maxLines)
       .map((l) => `${new Date(l.t).toTimeString().slice(0, 5)} ${l.who === 'bot' ? '我' : l.who}：${l.text}`)
     return lines.join('\n')

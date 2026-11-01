@@ -5,7 +5,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { appendFileSync, mkdirSync, readFileSync, existsSync, readdirSync, statSync, unlinkSync } from 'node:fs'
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync, renameSync, existsSync, readdirSync, statSync, unlinkSync } from 'node:fs'
 import { basename, isAbsolute, join, relative, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -31,6 +31,7 @@ import { isDefiniteFailure } from '../onebot/client.js'
 import { grantOwner } from '../core/workspace-move.js'
 import { createLeakGuard } from '../security/leak-guard.js'
 import { noticeText } from './notices.js'
+import { matchesMemoryKeyword, parseMemoryCommand } from '../features/memory.js'
 
 // QQ 会话的工作区目录，第一次收到消息时自动创建。面板「连接」页能改（config.workspaceDir，#32）；
 // 没填就用环境变量 AURABOT_WORKSPACE，再没有：老安装沿用 C:\Aurabot\qq-chats，新安装放在用户目录下（不用往 C 盘根目录写）
@@ -65,7 +66,7 @@ const sessionKey = (id) => {
 // 模拟测试：这里面发出去的消息只记下来，不真发
 const captureStore = new AsyncLocalStorage()
 const failStore = new AsyncLocalStorage() // deliver 这一次里发失败的原因，好让调用方如实告诉她
-export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildTools, contextProviders, onActivity, memoryScore, onCommand, isMuted, moodEffects, localApi, hooks, availableModels, toolsGeneration }) {
+export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildTools, contextProviders, onActivity, memoryScore, onMemoryCommand, onCommand, isMuted, moodEffects, localApi, hooks, availableModels, toolsGeneration }) {
   // 心情对行为的影响（表情 / 语音概率、回复快慢、插话积极程度），没接就是 1
   const mood = () => (typeof moodEffects === 'function' ? moodEffects() : null) || { sticker: 1, voice: 1, delay: 1, chatty: 1 }
   const mapFile = () => dataDir('sessions.json')
@@ -216,7 +217,8 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
       const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
       const dir = dataDir('chatlog')
       mkdirSync(dir, { recursive: true })
-      appendFileSync(join(dir, `${day}.jsonl`), JSON.stringify({ t: Date.now(), chatId, who, ...(uid ? { uid: String(uid) } : {}), text: redact(String(text).slice(0, 500)) }) + '\n', 'utf8')
+      const forgotten = String(chatId).startsWith('private:') && getConfig().memory?.enabled && getConfig().memory?.instantCommands !== false && parseMemoryCommand(text)?.action === 'forget'
+      appendFileSync(join(dir, `${day}.jsonl`), JSON.stringify({ t: Date.now(), chatId, who, ...(uid ? { uid: String(uid) } : {}), text: redact(String(text).slice(0, 500)), ...(forgotten ? { forgottenAt: Date.now() } : {}) }) + '\n', 'utf8')
     } catch (error) {}
   }
 
@@ -266,6 +268,34 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     } catch (error) {
       return []
     }
+  }
+
+  function forgetChatLog(qq, query) {
+    let marked = 0
+    for (const day of chatLogDays()) {
+      const path = join(dataDir('chatlog'), `${day}.jsonl`)
+      try {
+        const rows = readFileSync(path, 'utf8').split('\n')
+        let changed = false
+        const next = rows.map((raw) => {
+          if (!raw) return raw
+          let l
+          try { l = JSON.parse(raw) } catch (error) { return raw }
+          const own = l.chatId === `private:${qq}` || (String(l.chatId).startsWith('group:') && String(l.uid || '') === String(qq))
+          if (!own || l.forgottenAt || !matchesMemoryKeyword(l.text, query)) return raw
+          l.forgottenAt = Date.now()
+          changed = true
+          marked++
+          return JSON.stringify(l)
+        })
+        if (changed) {
+          const tmp = `${path}.tmp-${process.pid}`
+          writeFileSync(tmp, next.join('\n'), 'utf8')
+          renameSync(tmp, path)
+        }
+      } catch (error) { log.warn('标记聊天流水失败：', error.message) }
+    }
+    return marked
   }
 
   // ---------- 工作区与会话 ----------
@@ -1282,6 +1312,10 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
       return
     }
 
+    if (msg.kind === 'private' && onMemoryCommand) {
+      try { onMemoryCommand(msg, msg.text) } catch (error) { log.warn('处理记忆请求失败：', error.message) }
+    }
+
     if (isMuted?.(msg.chatId)) {
       log.debug(`${msg.chatId}：主人让她闭嘴中，不回`)
       logChat(msg.chatId, msg.nickname, msg.text, msg.userId)
@@ -1362,6 +1396,9 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     const voiceText = cfg.voice.asr && msg.records.length ? await transcribe(msg) : msg.records.length ? '[发来一条语音]' : ''
     if (disposed) return
     if (voiceText) text = (text ? text + ' ' : '') + voiceText
+    if (voiceText && msg.kind === 'private' && onMemoryCommand) {
+      try { onMemoryCommand(msg, text) } catch (error) { log.warn('处理记忆请求失败：', error.message) }
+    }
     if (voiceText && msg.kind === 'group') {
       // 群消息的文字在 groupBuf 里，语音转出来的字补进去，拼提示词时才看得到
       const last = (groupBuf.get(msg.groupId) || []).findLast?.((x) => x.uid === msg.userId)
@@ -2071,6 +2108,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     localTranscribe,
     ensureWorkspace,
     chatLogOf,
+    forgetChatLog,
     noteSaid,
     chatLogDays,
     deleteChatLog,

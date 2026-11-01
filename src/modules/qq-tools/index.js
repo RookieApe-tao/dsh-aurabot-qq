@@ -173,7 +173,7 @@ export default {
           const hits = []
           for (const day of from) {
             for (const l of hub.chatLogOf?.(day) || []) {
-              if (only && l.chatId !== only) continue
+              if (l.forgottenAt || (only && l.chatId !== only)) continue
               const t = String(l.text || '')
               if (!words.every((w) => t.includes(w))) continue
               const hhmm = new Date(l.t).toTimeString().slice(0, 5)

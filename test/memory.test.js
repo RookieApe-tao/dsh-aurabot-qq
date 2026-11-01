@@ -139,14 +139,14 @@ test('整理：群聊和空间里的事按 QQ 号记到人头上；空间动态�
   assert.equal(hit.about, '30000003')
 })
 
-test('遗忘：不重要、两个月没想起过的自动记忆忘掉，自己记的和经历不忘', async () => {
+test('遗忘：自动记忆按遗忘曲线淡去，普通经历超过 90 天过期', async () => {
   const { shouldForget } = await import('../src/features/memory.js')
-  const old = Date.now() - 90 * 86400_000
+  const old = Date.now() - 91 * 86400_000
   assert.equal(shouldForget({ source: 'auto', importance: 0.4, at: old }), true)
   assert.equal(shouldForget({ source: 'auto', importance: 0.4, at: old, lastHit: Date.now() }), false, '最近被想起过')
   assert.equal(shouldForget({ source: 'auto', importance: 0.8, at: old }), false, '重要的不忘')
   assert.equal(shouldForget({ source: 'tool', importance: 0.3, at: old }), false)
-  assert.equal(shouldForget({ source: 'event', importance: 0.3, at: old }), false)
+  assert.equal(shouldForget({ source: 'event', importance: 0.3, at: old }), true)
 })
 
 test('想起来的记忆带时间；最近想起了什么有记录（含想不起来的那次）', async () => {
@@ -214,7 +214,7 @@ test('整理时比对旧记忆：新事实说明旧的过时了，旧的标过�
   hubState.text = ''
 })
 
-test('人物小档案：按这个人的记忆写，聊天时常驻；群里带上正在说话的人', async () => {
+test('人物小档案：按这个人的记忆写，群里不带主人的档案', async () => {
   mem.add({ text: '小明爱钓鱼', about: '10000001', aboutName: '小明', source: 'tool' })
   mem.add({ text: '小明是程序员', about: '10000001', aboutName: '小明', source: 'tool' })
   mem.add({ text: '小明养了一只狗', about: '10000001', aboutName: '小明', source: 'tool' })
@@ -225,7 +225,7 @@ test('人物小档案：按这个人的记忆写，聊天时常驻；群里带�
   assert.match(p, /你对对方的印象：小明是主人/)
   hubState.speakers = ['10000001']
   const g = mem.contextFor({ kind: 'group', groupId: '7', chatId: 'group:7' }, 's7')
-  assert.match(g, /你对正在说话的人的印象：小明\(10000001\)——小明是主人/)
+  assert.doesNotMatch(g, /小明是主人/)
   assert.equal(await mem.buildProfile('99999999'), false, '记忆太少不写')
   hubState.text = ''
   hubState.speakers = []

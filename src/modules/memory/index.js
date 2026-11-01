@@ -2,20 +2,9 @@
 // 导出 createMemoryStore 的返回值：add / addEvent / recall / list / contextFor / topicScore / consolidate ……
 // 别的模块（空间日记、B 站、翻唱）会往这里记她的经历；记忆模块关着时它们自己跳过。
 
-import { createMemoryStore, memoryLine } from '../../features/memory.js'
+import { createMemoryStore, memoryLine, looksLikeRuleMemory } from '../../features/memory.js'
+export { looksLikeRuleMemory } from '../../features/memory.js'
 import { defineTool, str } from '../../tools/tools.js'
-
-/** 非主人想把「规则/指令/权限」写进长期记忆：执行层直接拒绝，不能只靠模型自觉。 */
-export function looksLikeRuleMemory(text) {
-  const t = String(text || '')
-  if (!t) return false
-  // 明确的规则/权限词，或「主人说…发/给/做/先」这类授权口吻
-  if (/(规则|指令|命令|权限|白名单|主人让你|主人的话|等同主人|不用确认|都先|一律|不许|不要|禁止)/.test(t)) return true
-  if (/(主人说|主人让|主人要求).{0,30}(发|给|做|先|都|不许|不要|禁止|只能)/.test(t)) return true
-  // 「以后/每次…都/必须/先…发/给/做/听」这类可执行规则；普通喜好（以后想去看海）不拦
-  if (/(以后|今后|每次|永远).{0,30}(都|必须|只能|先|不许|不要|禁止|一律).{0,30}(发|给|做|听|按|文件|群|主人|规则|命令|权限)/.test(t)) return true
-  return false
-}
 
 export default {
   id: 'memory',
@@ -70,8 +59,9 @@ export default {
           required: ['query'],
           execute: async ({ query }) => {
             // 群聊 / 非主人私聊里只翻「这个人自己」的记忆，不能把主人的私事翻出来
-            const onlyAbout = level === 'full' ? undefined : (chat.userId || '')
-            const hits = memory.recall(String(query || ''), { about: chat.userId, onlyAbout, requireAbout: level !== 'full', limit: 8, where: current + '（翻记忆）' })
+            const owner = chat.kind === 'private' && String(chat.userId) === String(api.config().ownerQQ || '')
+            const onlyAbout = owner ? undefined : (chat.userId || '')
+            const hits = memory.recall(String(query || ''), { about: chat.userId, onlyAbout, requireAbout: !owner, excludeAbout: owner ? '' : api.config().ownerQQ, includeGroup: owner, groupChatId: chat.kind === 'group' ? current : '', limit: 8, where: current + '（翻记忆）' })
             return hits.length ? { ok: true, message: hits.map((h) => memoryLine(h.it)).join('；') } : { ok: true, message: '没想起相关的事' }
           },
         }),

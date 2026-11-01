@@ -112,7 +112,7 @@ export function createPurpose({ getConfig, setConfig, hub, log, isMuted, mood, m
     try {
       const items = memoryOf()?.list?.('') || []
       return items
-        .filter((m) => m && !m.invalidAt && m.text && (!friend || String(m.about) === friend))
+        .filter((m) => m && !m.invalidAt && m.text && !['hearsay', 'guess'].includes(m.status) && (!friend || (m.scope !== 'group' && String(m.about) === friend)))
         .map((m) => ({
           id: m.id,
           title: '',
@@ -141,7 +141,7 @@ export function createPurpose({ getConfig, setConfig, hub, log, isMuted, mood, m
       const days = hub.chatLogDays?.() || []
       for (const day of days.slice(-2)) {
         for (const e of hub.chatLogOf?.(day) || []) {
-          if (!e?.chatId) continue
+          if (!e?.chatId || e.forgottenAt) continue
           if (e.chatId !== ownerKey && (friend || !String(e.chatId).startsWith('group:'))) continue
           pick(e.chatId).recentMessages.push({
             text: String(e.text || ''),
