@@ -39,8 +39,15 @@ export function isSilence(text) {
  * @param {string} text 模型这一轮的最终正文
  * @returns {{silent: boolean, items: Array<{kind:'text'|'voice'|'sticker'|'image', value:string, replyTo?:string}>}}
  */
+/** 模型没真调工具、把调用写成了文字（<qq_draw_image"> <prompt>…</prompt>）：这些不能发到 QQ。 */
+export function stripToolText(text) {
+  return String(text || '')
+    .replace(/<prompt>[\s\S]*?<\/prompt>/g, '')
+    .replace(/<\/?[a-z][a-z0-9]*_[a-z0-9_]+"?\s*>/g, '')
+}
+
 export function parseReply(text) {
-  const raw = String(text || '').trim()
+  const raw = stripToolText(text).trim()
   if (isSilence(raw)) return { silent: true, items: [] }
   const items = []
   let replyTo = '' // 等着挂到下一条气泡上的「引用回复」编号

@@ -154,7 +154,7 @@ const sentTo = (kind, id) => mock.calls.filter((c) => c.action === `send_${kind}
 test('人格与规则通过提示词变量注入', () => {
   assert.match(fake.variables.get('aurabot_persona')(), /大肥鱼/)
   assert.match(fake.variables.get('aurabot_persona')(), /鲸鱼/)
-  assert.match(fake.variables.get('aurabot_rules_social')(), /没有任何电脑操作能力/)
+  assert.match(fake.variables.get('aurabot_rules_social')(), /不能跑命令、不能读写电脑上的文件/)
   assert.match(fake.variables.get('aurabot_rules_private')(), /10000001/)
 })
 
