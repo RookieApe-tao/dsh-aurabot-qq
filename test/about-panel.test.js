@@ -28,7 +28,7 @@ test('面板源码契约：「关于」页有核心开发者卡，三个人一�
 })
 
 test('面板源码契约：贡献者头像墙走 contrib.rocks 自动更新', () => {
-  assert.ok(src.includes('https://contrib.rocks/image?repo=accomplish07zrh-eng/dsh-aurabot-qq'), '贡献者头像墙地址没了，新人提交就不会自动出现')
+  assert.ok(src.includes('https://contrib.rocks/image?repo=aureth-labs/dsh-aurabot-qq'), '贡献者头像墙地址没了，新人提交就不会自动出现')
   assert.ok(src.includes("referrerPolicy: 'no-referrer'"), '头像墙要带 no-referrer')
   assert.ok(src.includes("loading: 'lazy'"), '头像墙要懒加载，别拖慢面板首屏')
 })

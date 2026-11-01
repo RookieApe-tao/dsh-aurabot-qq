@@ -29,6 +29,7 @@ import { createTitleFilter } from './title-filter.js'
 import { isDefiniteFailure } from '../onebot/client.js'
 import { grantOwner } from '../core/workspace-move.js'
 import { createLeakGuard } from '../security/leak-guard.js'
+import { noticeText } from './notices.js'
 
 // QQ 会话的工作区目录，第一次收到消息时自动创建。面板「连接」页能改（config.workspaceDir，#32）；
 // 没填就用环境变量 AURABOT_WORKSPACE，再没有：老安装沿用 C:\Aurabot\qq-chats，新安装放在用户目录下（不用往 C 盘根目录写）
@@ -154,6 +155,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
   const faces = createFaces({ onebot, log }) // QQ 系统表情：<face:名字> ↔ 编号
   const titleFilter = createTitleFilter({ getConfig, onebot, log }) // 勾选的群里，头衔是某个词的成员（别的机器人）不理
   const groupMembers = new Map() // groupId → { at, list }  群成员（真 @ 时按名字找人，缓存 10 分钟）
+  const noticesFor = new Map() // chatId → [一句话]  下次交给她时带上的群事件（撤回、禁言、进群……）
   const saidElsewhere = new Map() // chatId → [{ at, text }]  别处安排她在这里发的话，下次这个聊天交给她时补进去
 
   let disposed = false
@@ -221,6 +223,25 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
   function noteSaid(chatId, text) {
     logChat(chatId, 'bot', text)
     saidElsewhere.set(chatId, [...(saidElsewhere.get(chatId) || []), { at: Date.now(), text: String(text).slice(0, 300) }].slice(-5))
+  }
+
+  /** QQ 通知：不让她马上回话，记进流水，下一轮带给她。只管白名单里的聊天。 */
+  async function onNotice(ev) {
+    const cfg = getConfig()
+    const groupId = ev.group_id ? String(ev.group_id) : ''
+    if (groupId ? !cfg.allow.groups.map(String).includes(groupId) : !cfg.allow.private.map(String).includes(String(ev.user_id)) && String(ev.user_id) !== String(cfg.ownerQQ)) return
+    const names = new Map()
+    for (const qq of new Set([ev.user_id, ev.operator_id, ev.sender_id].filter(Boolean))) {
+      try {
+        const m = groupId ? await onebot.call('get_group_member_info', { group_id: Number(groupId), user_id: Number(qq) }, { timeoutMs: 3000, retries: 0 }) : null
+        names.set(String(qq), `${m?.card || m?.nickname || 'QQ 用户'}(${qq})`)
+      } catch (error) { names.set(String(qq), `QQ 用户(${qq})`) }
+    }
+    if (disposed) return
+    const note = noticeText(ev, { botQQ: cfg.botQQ, name: (qq) => names.get(String(qq)) || String(qq), ownMessage: (id) => sentIds.has(String(id)) })
+    if (!note) return
+    logChat(note.chatId, '系统', `【系统】${note.text}`)
+    noticesFor.set(note.chatId, [...(noticesFor.get(note.chatId) || []), note.text].slice(-8))
   }
 
   function chatLogDays() {
@@ -1662,6 +1683,11 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     }
     content = await dropUnseenImages(chat, content)
     assertActive()
+    const happened = noticesFor.get(chat.chatId)
+    if (happened?.length) {
+      noticesFor.delete(chat.chatId)
+      content = [{ type: 'text', text: `【这个聊天刚才发生的事，只是记录，不用逐条回应】\n${happened.join('\n')}\n` }, ...content]
+    }
     const earlier = saidElsewhere.get(chat.chatId)
     if (earlier?.length) {
       saidElsewhere.delete(chat.chatId)
@@ -1970,6 +1996,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     titleFilter,
     runSystemTurn,
     turnSendersAllOwner,
+    onNotice,
     turnHasOwner,
     turnSenders,
     resetChat,

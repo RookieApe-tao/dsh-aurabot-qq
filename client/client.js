@@ -730,7 +730,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
      *  只读展示，没有设置项。「核心开发者」写死三个人；「贡献者」里的头像墙走 contrib.rocks 自动更新，
      *  文字名单取自 GitHub contributors 与版本说明（含没有 commit 的反馈者）。 */
     function About({ st }) {
-      const repo = 'https://github.com/accomplish07zrh-eng/dsh-aurabot-qq'
+      const repo = 'https://github.com/aureth-labs/dsh-aurabot-qq'
       const gh = (name) => h('a', { key: 'gh-' + name, href: 'https://github.com/' + name, target: '_blank', rel: 'noreferrer' }, '@' + name)
       // GitHub contributors API（按提交数排序）+ 版本说明里记录的 issue 报告 / 反馈者（没有 commit，单列）
       const coders = ['accomplish07zrh-eng', 'baihengaead', 'RookieApe-tao', 'GitNekopedia', 'Chsw-CC', 'chsw']
@@ -772,7 +772,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
           h('div', null,
             // 头像墙由 contrib.rocks 按仓库提交记录自动生成，有新人提交就会自己更新，不用改代码
             h('a', { key: 'wall', className: 'ab-contrib', href: repo + '/graphs/contributors', target: '_blank', rel: 'noreferrer', title: '在 GitHub 上查看贡献者列表' },
-              h('img', { src: 'https://contrib.rocks/image?repo=accomplish07zrh-eng/dsh-aurabot-qq', alt: '贡献者头像墙', loading: 'lazy', referrerPolicy: 'no-referrer', onError: (e) => { e.currentTarget.style.display = 'none' } })),
+              h('img', { src: 'https://contrib.rocks/image?repo=aureth-labs/dsh-aurabot-qq', alt: '贡献者头像墙', loading: 'lazy', referrerPolicy: 'no-referrer', onError: (e) => { e.currentTarget.style.display = 'none' } })),
             h('p', { className: 'ab-muted ab-small', style: { marginTop: 0, marginBottom: 12 } }, '上面这排头像由 contrib.rocks 按提交记录自动更新，有新人提交就会自己变（加载不出来就点它，跳 GitHub 看）。下面按「写代码的 / 报问题提建议的」分开列。'),
             h('div', { style: { marginBottom: 8 } }, h('b', { style: { fontSize: 13 } }, '写代码的')),
             h('div', { className: 'ab-flex', style: { flexWrap: 'wrap', gap: 8 } },
@@ -2823,7 +2823,7 @@ h(Card, { title: '群里什么时候必回', desc: '被 @、有人引用回复ta
     }
 
     /** 写模块的教程：随插件带着，连不上 GitHub 也能看；复制后可以直接粘给 DSH。 */
-    const TUTORIAL_URL = 'https://github.com/accomplish07zrh-eng/dsh-aurabot-qq-mods/blob/main/docs/TUTORIAL.md'
+    const TUTORIAL_URL = 'https://github.com/aureth-labs/dsh-aurabot-qq-mods/blob/main/docs/TUTORIAL.md'
     function ModuleTutorial({ toast }) {
       const [text, setText] = useState('')
       const [err, setErr] = useState('')

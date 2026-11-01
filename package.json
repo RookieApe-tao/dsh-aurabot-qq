@@ -49,9 +49,9 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/accomplish07zrh-eng/dsh-aurabot-qq.git"
+    "url": "https://github.com/aureth-labs/dsh-aurabot-qq.git"
   },
-  "homepage": "https://github.com/accomplish07zrh-eng/dsh-aurabot-qq",
+  "homepage": "https://github.com/aureth-labs/dsh-aurabot-qq",
   "engines": {
     "node": ">=22.13.0"
   }

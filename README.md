@@ -13,7 +13,7 @@ QQ ⇄ SnowLuma（OneBot v11，你自己安装）⇄ Aurabot 插件 ⇄ DSH 会�
 
 ## 模块市场
 
-内置功能之外，面板「模块市场」里还能一键安装更多模块，都在 [dsh-aurabot-qq-mods](https://github.com/accomplish07zrh-eng/dsh-aurabot-qq-mods) 里。从旧版升级时，原来在用、后来搬进市场的模块会自动装回来，配置和登录状态都留着。
+内置功能之外，面板「模块市场」里还能一键安装更多模块，都在 [dsh-aurabot-qq-mods](https://github.com/aureth-labs/dsh-aurabot-qq-mods) 里。从旧版升级时，原来在用、后来搬进市场的模块会自动装回来，配置和登录状态都留着。
 
 模块和插件在同一进程运行，能接触账号配置；安装时显示的能力只是声明，不是沙箱。
 
@@ -28,13 +28,13 @@ QQ ⇄ SnowLuma（OneBot v11，你自己安装）⇄ Aurabot 插件 ⇄ DSH 会�
 Windows 桌面版：
 
 ```powershell
-& "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add github:accomplish07zrh-eng/dsh-aurabot-qq
+& "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add github:aureth-labs/dsh-aurabot-qq
 ```
 
 Linux / Docker：用 DSH 自己的命令行（把 `<profile>` 换成你在用的 profile；在容器里就进容器执行）：
 
 ```bash
-dsh plugin --profile <profile> add github:accomplish07zrh-eng/dsh-aurabot-qq
+dsh plugin --profile <profile> add github:aureth-labs/dsh-aurabot-qq
 ```
 
 装好后重启 DSH，打开左侧栏「自动化任务」下的 **Aurabot**，跟着设置向导走：
@@ -56,7 +56,7 @@ dsh plugin --profile <profile> add github:accomplish07zrh-eng/dsh-aurabot-qq
 再跑一遍上面的安装命令（拉取 GitHub 上的最新版），然后重启 DSH。设置、人格、记忆都会保留；有新版本时面板里也会提示。Windows 桌面版：
 
 ```powershell
-& "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add github:accomplish07zrh-eng/dsh-aurabot-qq
+& "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add github:aureth-labs/dsh-aurabot-qq
 ```
 
 ## 设计要点
@@ -115,16 +115,16 @@ npm test
 ## 联系我们
 
 - **QQ 交流群**：扫下面的二维码加入（项目维护和想法讨论都在这里；装不上、报错了也可以进来问，尽量先带上面板「日志」里的报错和版本号）
-- **GitHub**：[issue](https://github.com/accomplish07zrh-eng/dsh-aurabot-qq/issues) 报 bug / 提需求，[PR](https://github.com/accomplish07zrh-eng/dsh-aurabot-qq/pulls) 提代码；提之前先翻一下有没有重复。贡献者名单见版本说明和 PR 记录。
+- **GitHub**：[issue](https://github.com/aureth-labs/dsh-aurabot-qq/issues) 报 bug / 提需求，[PR](https://github.com/aureth-labs/dsh-aurabot-qq/pulls) 提代码；提之前先翻一下有没有重复。贡献者名单见版本说明和 PR 记录。
 
 <img src="assets/qq-group.jpg" alt="QQ 交流群二维码" width="240" />
 
 ## Star 趋势
 
-<a href="https://www.star-history.com/?repos=accomplish07zrh-eng%2Fdsh-aurabot-qq&type=date&legend=top-left">
+<a href="https://www.star-history.com/?repos=aureth-labs%2Fdsh-aurabot-qq&type=date&legend=top-left">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=accomplish07zrh-eng/dsh-aurabot-qq&type=date&theme=dark&legend=top-left" />
-    <img alt="Star 趋势" src="https://api.star-history.com/svg?repos=accomplish07zrh-eng/dsh-aurabot-qq&type=date&legend=top-left" />
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=aureth-labs/dsh-aurabot-qq&type=date&theme=dark&legend=top-left" />
+    <img alt="Star 趋势" src="https://api.star-history.com/svg?repos=aureth-labs/dsh-aurabot-qq&type=date&legend=top-left" />
   </picture>
 </a>
 

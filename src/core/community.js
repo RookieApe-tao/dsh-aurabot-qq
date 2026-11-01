@@ -15,7 +15,7 @@ import { inflateRawSync, crc32 } from 'node:zlib'
 import { dataDir } from './store.js'
 import { API_VERSION, userDir } from './modules.js'
 
-export const REGISTRY_URL = 'https://raw.githubusercontent.com/accomplish07zrh-eng/dsh-aurabot-qq-mods/registry/index.json'
+export const REGISTRY_URL = 'https://raw.githubusercontent.com/aureth-labs/dsh-aurabot-qq-mods/registry/index.json'
 export const SOURCE_FILE = '.aurabot-source.json'
 const MAX_ZIP_BYTES = 25 * 1024 * 1024
 const MAX_FILE_BYTES = 64 * 1024 * 1024
