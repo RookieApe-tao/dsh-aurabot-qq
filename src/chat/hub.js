@@ -2035,6 +2035,79 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     turnState.set(sessionKey(sessionId), { lastTurn: -1, text: '', senders: new Set(senders.map(String)) })
   }
 
+  // ---------- 子智能体委派（DSH subagent 服务，spawn 后端 + delivery:'caller'）----------
+  let subagentParentAgent = null // 常驻父级 agent：spawn 子级必须有活的 parent 句柄，这里挂一次反复用
+  async function subagentParent() {
+    if (subagentParentAgent) {
+      const live = dsh.agents?.get?.(subagentParentAgent.id) || dsh.agents?.get?.('session-' + subagentParentAgent.id)
+      if (live === subagentParentAgent) return subagentParentAgent // 还活着就直接复用
+      subagentParentAgent = null
+    }
+    // 父级不能 noTools：spawn 子级继承父级的工具配置，父级没工具子级就拿不到 shell，跑不了 adb。
+    // 父级本身从不发起回合（只当 spawn 挂钩），带工具没有副作用。
+    const chat = { chatId: 'system:ext-subagent-parent', kind: 'system', title: '子智能体调度' }
+    const { agent } = await agentFor(chat)
+    subagentParentAgent = agent
+    return agent
+  }
+
+  /**
+   * 子智能体委派：spawn 一个全新子 agent（空对话、继承工作目录与模型）跑一轮自足任务，
+   * 结果经 Promise 直接返回给调用方——不占用工作区会话窗的常规聊天流（子级按 subagent 族归档展示）。
+   * 调用方（模块）自己把关：任务提示词必须自足（子级看不到任何对话历史）。
+   * @returns {Promise<string>} 子智能体的最终输出文本
+   */
+  async function runSubagentTurn(name, title, prompt, { timeoutMs = 600000 } = {}) {
+    assertActive()
+    // ctx 是严格注入代理：inject 白名单外的属性直接读会抛「without inject」；
+    // subagents 是可选服务，照 bridge 同款姿势用的时候再 ctx.get；旧版 ctx 没有 get 就退回直接读，再抛错就当没有服务
+    const dshService = (n) => {
+      if (typeof dsh.get === 'function') { try { return dsh.get(n) } catch { /* 继续退回直接读 */ } }
+      try { return dsh[n] } catch { return null }
+    }
+    const subagents = dshService('subagents')
+    if (!subagents || typeof subagents.startActivation !== 'function') {
+      throw Object.assign(new Error('宿主没有 subagents 委派服务（需要较新的 DSH）'), { code: 'SUBAGENT_UNAVAILABLE' })
+    }
+    const parent = await subagentParent()
+    assertActive()
+    const ac = new AbortController()
+    const timer = setTimeout(() => ac.abort(new Error(`子智能体超时（${Math.round(timeoutMs / 1000)} 秒）`)), Math.max(5000, Number(timeoutMs) || 600000))
+    let activation = null
+    try {
+      activation = await subagents.startActivation({
+        provider: 'spawn',
+        label: String(title || name || '任务').slice(0, 80),
+        // agentPreset 必须显式指定：不指定时子级继承父级 preset（aurabot-social，零本地工具），
+        // 子级就拿不到 shell/文件工具，跑不了 adb。aurabot-subagent 是插件 patch 里专给子级准备的
+        // 「无 QQ 人格 + 本机命令工具」preset；旧 DSH 装不上它时 mount 会失败，模块侧自动降级兜底。
+        request: { prompt: [{ type: 'text', text: String(prompt) }], parent, agentPreset: 'aurabot-subagent' },
+        signal: ac.signal,
+        delivery: 'caller',
+      })
+      const r = await activation.result
+      if (r && r.error) throw new Error(`子智能体执行失败：${r.error}`)
+      // result 形状不定（字符串 / {output|text} / 消息块数组）：递归收集字符串，取最后一段当最终回答；
+      // 全不是字符串就整包 JSON 化，调用方自己解析，绝不把非字符串透传出去
+      const collect = (v, out = []) => {
+        if (v == null || out.length > 200) return out
+        if (typeof v === 'string') { if (v.trim()) out.push(v); return out }
+        if (Array.isArray(v)) { for (const x of v) collect(x, out); return out }
+        if (typeof v === 'object') {
+          if (v.type === 'text' || typeof v.text === 'string') collect(v.text, out)
+          else for (const k of ['content', 'output', 'summary', 'message', 'result']) if (k in v) collect(v[k], out)
+        }
+        return out
+      }
+      const parts = collect(r)
+      return parts.length ? parts[parts.length - 1] : JSON.stringify(r ?? '')
+    } finally {
+      clearTimeout(timer)
+      // 结果到手（或超时/失败）就释放整个子树；已完成/已失败的 activation dispose 只是清理，不会抛断流程
+      if (activation && typeof activation.dispose === 'function') activation.dispose().catch(() => {})
+    }
+  }
+
   /** 插件卸载：停掉所有计时器 / 等待，撤掉仍存活会话里挂的工具与上下文。 */
   function dispose() {
     if (disposed) return
@@ -2091,6 +2164,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     pushToSession,
     titleFilter,
     runSystemTurn,
+    runSubagentTurn,
     turnSendersAllOwner,
     onNotice,
     turnHasOwner,
