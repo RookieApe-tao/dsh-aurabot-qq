@@ -66,7 +66,7 @@ const sessionKey = (id) => {
 // 模拟测试：这里面发出去的消息只记下来，不真发
 const captureStore = new AsyncLocalStorage()
 const failStore = new AsyncLocalStorage() // deliver 这一次里发失败的原因，好让调用方如实告诉她
-export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildTools, contextProviders, onActivity, memoryScore, onMemoryCommand, onCommand, isMuted, moodEffects, localApi, hooks, availableModels, toolsGeneration }) {
+export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildTools, contextProviders, onActivity, memoryScore, onMemoryCommand, onCommand, isMuted, moodEffects, localApi, hooks, availableModels, toolsGeneration, capabilitiesOf }) {
   // 心情对行为的影响（表情 / 语音概率、回复快慢、插话积极程度），没接就是 1
   const mood = () => (typeof moodEffects === 'function' ? moodEffects() : null) || { sticker: 1, voice: 1, delay: 1, chatty: 1 }
   const mapFile = () => dataDir('sessions.json')
@@ -2057,8 +2057,23 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
    * 调用方（模块）自己把关：任务提示词必须自足（子级看不到任何对话历史）。
    * @returns {Promise<string>} 子智能体的最终输出文本
    */
-  async function runSubagentTurn(name, title, prompt, { timeoutMs = 600000 } = {}) {
+  async function runSubagentTurn(name, title, prompt, { timeoutMs = 600000, moduleId = '', source = null } = {}) {
     assertActive()
+    // 权限边界（一审 #177）：① 调用模块必须在 module.json 的 capabilities 里声明 plugin-internals；
+    // ② 必须带「主人开口」的来源（source.kind='owner' + 主人私聊 chatId）；
+    // ③ 定时任务这类没人应答的场合，只有 config.subagentBackground=true 才放行；都没有就拒绝（无人应答 = 拒绝）。
+    const caps = typeof capabilitiesOf === 'function' ? capabilitiesOf(moduleId) : []
+    if (!moduleId || !Array.isArray(caps) || !caps.includes('plugin-internals')) {
+      throw Object.assign(new Error(`模块「${moduleId || '未声明'}」没有 plugin-internals 能力，不能用子智能体委派（在 module.json 的 capabilities 里声明）`), { code: 'CAPABILITY_REQUIRED' })
+    }
+    const c = getConfig()
+    const ownerQQ = String(c.ownerQQ || '')
+    const ownerChat = source && source.kind === 'owner' ? String(source.chatId || '') : ''
+    const fromOwner = Boolean(ownerQQ) && ownerChat === `private:${ownerQQ}`
+    const fromBackground = Boolean(source && source.kind === 'system') && c.subagentBackground === true
+    if (!fromOwner && !fromBackground) {
+      throw Object.assign(new Error('子智能体委派要主人开口：source 必须是主人私聊，或打开「后台子智能体」开关（没人应答时一律拒绝）'), { code: 'OWNER_REQUIRED' })
+    }
     // ctx 是严格注入代理：inject 白名单外的属性直接读会抛「without inject」；
     // subagents 是可选服务，照 bridge 同款姿势用的时候再 ctx.get；旧版 ctx 没有 get 就退回直接读，再抛错就当没有服务
     const dshService = (n) => {

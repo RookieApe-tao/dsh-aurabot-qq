@@ -640,6 +640,26 @@ export function createModules({ ctx, core, getConfig, setConfig, logger, version
     return r.handler(req, res)
   }
 
+  /**
+   * 模块声明的能力（module.json 的 capabilities 数组）：内置模块没有 module.json 就当未声明（[]）。
+   * 子智能体委派这类「要本机权限」的能力靠它把关（一审 #177）：没声明就不许用。
+   */
+  function capabilitiesOf(id) {
+    const key = String(id || '')
+    if (!ID_RE.test(key)) return []
+    for (const dir of [join(userDir(), key), join(BUILTIN_DIR, key)]) {
+      const file = join(dir, 'module.json')
+      if (!existsSync(file)) continue
+      try {
+        const m = JSON.parse(readFileSync(file, 'utf8'))
+        return Array.isArray(m.capabilities) ? m.capabilities.map(String) : []
+      } catch (error) {
+        return []
+      }
+    }
+    return []
+  }
+
   // ---------- 面板 ----------
   function status() {
     const users = isUserOn() ? scanUser() : scanUser().map((u) => ({ ...u, safe: true }))
@@ -769,6 +789,7 @@ export function createModules({ ctx, core, getConfig, setConfig, logger, version
   return {
     boot, sync, reload, stop, dispose, status, create, fork, promptFor, panelSource,
     use: exportsOf, has: (id) => live.has(id), running: (id) => live.get(id)?.source || null, generation: () => generation,
+    capabilitiesOf,
     emit, claim, filter, filterSync, buildTools,
     // 插件核心自己听事件（不属于任何模块，不会被撤掉）
     listen: (event, fn) => { const item = { id: '@core', fn }; listeners.set(event, [...(listeners.get(event) || []), item]); return () => listeners.set(event, (listeners.get(event) || []).filter((x) => x !== item)) }, contextFor, rules, commands, dshTools, builtinOff, handle,
