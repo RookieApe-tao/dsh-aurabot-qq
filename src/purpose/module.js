@@ -549,6 +549,21 @@ export function createPurpose({ getConfig, setConfig, hub, log, isMuted, mood, m
     }
   }
 
+  // 把 formGoalHypotheses 刚结算的反馈计数并进长期账本（状态文件按 normalize 洗字段）。
+  function mergeNeedFeedback(state, stats) {
+    if (!stats || typeof stats !== 'object') return
+    const cur = state.needFeedback && typeof state.needFeedback === 'object' ? state.needFeedback : {}
+    for (const need of PURPOSE_NEEDS) {
+      const s = stats[need]
+      if (!s || typeof s !== 'object') continue
+      const slot = cur[need] || (cur[need] = { positive: 0, negative: 0, neutral: 0 })
+      slot.positive = clampInt((Number(slot.positive) || 0) + (Number(s.positive) || 0), 0, 0, 9999)
+      slot.negative = clampInt((Number(slot.negative) || 0) + (Number(s.negative) || 0), 0, 0, 9999)
+      slot.neutral = clampInt((Number(slot.neutral) || 0) + (Number(s.neutral) || 0), 0, 0, 9999)
+    }
+    state.needFeedback = cur
+  }
+
   // 9 维驱动 → mood 单标量。mood 关闭时 nudge 自静默。
   function nudgeMood(purpose, outcome) {
     if (outcome !== 'sent') return
