@@ -55,7 +55,7 @@ export default {
       return { ok: true, message: `这轮结束：${r.outcome}` }
     })
     api.route('/purpose/status', async () => ({ ok: true, status: purpose.status(), state: purpose.state() }))
-    api.route('/purpose/preview', async () => ({ ok: true, preview: purpose.preview() }))
+    api.route('/purpose/preview', async () => ({ ok: true, preview: await purpose.preview() }))
     // 代发决断面：宿主投递器在 broker 档发送前调用（见 purpose/module.js 的 brokerReview）。
     // 模块不直接用它；host.js 的 wirePolicySources 经 use('purpose') 取到。
     // （createPurpose 返回的对象方法都走闭包，无 this 依赖，直接透传即可。）
