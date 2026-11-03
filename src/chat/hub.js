@@ -2235,8 +2235,10 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
   /** 后台任务（写日记、主动搭话的草稿）：在专用会话里跑一轮，拿到正文但不自动转发。
    *  key：同一个模块有**多种**后台用途时用来分会话（如桌宠的「碎碎念」和「行为大脑」）——
    *  不带 key 走 `<name>` 那条（向后兼容，老会话继续复用），带 key 走 `<name>:<key>`，
-   *  于是工作区里各自一条会话、进度互不阻塞，也不会把两种提示词混进同一段上下文。 */
-  async function runSystemTurn(name, title, prompt, { timeoutMs = 180000, noTools = false, key: scope = '' } = {}) {
+   *  于是工作区里各自一条会话、进度互不阻塞，也不会把两种提示词混进同一段上下文。
+   *  model：可选 { provider, model, reasoningEffort? }。给了就这个 system 会话从本轮起用指定模型
+   *  （只动这个后台会话，不改 DSH 全局默认；轻活想用便宜模型的模块走这个口）。 */
+  async function runSystemTurn(name, title, prompt, { timeoutMs = 180000, noTools = false, key: scope = '', model = null } = {}) {
     const suffix = String(scope || '').trim().replace(/[^\w:-]/g, '').slice(0, 32)
     const chat = { chatId: suffix ? `system:${name}:${suffix}` : `system:${name}`, kind: 'system', title, noTools: !!noTools }
     assertActive()
@@ -2256,6 +2258,8 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
         }
       } else if (current) systemTurns.delete(chat.chatId)
       const { agent, sessionId } = await agentFor(chat)
+      // 模块点名要用别的模型（轻活用便宜档）：只动这个 system 会话的下一次请求，不改全局默认。
+      if (model && model.provider && model.model) applyModel(agent, model)
       assertActive()
       const key = sessionKey(sessionId)
       const st = turnState.get(key) || { lastTurn: -1, text: '', senders: new Set() }
