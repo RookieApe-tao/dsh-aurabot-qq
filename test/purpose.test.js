@@ -751,3 +751,72 @@ test('need 反馈学习：正反馈多的维度抬驱动地板，少的加速回
   const { drives: d2 } = engine.deriveDrives({ drives: engine.DEFAULT_DRIVES, now: Date.now(), needFeedback: sparse })
   assert.ok(Math.abs(d2.learn - engine.DEFAULT_DRIVES.learn) < 1e-9, '样本 <5 不偏置')
 })
+
+// ── 人格覆写 / 风险表配置化 / 情绪画像 ───────────────────────────────────────
+
+test('风险表配置化：riskScale 统一乘在目标风险上，且被钳制', () => {
+  const now = Date.now()
+  const materials = [{
+    id: 'plug-1', source: 'bili', kind: 'video', at: now, who: 'B站',
+    title: '一个超好用的插件', text: '这个插件真好用，推荐大家装',
+  }]
+  const base = { materials, goals: [], observations: [], drives: engine.DEFAULT_DRIVES, now, lastMasterAt: now, config: engine.normalizePurposeConfig({}) }
+  const calm = engine.formGoalHypotheses({ ...base, config: engine.normalizePurposeConfig({ riskScale: 0.5 }) })
+  const bold = engine.formGoalHypotheses({ ...base, config: engine.normalizePurposeConfig({ riskScale: 2 }) })
+  const installCalm = calm.goals.find((g) => g.domain === 'install')
+  const installBold = bold.goals.find((g) => g.domain === 'install')
+  assert.ok(installCalm && installBold, 'install 素材应产生目标')
+  assert.ok(installBold.risk > installCalm.risk, `胆大的风险应更高（${installBold.risk} vs ${installCalm.risk}）`)
+  // 钳制：越界值回到 0.3~2
+  assert.equal(engine.normalizePurposeConfig({ riskScale: 9 }).riskScale, 2)
+  assert.equal(engine.normalizePurposeConfig({ riskScale: 0.01 }).riskScale, 0.3)
+})
+
+test('人格覆写：胆量/话多/黏人地板从人格卡进引擎', () => {
+  const shy = engine.analyzePersona('我是一只比较胆小的鱼，怕麻烦，别让我乱花钱')
+  assert.equal(shy.overrides.riskScale, 1.25)
+  const chatty = engine.analyzePersona('其实我是个话痨，特别爱分享')
+  assert.equal(chatty.overrides.dailyMaxBonus, 1)
+  const clingy = engine.analyzePersona('我很黏人，怕孤独')
+  assert.equal(clingy.overrides.connectFloor, 0.1)
+  // 同 key 冲突时第一个命中生效
+  const mixed = engine.analyzePersona('大胆又胆小的鱼')
+  assert.equal(mixed.overrides.riskScale, 0.8, '「大胆」先出现先生效')
+  // 合并进配置：dailyMax +1、riskScale 相乘、connectFloor 落位
+  const cfg = engine.normalizePurposeConfig({ dailyMax: 3 })
+  const merged = engine.applyPersonaOverrides(cfg, chatty)
+  assert.equal(merged.dailyMax, 4)
+  const merged2 = engine.applyPersonaOverrides(engine.normalizePurposeConfig({ riskScale: 1.2, dailyMax: 0 }), shy)
+  assert.ok(Math.abs(merged2.riskScale - 1.5) < 1e-9, '1.2 × 1.25 = 1.5')
+  assert.equal(merged2.dailyMax, 0, 'dailyMax=0（不限）不吃加成')
+  // 没有覆写就原样返回
+  assert.equal(engine.applyPersonaOverrides(cfg, {}), cfg)
+})
+
+test('黏人地板：connectFloor 抬 connect 驱动下限', () => {
+  const now = Date.now()
+  const { drives: plain } = engine.deriveDrives({ drives: engine.DEFAULT_DRIVES, now, lastMasterAt: now })
+  const { drives: clingy } = engine.deriveDrives({ drives: engine.DEFAULT_DRIVES, now, lastMasterAt: now, connectFloor: 0.1 })
+  assert.ok(Math.abs(plain.connect - engine.DEFAULT_DRIVES.connect) < 1e-9, '刚见过主人时 connect 不涨')
+  assert.ok(clingy.connect >= engine.DEFAULT_DRIVES.connect + 0.1 - 1e-9, `黏人地板生效（实际 ${clingy.connect}）`)
+  assert.ok(clingy.connect <= 0.95)
+})
+
+test('情绪画像：候选带 valence/arousal，提示词强弱措辞跟 arousal 走', () => {
+  assert.deepEqual(engine.emotionProfile('excited'), { valence: 0.8, arousal: 0.9 })
+  assert.deepEqual(engine.emotionProfile('unknown-emotion'), { valence: 0, arousal: 0.4 }, '未知情绪回中性')
+  // 候选带画像
+  const picked = engine.selectPurpose({
+    seeds: [{ id: 's1', kind: 'share', need: 'share', action: 'share', emotion: 'excited', text: '想分享一件好事', weight: 1 }],
+    goals: [], pending: [], history: [], now: Date.now(),
+    random: () => 0, // 稳定选择
+  })
+  const cand = picked.candidates.find((c) => c.emotion === 'excited')
+  assert.ok(cand, ' excited 候选应保留')
+  assert.equal(cand.emotionProfile.arousal, 0.9)
+  // 提示词措辞：强烈 vs 隐约
+  const promptLoud = engine.buildPurposePrompt({ now: Date.now(), selected: { emotion: 'excited', need: 'share', action: 'share' }, drives: engine.DEFAULT_DRIVES })
+  const promptSoft = engine.buildPurposePrompt({ now: Date.now(), selected: { emotion: 'bored', need: 'share', action: 'share' }, drives: engine.DEFAULT_DRIVES })
+  assert.ok(promptLoud.includes('强烈地有点兴奋'), '高 arousal 用「强烈地」')
+  assert.ok(promptSoft.includes('隐约有点无聊'), '低 arousal 用「隐约」')
+})
