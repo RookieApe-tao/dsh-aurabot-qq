@@ -241,7 +241,7 @@ export function createPurpose({ getConfig, setConfig, hub, log, isMuted, mood, m
       needFeedback: state.needFeedback, halfLifeHours: config.driveHalfLifeHours,
       connectFloor: persona?.overrides?.connectFloor,
     })
-    const { goals, observations } = formGoalHypotheses({
+    const { goals, observations, needFeedback } = formGoalHypotheses({
       materials: materials.items, goals: state.goals, observations: state.observations,
       drives, now, lastMasterAt, config, roleName: ROLE, persona,
     })
@@ -249,7 +249,7 @@ export function createPurpose({ getConfig, setConfig, hub, log, isMuted, mood, m
       materials: materials.items, now, roleName: ROLE, config,
       drives, history: state.history, lastMasterAt,
     })
-    return { materials, persona, lastMasterAt, drives, goals, observations, seeds }
+    return { materials, persona, lastMasterAt, drives, goals, observations, seeds, needFeedback }
   }
 
   const friendName = (friend) => {
@@ -334,6 +334,9 @@ export function createPurpose({ getConfig, setConfig, hub, log, isMuted, mood, m
     state.drivesAt = now
     state.goals = ctx.goals
     state.observations = ctx.observations
+    // 行为学习账本：回复时段直方图 + 需要维度正反馈率（都在真回合里落盘；preview 不走这里）。
+    recordOwnerReplyHours(state, ctx.materials.items, now)
+    mergeNeedFeedback(state, ctx.needFeedback)
 
     // 朋友没聊过就别凭人设硬找：没有素材时她只能瞎编由头
     const hasEnough = friend
