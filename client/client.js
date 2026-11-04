@@ -714,6 +714,8 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
     ]
     // 内置标签页属于哪个模块：模块都没在跑就不显示这一页
     const TAB_MODS = { voice: ['voice'], stickers: ['stickers'], imagegen: ['imagegen'], diary: ['diary', 'qzone-social'], speakup: ['speakup', 'purpose'], pet: ['pet'], mood: ['mood', 'memory'], persona: ['memory'], song: ['song'], bili: ['bili'], douyin: ['douyin'], heybox: ['heybox'], autotelic: ['autotelic'] }
+    // 自驱引擎的出厂默认（跟 src/modules/autotelic 的 defaults 对齐；滑块控件在草稿没值时兜底显示用）
+    const AUTOTELIC_DEFAULTS = { enabled: false, presetIdOverride: false, minCuriosity: 0.55, evalModel: '', maxCandidates: 3, allowAct: true, actTimeoutMs: 180000, maxSteps: 8, maxTasksActive: 8, budgetActionsPerHour: 12, quietFrom: '23:30', quietTo: '07:30', dailyReviewHour: 23, minBatchForReview: 3, dreamFrom: '03:00', dreamTo: '05:00', allowUserModules: true, allowPython: true, pythonBin: '', scriptTimeoutMs: 120000 }
     const modOn = (st, id) => (st.modules || []).some((m) => m.id === id && m.running)
 
     // 两层导航：上面一排是分组，下面一排是这组里的页面；每组记住上次看的那页，Alt+K 查找功能
@@ -2226,6 +2228,41 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
           open ? h('div', { className: 'body ab-small', style: { whiteSpace: 'pre-wrap' } }, d.text) : null)
       }
       const jAll = jr ? [...(jr.daily || []).map((d) => jLine('daily', d)), ...(jr.dreams || []).map((d) => jLine('dream', d))] : null
+      // ---------- 控件：数值 = 滑块 + 文本框；时间 = 原生 time 控件 + 一键清空 ----------
+      const A = 'ext.autotelic.'
+      const aut = getPath(draft, A, {}) || {}
+      const ap = (patch) => setDraft((previous) => {
+        const cur = getPath(previous, A, {}) || {}
+        return setPath(previous, A, { ...cur, ...patch })
+      })
+      const dv = (k) => { const v = aut[k]; return v == null ? AUTOTELIC_DEFAULTS[k] : v }
+      // 数值双联：滑杆拖个大概，框里填精确值（照「桌宠·人物大小」那行的样式）
+      const NumRow = ({ label, hint, k, min, max, step = 1, suffix = '' }) => h(Row, { label, hint },
+        h('div', { className: 'ab-flex', style: { alignItems: 'center', gap: 8 } },
+          h('input', { type: 'range', min, max, step, style: { flex: 1, minWidth: 110, accentColor: 'var(--ab-sea, #2a86c6)' }, value: Number(dv(k)), onChange: (e) => ap({ [k]: Number(e.target.value) }) }),
+          h('input', { className: 'ab-input', type: 'number', min, max, step, style: { width: 84 }, value: Number(dv(k)), onChange: (e) => { const v = Number(e.target.value); if (Number.isFinite(v)) ap({ [k]: v }) } }),
+          suffix ? h('span', { className: 'ab-muted ab-small', style: { whiteSpace: 'nowrap' } }, suffix) : null))
+      // 时间对（起~止）：原生 time 控件；两格都空 = 该功能关闭
+      const TimeRow = ({ label, hint, kf, kt, clearHint }) => h(Row, { label, hint },
+        h('div', { className: 'ab-flex', style: { alignItems: 'center', gap: 8 } },
+          h('input', { className: 'ab-input', type: 'time', style: { width: 118 }, value: String(aut[kf] || ''), onChange: (e) => ap({ [kf]: e.target.value }) }),
+          h('span', { className: 'ab-muted ab-small' }, '到'),
+          h('input', { className: 'ab-input', type: 'time', style: { width: 118 }, value: String(aut[kt] || ''), onChange: (e) => ap({ [kt]: e.target.value }) }),
+          h(Btn, { small: true, onClick: () => ap({ [kf]: '', [kt]: '' }) }, '清空=关'),
+          aut[kf] && aut[kt] ? h('span', { className: 'ab-muted ab-small' }, clearHint || '') : h('span', { className: 'ab-muted ab-small' }, '未启用')))
+      // 节奏预设：一键铺一整套作息；「恢复默认」回到出厂值
+      const PRESETS = {
+        default: { name: '恢复默认（出厂作息）', v: { quietFrom: '23:30', quietTo: '07:30', dailyReviewHour: 23, minBatchForReview: 3, dreamFrom: '03:00', dreamTo: '05:00', minCuriosity: 0.55, maxSteps: 8, maxTasksActive: 8, budgetActionsPerHour: 12, maxCandidates: 3 } },
+        standard: { name: '标准（23:30 睡，03 点做梦）', v: { quietFrom: '23:30', quietTo: '07:30', dailyReviewHour: 23, minBatchForReview: 3, dreamFrom: '03:00', dreamTo: '05:00' } },
+        night: { name: '夜猫子（02:00 睡，10:00 起）', v: { quietFrom: '02:00', quietTo: '10:00', dailyReviewHour: 1, minBatchForReview: 3, dreamFrom: '05:00', dreamTo: '07:00' } },
+        early: { name: '早起鸟（21:00 睡，05:00 起）', v: { quietFrom: '21:00', quietTo: '05:00', dailyReviewHour: 20, minBatchForReview: 3, dreamFrom: '23:00', dreamTo: '01:00' } },
+        always: { name: '全天候（不设安静时段）', v: { quietFrom: '', quietTo: '', dreamFrom: '', dreamTo: '', dailyReviewHour: 22, minBatchForReview: 3 } },
+      }
+      const [preset, setPreset] = useState('')
+      const applyPreset = (name) => {
+        setPreset(name)
+        if (name && PRESETS[name]) { ap(PRESETS[name].v); toast('已套用：' + PRESETS[name].name + '（记得点右下角「保存设置」）', 'ok') }
+      }
       return h('div', { className: 'ab-grid' },
         // ---------- 卡 1：总控 + 状态 + 动作 ----------
         h(Card, { title: '自驱引擎', right: f.sw('ext.autotelic.enabled'), desc: '她自己的后台会话与一本别人代记的账：够好奇才立项，办完写复盘。账是框架机械记的，删了必断链。' },
@@ -2250,21 +2287,27 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
           !s ? h(Empty, { icon: '⏳', text: '加载中…' })
             : tasks.length === 0 ? h(Empty, { icon: '💭', text: '账本还空着。开着总开关等她心跳，或点上面的「现在想一轮」。' })
               : h('div', { className: 'ab-list' }, tasks.map(taskLine))),
-        // ---------- 卡 3：节奏与预算 ----------
+        // ---------- 卡 3：节奏与预算（预设 + 滑块/时间控件） ----------
         h(Card, { title: '节奏与预算', desc: '上限是你定的；她能往下调，永远调不上来。' },
-          h(Row, { label: '好奇分阈值', hint: '低于不立项；落选原因在「预览」里看' }, f.num('ext.autotelic.minCuriosity', { min: 0, max: 1, step: 0.05 })),
-          h(Row, { label: '一轮最多立项 / 同时进行' }, f.num('ext.autotelic.maxCandidates', { min: 1, max: 5 }), h('span', { className: 'ab-muted' }, ' / '), f.num('ext.autotelic.maxTasksActive', { min: 1, max: 16 })),
-          h(Row, { label: '单任务步数 / 动作每小时' }, f.num('ext.autotelic.maxSteps', { min: 1, max: 32 }), h('span', { className: 'ab-muted' }, ' / '), f.num('ext.autotelic.budgetActionsPerHour', { min: 1, max: 120 })),
-          h(Row, { label: '安静时段', hint: '只禁打扰你，不禁她做事；可跨午夜' }, f.text('ext.autotelic.quietFrom'), h('span', { className: 'ab-muted' }, '到'), f.text('ext.autotelic.quietTo')),
-          h(Row, { label: '每日一页（点）/ 攒几件才评' }, f.num('ext.autotelic.dailyReviewHour', { min: 0, max: 23 }), h('span', { className: 'ab-muted' }, ' / '), f.num('ext.autotelic.minBatchForReview', { min: 1, max: 20 })),
-          h(Row, { label: '做梦窗口', hint: '留空 = 关闭做梦' }, f.text('ext.autotelic.dreamFrom'), h('span', { className: 'ab-muted' }, '到'), f.text('ext.autotelic.dreamTo')),
+          h(Row, { label: '作息预设', hint: '一键铺一整套作息（安静时段 / 做梦 / 每日一页）；套用后点右下角「保存设置」才生效' },
+            h(Select, { value: preset, width: 220, onChange: applyPreset, options: [{ value: '', label: '选一套预设…' }, ...Object.entries(PRESETS).map(([k, p]) => ({ value: k, label: p.name }))] })),
+          NumRow({ label: '好奇分阈值', hint: '低于不立项；落选原因在「预览」里看', k: 'minCuriosity', min: 0, max: 1, step: 0.05 }),
+          NumRow({ label: '一轮最多立项', hint: '同样的方向不重复开坑', k: 'maxCandidates', min: 1, max: 5 }),
+          NumRow({ label: '同时进行的任务', hint: '到顶就不开新坑，在办的不受影响', k: 'maxTasksActive', min: 1, max: 16 }),
+          NumRow({ label: '单任务步数上限', hint: '失败 2 次也会卡住，不无限重试', k: 'maxSteps', min: 1, max: 32 }),
+          NumRow({ label: '动作数 / 小时', hint: '她动手的次数上限；超了这小时只想想', k: 'budgetActionsPerHour', min: 1, max: 120 }),
+          TimeRow({ label: '安静时段', kf: 'quietFrom', kt: 'quietTo', hint: '只禁打扰你，不禁她做事；清空 = 不启用', clearHint: '这段时间她不吵你' }),
+          NumRow({ label: '每日一页（几点）', hint: '她的自我总结时间', k: 'dailyReviewHour', min: 0, max: 23, suffix: '点' }),
+          NumRow({ label: '攒几件才评', hint: '攒够件数或到点，先到者为准', k: 'minBatchForReview', min: 1, max: 20, suffix: '件' }),
+          TimeRow({ label: '做梦窗口', kf: 'dreamFrom', kt: 'dreamTo', hint: '安静时段最深处做离线整理；清空 = 关闭做梦', clearHint: '到点她会做一次离线整理' }),
         ),
         // ---------- 卡 4：她的手 ----------
         h(Card, { title: '她的手', desc: '框架代码（src/）对她锁死；Python 和用户模块是她攒本事的两条路。' },
           h(Row, { label: 'Python', hint: '留空自动探测（滤商店假货）；探测不到时手填全路径' },
             s && s.env && s.env.pythonBin ? h('span', { className: 'ab-small', style: { color: 'var(--ab-ok)' } }, '✓ ' + s.env.bin + '（' + s.env.version + '）') : h('span', { className: 'ab-muted ab-small' }, '没探测到'),
             f.text('ext.autotelic.pythonBin', { placeholder: '留空自动探测' })),
-          h(Row, { label: '允许跑 Python / 脚本超时（毫秒）' }, f.sw('ext.autotelic.allowPython'), f.num('ext.autotelic.scriptTimeoutMs', { min: 1000, max: 600000 })),
+          h(Row, { label: '允许跑 Python' }, f.sw('ext.autotelic.allowPython')),
+          NumRow({ label: '脚本超时', hint: '到点强杀，不悬挂', k: 'scriptTimeoutMs', min: 5000, max: 600000, step: 5000, suffix: '毫秒' }),
           h(Row, { label: '允许写用户模块', hint: '只能写她自己的 modules/<id>/，写不到框架' }, f.sw('ext.autotelic.allowUserModules')),
           h('div', { className: 'ab-small ab-muted', style: { margin: '6px 0 2px 2px' } },
             '提案 ' + (s && s.proposals || 0) + ' 篇 · 攒着没说 ' + (s && s.sayPending || 0) + ' 句' + (s && s.sayPending ? '（安静时段她先把话攒下了）' : '')),
