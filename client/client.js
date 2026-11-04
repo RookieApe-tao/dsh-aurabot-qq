@@ -66,6 +66,26 @@ window.__ModuleLoader__.load({
     }
 
     const getPath = (obj, path) => path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj)
+    // 自动记忆原本按来源分别限额；调整总数时按当前比例分配整数名额。
+    const MEMORY_CAPACITY_DEFAULT = { auto: 2000, event: 600, diary: 400 }
+    const memoryCapacity = (value) => Object.fromEntries(Object.entries(MEMORY_CAPACITY_DEFAULT).map(([key, fallback]) => {
+      const n = Number(value?.[key])
+      return [key, value?.[key] != null && Number.isFinite(n) ? Math.max(0, Math.floor(n)) : fallback]
+    }))
+    const resizeMemoryCapacity = (current, total) => {
+      const values = memoryCapacity(current)
+      let weights = Object.values(values)
+      let sum = weights.reduce((a, n) => a + n, 0)
+      if (!sum) { weights = Object.values(MEMORY_CAPACITY_DEFAULT); sum = 3000 }
+      const limits = weights.map((n) => Math.floor(n * total / sum))
+      let extra = total - limits.reduce((a, n) => a + n, 0)
+      while (extra-- > 0) {
+        let best = 0
+        for (let i = 1; i < weights.length; i++) if (weights[i] * (limits[best] + 1) > weights[best] * (limits[i] + 1)) best = i
+        limits[best]++
+      }
+      return Object.fromEntries(Object.keys(MEMORY_CAPACITY_DEFAULT).map((key, i) => [key, limits[i]]))
+    }
     const pct = (v) => Math.round((Number(v) || 0) * 100)
     const cx = (...a) => a.filter(Boolean).join(' ')
     // 音调存的是 '+20Hz' 这种字符串，滑条要数字；合法范围 ±80Hz（再往上 edge-tts 服务端会夹）
@@ -252,10 +272,14 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-deep:#9cc4f5;--ab-sea:#6
 .ab-pm-face img{width:100%;height:100%;object-fit:cover;display:block}
 .ab-pm-face.big{width:64px;height:64px;font-size:24px}
 .ab-pm-split{display:grid;grid-template-columns:272px minmax(0,1fr);gap:12px;align-items:start}
-.ab-pm-list{display:flex;flex-direction:column;border:1px solid var(--ab-line);border-radius:14px;background:var(--ab-card);overflow:hidden;position:sticky;top:64px;max-height:calc(100vh - 96px)}
-.ab-pm-search{padding:10px;border-bottom:1px solid var(--ab-line)}
+.ab-pm-list{display:flex;flex-direction:column;border:1px solid var(--ab-line);border-radius:14px;background:var(--ab-card);overflow:visible;position:sticky;top:64px;z-index:1;max-height:calc(100vh - 96px)}
+.ab-pm-search{position:relative;z-index:2;padding:10px;border-bottom:1px solid var(--ab-line)}
 .ab-pm-search input{width:100%;box-sizing:border-box}
-.ab-pm-rows{overflow-y:auto;padding:4px}
+.ab-pm-search .ab-sel{flex:1 1 100px;min-width:0;max-width:100%}
+.ab-pm-search .ab-sel-pop{box-sizing:border-box;min-width:max(100%,160px);max-width:min(320px,calc(100vw - 32px))}
+.ab-pm-search .ab-sel:last-child .ab-sel-pop{left:auto;right:0}
+.ab-pm-search .ab-sel-opt .tx{white-space:normal;overflow-wrap:anywhere}
+.ab-pm-rows{overflow-y:auto;min-height:0;padding:4px}
 .ab-pm-row{display:flex;align-items:center;gap:10px;width:100%;padding:8px;border:0;border-radius:10px;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}
 .ab-pm-row:hover{background:var(--ab-card-2)}
 .ab-pm-row.on{background:var(--ab-foam-2)}
@@ -564,10 +588,13 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
     }
 
     /** 自定义下拉：替代系统自带的蓝白 select。options: [{value, label, desc?, group?}] */
-    function Select({ value, options, onChange, placeholder, width }) {
+    let nextSelectId = 0
+    function Select({ value, options, onChange, placeholder, width, ariaLabel }) {
       const [open, setOpen] = useState(false)
       const [act, setAct] = useState(-1)
       const ref = useRef(null)
+      const listId = useRef(null)
+      if (!listId.current) listId.current = 'ab-sel-list-' + (++nextSelectId)
       const cur = options.find((o) => o.value === value)
       useEffect(() => {
         if (!open) return
@@ -595,15 +622,15 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       options.forEach((o, i) => {
         if (o.group && o.group !== lastGroup) items.push(h('div', { key: 'g' + i, className: 'ab-sel-group' }, o.group))
         lastGroup = o.group || lastGroup
-        items.push(h('div', { key: 'o' + i, role: 'option', 'aria-selected': o.value === value, className: cx('ab-sel-opt', o.value === value && 'on', i === act && 'act'), onMouseEnter: () => setAct(i), onMouseDown: (e) => { e.preventDefault(); pick(o) } },
+        items.push(h('div', { key: 'o' + i, id: listId.current + '-' + i, role: 'option', 'aria-selected': o.value === value, className: cx('ab-sel-opt', o.value === value && 'on', i === act && 'act'), onMouseEnter: () => setAct(i), onMouseDown: (e) => e.preventDefault(), onClick: () => pick(o) },
           h('span', { className: 'ck' }, o.value === value ? '✓' : ''),
           h('span', { className: 'tx' }, o.label, o.desc ? h('span', { className: 'ds' }, o.desc) : null)))
       })
-      return h('div', { className: cx('ab-sel', open && 'open'), ref, style: width ? { minWidth: width } : null },
-        h('button', { type: 'button', className: 'ab-sel-btn', onClick: () => (open ? setOpen(false) : openAt()), onKeyDown: onKey, 'aria-haspopup': 'listbox', 'aria-expanded': open },
+      return h('div', { className: cx('ab-sel', open && 'open'), ref, style: width ? { minWidth: width } : null, onBlur: (e) => { if (!e.currentTarget.contains(e.relatedTarget)) setOpen(false) } },
+        h('button', { type: 'button', role: 'combobox', className: 'ab-sel-btn', onClick: () => (open ? setOpen(false) : openAt()), onKeyDown: onKey, 'aria-label': ariaLabel, 'aria-haspopup': 'listbox', 'aria-expanded': open, 'aria-controls': open ? listId.current : undefined, 'aria-activedescendant': open && act >= 0 ? listId.current + '-' + act : undefined },
           h('span', { className: 'v' }, cur ? cur.label : h('span', { className: 'ab-muted' }, placeholder || '请选择')),
           h('svg', { className: 'chev', width: 12, height: 12, viewBox: '0 0 12 12', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8 }, h('path', { d: 'M3 4.5 6 7.5 9 4.5' }))),
-        open ? h('div', { className: 'ab-sel-pop', role: 'listbox' }, items) : null)
+        open ? h('div', { id: listId.current, className: 'ab-sel-pop', role: 'listbox', 'aria-label': ariaLabel }, items) : null)
     }
 
     /** 卡片式单选：选项少、需要解释时用。 */
@@ -1103,7 +1130,11 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
                   if (r.ok) { setPubBase(null); reload() }
                 } }, '验证并保存'),
                 h(Btn, { small: true, kind: 'ghost', disabled: !String(curPubBase).trim(), title: '服务器自己打不通自己的公网地址（hairpin NAT）时用：不验证直接保存', onClick: async () => {
-                  const r = await post('/panel/pet/public-base', { publicBaseUrl: String(curPubBase).trim(), force: true })
+                  // 【复审 2·P1-3】内网/本机地址需要 force + confirm 显式二次确认（后端审计要求）。
+                  // 公网地址不用 confirm（后端只对内网地址要它），但带上也无害——统一带，简单可靠。
+                  const addr = String(curPubBase).trim()
+                  if (!window.confirm(`确定跳过验证保存「${addr}」吗？\n\n若该地址指向本机/内网（局域网自测），保存会记入审计日志；公网部署请务必用 https 公网域名。`)) return
+                  const r = await post('/panel/pet/public-base', { publicBaseUrl: addr, force: true, confirm: true })
                   toast(r.message || (r.ok ? '已保存' : '没成功'), r.ok ? 'ok' : 'err')
                   if (r.ok) { setPubBase(null); reload() }
                 } }, '跳过验证保存'),
@@ -1518,8 +1549,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
           h(Row, { label: '额外允许的目录', hint: '一行一个完整路径。QQ 工作区里的文件一直允许，不用写；留空 = 只能发工作区里的' }, f.list('files.dirs', { placeholder: 'D:\\Aurabot\\要发的文件' })),
           h(Row, { label: '图片按路径直发', hint: '网关和 NapCat 在同一台机器或共享挂载时，直接把路径交给网关，省掉读盘和 base64 膨胀；网关读不到会自动改用 base64。默认开。' }, f.sw('files.imageByPath')),
         ),
-                h(Card, { title: '危险命令确认', right: f.sw('security.dangerConfirm'), desc: '打开后，ta在私聊里要执行终端危险命令（删根目录、格式化、关机、下载后直接执行等）之前，会先发 QQ 私聊问你；你回复「确认」才执行，回复「取消」或 60 秒没回就拦下。默认关。只拦真正致命的命令，普通删除/构建/改文件不受影响。' }),
-h(Card, { title: '群里什么时候必回', desc: '被 @、有人引用回复ta的消息、或者提到下面这些名字时，ta一定会回。' },
+        h(Card, { title: '群里什么时候必回', desc: '被 @、有人引用回复ta的消息、或者提到下面这些名字时，ta一定会回。' },
           h(Row, { label: '能不能看别的群', hint: '只读白名单里的群，一次最多 50 条，主人随时能看。开到「群里也行」后，ta在 A 群的回答全群都看得到，里面可能有不在 B 群的人；读到的内容也会留在这个会话里。' }, f.choices('group.crossRead', [{ value: 'off', label: '关', desc: '只看当前聊天' }, { value: 'private', label: '私聊可以', desc: '主人，以及私聊里问的人本身在那个群（默认）' }, { value: 'group', label: '群里也行', desc: '再加上群里问的人都在那个群' }])),
           h(Row, { label: '@ 了别人不算叫ta', hint: '有人 @ 别人时顺口提到ta的名字，不算在叫ta；ta还是可以按平时的频率插话。默认关' }, f.sw('group.ignoreAtOthers')),
           h(Row, { label: '新会话先补看聊天记录', hint: '会话第一次开口时先读最近几条，接得上话。默认关' }, f.sw('chat.seedHistory')),
@@ -2744,6 +2774,10 @@ h(Card, { title: '群里什么时候必回', desc: '被 @、有人引用回复ta
       const [mem, setMem] = useState(null)
       const [stats, setStats] = useState(null)
       const [q, setQ] = useState('')
+      const [capacityInput, setCapacityInput] = useState(null)
+      const capacityBeforeEdit = useRef(null)
+      const capacity = memoryCapacity(draft.memory.capacity)
+      const capacityTotal = Object.values(capacity).reduce((sum, n) => sum + n, 0)
       const [adding, setAdding] = useState({ text: '', aboutName: '', importance: 0.6 })
       const load = (query) => get('/memories?q=' + encodeURIComponent(query ?? q)).then((r) => { setMem(r.items || []); setStats(r.stats || null) })
       const [styles, setStyles] = useState({})
@@ -2783,6 +2817,28 @@ h(Card, { title: '群里什么时候必回', desc: '被 @、有人引用回复ta
             h('span', { className: 'ab-muted' }, '和'),
             h('input', { className: 'ab-input sm', type: 'time', value: times[1] || '16:00', onChange: (e) => setTime(1, e.target.value) }),
             h(Btn, { small: true, onClick: async () => { toast('正在整理，可能要一两分钟…'); const r = await post('/memory/extract', {}); toast(r.message); load(); loadIns() } }, '现在整理一次')),
+          h(Row, { label: '自动记忆容量', hint: '默认 3000 条，可调高到 100000；聊天提炼、经历和日记按现有比例分配。手动记忆和分档事实不受此限制，过期与压缩规则照常生效。调低容量后，新记忆可能按原有规则替换旧的普通记忆。' },
+            h('input', {
+              className: 'ab-input sm', type: 'number', min: 3000, max: 100000, step: 1, 'aria-label': '自动记忆容量',
+              value: capacityInput === null ? capacityTotal : capacityInput,
+              onFocus: () => { capacityBeforeEdit.current = capacity },
+              onChange: (e) => {
+                const raw = e.target.value
+                setCapacityInput(raw)
+                const n = Number(raw)
+                if (raw !== '' && Number.isInteger(n) && n >= 3000 && n <= 100000) {
+                  setDraft(setPath(draft, 'memory.capacity', resizeMemoryCapacity(capacityBeforeEdit.current || capacity, n)))
+                }
+              },
+              onBlur: (e) => {
+                const n = Number(e.target.value)
+                if ((e.target.value === '' || !Number.isInteger(n) || n < 3000 || n > 100000) && capacityBeforeEdit.current) {
+                  setDraft(setPath(draft, 'memory.capacity', capacityBeforeEdit.current))
+                }
+                capacityBeforeEdit.current = null
+                setCapacityInput(null)
+              },
+            }), h('span', { className: 'ab-muted' }, '条')),
           h(Row, { label: '每轮最多想起几条' }, f.range('memory.recallCount', 0, 12, 1, (v) => v + ' 条')),
           h(Row, { label: '什么时候自动翻旧账' }, f.select('memory.recallMode', [{ value: 'always', label: '每轮都查' }, { value: 'trigger', label: '提到过去时才查' }])),
           h(Row, { label: '翻旧账的触发词', hint: '一行一个，也可用逗号分隔；主动查记忆的工具不受影响' }, f.list('memory.recallTriggers')),
@@ -2889,7 +2945,7 @@ h(Card, { title: '群里什么时候必回', desc: '被 @、有人引用回复ta
         h('div', { className: 'ab-pm-list' },
           h('div', { className: 'ab-pm-search', style: { display: 'flex', flexWrap: 'wrap', gap: 6, minWidth: 0 } },
             h('input', { className: 'ab-input', style: { flex: '1 1 140px', minWidth: 0 }, placeholder: `在 ${list.length} 个人里找`, 'aria-label': '搜索人物', value: query, onChange: (e) => setQuery(e.target.value) }),
-            ...[[group, setGroup, '所有群', groups], [tag, setTag, '所有标签', tags.map((x) => [x, x])], [status, setStatus, '所有状态', [['owner', '主人'], ['active', '最近 7 天活跃'], ['relations', '有人物关系'], ['insights', '有相处经验']]]].map(([value, set, label, options]) => h('select', { key: label, className: 'ab-input', style: { flex: '1 1 100px', minWidth: 0, maxWidth: '100%' }, 'aria-label': label, value, onChange: (e) => set(e.target.value) }, h('option', { value: '' }, label), options.map(([v, text]) => h('option', { key: v, value: v }, text))))),
+            ...[[group, setGroup, '所有群', groups], [tag, setTag, '所有标签', tags.map((x) => [x, x])], [status, setStatus, '所有状态', [['owner', '主人'], ['active', '最近 7 天活跃'], ['relations', '有人物关系'], ['insights', '有相处经验']]]].map(([value, set, label, options]) => h(Select, { key: label, ariaLabel: label, value, onChange: set, options: [{ value: '', label }, ...options.map(([v, text]) => ({ value: v, label: text }))] }))),
           h('div', { className: 'ab-pm-rows' },
             visible.length ? visible.map((p) => h('button', { key: p.qq, type: 'button', className: cx('ab-pm-row', p.qq === selected && 'on'), onClick: () => setSelected(p.qq) },
               h(PersonFace, { p }),
@@ -4720,12 +4776,14 @@ h(Card, { title: '群里什么时候必回', desc: '被 @、有人引用回复ta
 
     /** 安全防护：SSRF 这类内置防护的强度。 */
     function Security({ st, draft, setDraft }) {
+      const f = useField(draft, setDraft)
       const mode = (draft.security && draft.security.ssrfMode) || 'strict'
       const picked = draft.update && draft.update.unstable
       const unstable = typeof picked === 'boolean' ? picked : String(st.version).includes('-')
       return h('div', { className: 'ab-grid' },
         h(Card, { title: '更新推送', desc: '插件有新版本时，面板会提示并给出更新命令。' },
           h(Row, { label: '订阅不稳定版本', hint: '打开后也会收到 beta 和 rc 测试版，能早点用上新功能，但可能有问题；关掉只收正式版' }, h(Switch, { on: unstable, onChange: (v) => setDraft(setPath(draft, 'update.unstable', v)) }))),
+        h(Card, { title: '危险命令确认', right: f.sw('security.dangerConfirm'), desc: '打开后，ta在私聊里要执行终端危险命令（删根目录、格式化、关机、下载后直接执行等）之前，会先发 QQ 私聊问你；你回复「确认」才执行，回复「取消」或 60 秒没回就拦下。默认关。只拦真正致命的命令，普通删除/构建/改文件不受影响。' }),
         h(Card, { title: 'SSRF 防护', desc: '限制 ta 下载图片、语音时能访问哪些地址 —— 防止有人用一条链接诱导 ta 去访问你电脑或内网里的服务（路由器管理页、云服务器的 169.254.169.254、本机端口之类）。' },
           h(Row, { label: '防护强度', hint: '部署在服务器上、或者群里有陌生人时，用「严格」' },
             h(Seg, {

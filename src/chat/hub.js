@@ -66,6 +66,18 @@ const sessionKey = (id) => {
 // 模拟测试：这里面发出去的消息只记下来，不真发
 const captureStore = new AsyncLocalStorage()
 const failStore = new AsyncLocalStorage() // deliver 这一次里发失败的原因，好让调用方如实告诉她
+/**
+ * 一轮结束时该发到 QQ 的文字：只认「这一轮最后一条 assistant 消息」里的 text 块。
+ * 带工具调用的 assistant 消息是过程性发言（模型在调工具前写的计划/心里话），不是给用户看的回复；
+ * 如果把它当回复补发，就会出现「模型把自己的思考发出来」——这种情况宁可沉默，也不要把过程性文字发出去。
+ */
+export function assistantReplyText (message) {
+  if (!message || !Array.isArray(message.content)) return ''
+  const hasToolCall = message.content.some((b) => b && (b.type === 'tool-call' || b.type === 'tool_use'))
+  if (hasToolCall) return ''
+  return message.content.filter((b) => b && b.type === 'text' && typeof b.text === 'string').map((b) => b.text).join('\n').trim()
+}
+
 export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildTools, contextProviders, onActivity, memoryScore, onMemoryCommand, onCommand, isMuted, dislikes, random = Math.random, moodEffects, localApi, hooks, availableModels, toolsGeneration, capabilitiesOf }) {
   // 心情对行为的影响（表情 / 语音概率、回复快慢、插话积极程度），没接就是 1
   const mood = () => (typeof moodEffects === 'function' ? moodEffects() : null) || { sticker: 1, voice: 1, delay: 1, chatty: 1 }
@@ -1051,11 +1063,10 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     if (event.type === 'assistant/message') {
       const d = event.data || {}
       if (d.interrupted) return
-      const t = textOf(d.message)
-      if (t) {
-        st.lastTurn = d.turn
-        st.text = t
-      }
+      // 最后一条 assistant 消息才是本轮回复；总是覆盖（空也覆盖），
+      // 否则最后一条是空的（或只有工具调用）时会拿上一条过程性文字补发，把思考发出去。
+      st.lastTurn = d.turn
+      st.text = assistantReplyText(d.message)
       return
     }
     if (event.type === 'turn/end') {
@@ -2145,8 +2156,6 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
       for (const [chatId, entry] of Object.entries(map().chats || {})) {
         if (!entry) continue
         if (entry.sessionId && sessionKey(entry.sessionId) === key) return chatId
-        // 调试 / 正式模式各有一条会话，都算这个 QQ 会话
-        if (Object.values(entry.sessions || {}).some((sid) => sessionKey(sid) === key)) return chatId
       }
     } catch (error) {}
     return ''
@@ -2306,20 +2315,31 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
       })
       const r = await activation.result
       if (r && r.error) throw new Error(`子智能体执行失败：${r.error}`)
-      // result 形状不定（字符串 / {output|text} / 消息块数组）：递归收集字符串，取最后一段当最终回答；
-      // 全不是字符串就整包 JSON 化，调用方自己解析，绝不把非字符串透传出去
+      // 新版 DSH 用 stopReason 标记结果，非正常完成时 output 可能是不完整的过程内容。
+      if (r && typeof r === 'object' && 'stopReason' in r && r.stopReason !== 'completed') {
+        throw Object.assign(new Error('子智能体没有正常完成'), { code: 'SUBAGENT_INCOMPLETE' })
+      }
+      // 兼容旧版字符串/包装对象；有类型的消息块只接受 text，绝不递归读取 reasoning 或工具块。
       const collect = (v, out = []) => {
-        if (v == null || out.length > 200) return out
+        if (v == null || out.length >= 200) return out
         if (typeof v === 'string') { if (v.trim()) out.push(v); return out }
-        if (Array.isArray(v)) { for (const x of v) collect(x, out); return out }
+        if (Array.isArray(v)) {
+          // 最终消息仍带工具调用时，旁边的文字可能只是工具执行前的过程说明。
+          if (v.some((block) => block && (block.type === 'tool-call' || block.type === 'tool_use'))) return out
+          for (const x of v) collect(x, out)
+          return out
+        }
         if (typeof v === 'object') {
-          if (v.type === 'text' || typeof v.text === 'string') collect(v.text, out)
+          if ('type' in v) {
+            if (v.type === 'text' && typeof v.text === 'string') collect(v.text, out)
+          } else if (typeof v.text === 'string') collect(v.text, out)
           else for (const k of ['content', 'output', 'summary', 'message', 'result']) if (k in v) collect(v[k], out)
         }
         return out
       }
       const parts = collect(r)
-      return parts.length ? parts[parts.length - 1] : JSON.stringify(r ?? '')
+      if (!parts.length) throw Object.assign(new Error('子智能体没有可用的最终文字'), { code: 'SUBAGENT_EMPTY_OUTPUT' })
+      return parts[parts.length - 1]
     } finally {
       clearTimeout(timer)
       // 结果到手（或超时/失败）就释放整个子树；已完成/已失败的 activation dispose 只是清理，不会抛断流程
