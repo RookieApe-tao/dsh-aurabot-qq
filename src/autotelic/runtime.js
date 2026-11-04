@@ -152,6 +152,7 @@ export function createRuntime({ settings, cfg = {}, hub = {}, memoryOf = null, p
     let detail = {}
     try {
       const { materials, candidates, rejected, lastOutcome } = appraise()
+      let noWhy = ''
       if (!materials.length) outcome = 'skipped-no-material' // 场景 2
       else if (!candidates.length) outcome = lastOutcome // 场景 3：低于阈值，素材留池
       else {
@@ -174,9 +175,10 @@ export function createRuntime({ settings, cfg = {}, hub = {}, memoryOf = null, p
         for (const c of candidates) {
           const r = bk.addTask(c)
           if (r.ok) added.push({ id: r.task.id, title: r.task.title, score: r.task.score, reason: r.task.reason })
-          else log?.debug?.(`自驱：候选「${c.title}」没立项：${r.why}`)
+          else { log?.debug?.(`自驱：候选「${c.title}」没立项：${r.why}`); noWhy = noWhy || r.why }
         }
-        outcome = added.length ? 'proposed' : 'skipped-budget' // 场景 7：预算超限不开新坑
+        // 场景 7 与「活跃已满」分开标注：预算见底 ≠ 手头满了
+        outcome = added.length ? 'proposed' : (/活跃任务已满/.test(noWhy || '') ? 'active-full' : 'skipped-budget')
         detail = { added, rejected: rejected.length }
       }
       bk.heartbeat(outcome)
