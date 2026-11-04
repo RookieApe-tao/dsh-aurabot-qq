@@ -112,15 +112,16 @@ export default {
     // 测试钩子（照 pet 的 __petTestHooks 模式）：CI 注入 fake 探测，不依赖真机器环境（场景 16~18）
     const probeFn = api.__autotelicTestHooks?.probePython || probePython
     const readEnv = () => { if (envCache == null) envCache = loadEnvCache(api.dataDir('env.json')); return envCache }
-    // 探测（惰性 + 只在开着时做；场景 1：关着零 IO）。配置优先，结果缓存 env.json，24h 内直接用。
-    const pythonEnv = async () => {
+    // 探测（惰性 + 只在开着时做；场景 1：关着零 IO）。配置优先，结果缓存 env.json（带来源，24h 内直接用）。
+    const pythonEnv = async ({ force = false } = {}) => {
       const cached = readEnv()
       const s = api.settings()
-      if (envUsable(cached) && (!s.pythonBin || cached.source === 'configured')) return cached
+      if (!force && envUsable(cached) && (!s.pythonBin || cached.source === 'configured')) return cached
       envCache = await probeFn({ configured: s.pythonBin })
+      if (envCache) envCache.source = s.pythonBin ? 'configured' : 'probed' // 来源标记：探测的 / 手填的
       saveEnvCache(api.dataDir('env.json'), envCache)
       if (!envCache) api.log.info?.('自驱：本机没有探测到可用 Python，这项能力关闭（面板可手动填路径）')
-      else api.log.info?.(`自驱：Python 用 ${envCache.bin}（${envCache.version}）`)
+      else api.log.info?.(`自驱：Python 用 ${envCache.bin}（${envCache.version}，${envCache.source === 'configured' ? '手填' : '自动探测'}）`)
       return envCache
     }
     // 动作预算 + 记账（L1 起都要）：预算到顶直接拒（场景 7 的工具侧口径）
@@ -264,13 +265,28 @@ export default {
       return { ok: true, list }
     })
     api.route('/autotelic/env', async (req) => {
+      let probeOnly = false
       if (req && req.method === 'POST') {
         const body = await api.core.http.body(req).catch(() => ({}))
-        if (body && typeof body.pythonBin === 'string') api.setConfig({ ext: { autotelic: { pythonBin: body.pythonBin.trim() } } })
-        envCache = null // 强制重新探测
+        if (body && typeof body.pythonBin === 'string' && body.pythonBin.trim()) {
+          // 手填路径先验真（跑一次 --version），假的拒收——别让坏路径污染配置
+          const bin = body.pythonBin.trim()
+          const hit = await probeFn({ configured: bin })
+          if (!hit || hit.bin !== bin) return { ok: false, message: `这个路径跑不出 Python 3（${bin}）。检查一下是不是全路径、是不是真装了` }
+          api.setConfig({ ext: { autotelic: { pythonBin: bin } } })
+          envCache = null // 用新手填路径重新取
+        }
+        probeOnly = Boolean(body?.probe) // {probe:true} = 强制重新探测（面板「重新检测」按钮）
       }
-      const env = api.settings().enabled && api.settings().allowPython ? await pythonEnv() : readEnv()
-      return { ok: true, env: env || null, usable: envUsable(env), hint: env?.pythonBin ? `${env.pythonBin}（${env.version}）` : '本机没有可用 Python（可以在这里手填解释器路径）' }
+      const s = api.settings()
+      const env = s.enabled && s.allowPython ? await pythonEnv({ force: probeOnly }) : readEnv()
+      return {
+        ok: true,
+        env: env || null,
+        usable: envUsable(env),
+        source: env?.source || '',
+        hint: env?.pythonBin ? `${env.pythonBin}（${env.version}，${env.source === 'configured' ? '手填' : '自动探测'}，已持久化 env.json）` : '本机没有可用 Python（可以在这里手填解释器路径，会先验真再存）',
+      }
     })
 
     // 心跳：每分钟一次判定（§4.5）。enabled=false 时 tick 第一行就返回，零 IO。

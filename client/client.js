@@ -2303,9 +2303,14 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         ),
         // ---------- 卡 4：她的手 ----------
         h(Card, { title: '她的手', desc: '框架代码（src/）对她锁死；Python 和用户模块是她攒本事的两条路。' },
-          h(Row, { label: 'Python', hint: '留空自动探测（滤商店假货）；探测不到时手填全路径' },
-            s && s.env && s.env.pythonBin ? h('span', { className: 'ab-small', style: { color: 'var(--ab-ok)' } }, '✓ ' + s.env.bin + '（' + s.env.version + '）') : h('span', { className: 'ab-muted ab-small' }, '没探测到'),
-            f.text('ext.autotelic.pythonBin', { placeholder: '留空自动探测' })),
+          h(Row, { label: 'Python', hint: '留空自动探测（滤商店假货）；探测不到时手填全路径（会先验真再存）' },
+            s && s.env && s.env.pythonBin ? h('span', { className: 'ab-small', style: { color: 'var(--ab-ok)' } }, '✓ ' + s.env.bin + '（' + s.env.version + '）' + (s.env.source === 'configured' ? ' · 手填' : ' · 自动探测，已持久化')) : h('span', { className: 'ab-muted ab-small' }, '没探测到'),
+            f.text('ext.autotelic.pythonBin', { placeholder: '留空自动探测' }),
+            h(Btn, { small: true, disabled: busy === 'env', onClick: async () => {
+              setBusy('env')
+              try { const r = await post('/autotelic/env', { probe: true }); toast(r.hint || (r.ok ? '检测完了' : '没检测到'), r.ok && r.env && r.env.pythonBin ? 'ok' : 'err'); load() }
+              catch (e) { toast(e.message, 'err') } finally { setBusy('') }
+            } }, busy === 'env' ? '检测中…' : '重新检测')),
           h(Row, { label: '允许跑 Python' }, f.sw('ext.autotelic.allowPython')),
           NumRow({ label: '脚本超时', hint: '到点强杀，不悬挂', k: 'scriptTimeoutMs', min: 5000, max: 600000, step: 5000, suffix: '毫秒' }),
           h(Row, { label: '允许写用户模块', hint: '只能写她自己的 modules/<id>/，写不到框架' }, f.sw('ext.autotelic.allowUserModules')),
