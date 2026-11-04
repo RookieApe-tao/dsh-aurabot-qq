@@ -2172,6 +2172,66 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
             h(Btn, { small: true, onClick: async () => { const r = await post('/speakup/fire'); toast(r.message) } }, '现在就让ta来找我')),
         ),
         h(PurposeStatus, { st, toast }),
+        h(OutboundPolicy, { toast }),
+      )
+    }
+
+    // 「主动发言出站策略」卡片：档位、引擎状态、拦截统计。数据走 /panel/outbound-policy，
+    // 后端已把机器值翻成中文（view 字段），前端只管排版，不另维护翻译表。
+    function OutboundPolicy({ toast }) {
+      const [d, setD] = useState(null)
+      const [busy, setBusy] = useState('')
+      const load = () => get('/panel/outbound-policy').then((r) => { if (r.ok) setD(r.view) })
+      useEffect(() => { load(); const t = setInterval(load, 10000); return () => { clearInterval(t) } }, [])
+      if (!d) return null
+      const save = (patch, key) => async () => {
+        setBusy(key)
+        try {
+          const r = await post('/panel/outbound-policy', patch)
+          if (!r.ok) toast(r.message || '没保存上', 'err')
+          else { setD(r.view); toast('保存好了', 'ok') }
+        } catch (e) { toast(e.message) } finally { setBusy('') }
+      }
+      const toneColor = d.tone === 'ok' ? '#2e7d32' : d.tone === 'bad' ? '#c62828' : '#ef6c00'
+      return h(Card, {
+        title: '主动发言出站策略',
+        desc: '决定刷抖音、逛小黑盒、热榜巡游这类模块「刷完之后能不能直接私聊你」。关掉纳管时它们照旧直接发；开成门闸后，要先问主动搭话/目的引擎的意见。',
+      },
+        // 总体状态条：一句话说清现在到底管没管
+        h('div', { className: 'ab-card', style: { padding: '10px 12px', marginBottom: 10, borderLeft: '3px solid ' + toneColor } },
+          h('b', { style: { color: toneColor } }, d.headline),
+          h('div', { className: 'ab-muted ab-small', style: { marginTop: 4, lineHeight: 1.6 } }, d.summary)),
+        // 档位
+        h(Row, { label: '纳管档位', hint: d.tierHint },
+          h(Select, {
+            value: d.tier,
+            options: (d.tiers || []).map((t) => ({ value: t.value, label: t.label })),
+            onChange: (v) => save({ tier: v }, 'tier')(),
+          })),
+        h('div', { className: 'ab-muted ab-small', style: { margin: '-4px 0 8px 2px' } }, d.tierLabel),
+        // 策略源（谁在做决定）
+        h(Row, { label: '谁来判该不该说', hint: '自动 = 用当前就绪的那个引擎' },
+          h(Select, {
+            value: d.activeMode,
+            options: (d.activeOptions || []).map((o) => ({ value: o.value, label: o.label })),
+            onChange: (v) => save({ activePolicy: v }, 'active')(),
+          })),
+        d.sources && d.sources.length
+          ? h('div', { className: 'ab-list', style: { margin: '6px 0' } }, d.sources.map((s) => h('div', { key: s.name, className: 'ab-li' },
+            h('div', { className: 'meta' },
+              s.title + ' · ' + s.stateLabel + (s.reason ? ' · ' + s.reason : '')))))
+          : h('div', { className: 'ab-note' }, '还没有可用的引擎：请先打开「主动搭话」或「目的引擎」，否则没人来决定该不该说。'),
+        // 统计
+        d.stats && d.stats.length
+          ? h('div', { className: 'ab-flex', style: { gap: 8, flexWrap: 'wrap', margin: '8px 0' } },
+            d.stats.map((s) => h('div', { key: s.label, className: 'ab-card', style: { flex: '1 1 88px', padding: '8px 10px' }, title: s.hint },
+              h('div', { className: 'ab-muted ab-small' }, s.label),
+              h('b', null, s.value))))
+          : null,
+        d.ledger && d.ledger.length
+          ? h(Row, { label: '投递账本', hint: '由宿主代发的条目当前分布' },
+            h('span', { className: 'ab-muted ab-small' }, d.ledger.map((x) => x.label + ' ' + x.count).join(' · ')))
+          : null,
       )
     }
 
@@ -3619,6 +3679,19 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       const [hot, setHot] = useState(true)
       const load = (force) => get('/modules/community' + (force ? '?force=1' : '')).then(setData)
       useEffect(() => { load() }, [])
+      // 模块市场地址：换索引源（自建索引 / 国内镜像 / 内网部署）。拉取当前值与默认值，改完可保存或恢复内置。
+      const [regUrl, setRegUrl] = useState('')
+      const [regDef, setRegDef] = useState('')
+      const loadReg = () => get('/panel/market/registry').then((r) => { if (r.ok) { setRegUrl(r.registryUrl || ''); setRegDef(r.default || '') } })
+      useEffect(() => { loadReg() }, [])
+      const saveReg = async () => {
+        setBusy('reg')
+        try {
+          const r = await post('/panel/market/registry', { registryUrl: String(regUrl).trim() })
+          if (!r.ok) toast(r.message || '没成功', 'err')
+          else { toast(r.message || '保存好了', 'ok'); loadReg(); load(true) }
+        } catch (e) { toast(e.message) } finally { setBusy('') }
+      }
       // 一直查进度：恢复备份、老用户迁移时模块在后台装，不是从这个页面点的
       useEffect(() => {
         let was = false
@@ -3707,6 +3780,12 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
           cats.length > 1 ? h('div', { className: 'ab-flex', style: { marginTop: 10 } }, [''].concat(cats).map((c) => h('button', { key: c || 'any', type: 'button', className: cx('ab-chip', cat === c && 'on'), onClick: () => setCat(c) }, c ? CATEGORY_LABEL[c] || c : '全部分类'))) : null,
           stats.failed && list.length ? h('div', { className: 'ab-small ab-muted', style: { marginTop: 8 } }, '这次没读到下载次数（GitHub 接口连不上或额度用完了），先按上架顺序排。') : null,
           ((data && data.revoked) || []).map((r) => h('div', { key: r.id, className: 'ab-note err', style: { marginTop: 10 } }, '「' + r.id + '」' + r.version + ' 已撤回：' + r.reason + '。建议关闭或卸载。'))),
+        h(Card, { title: '模块市场地址', desc: '换成你自己的索引源——自建索引、国内镜像（如 gitee / ghproxy 中转）、内网部署都行。留空 = 用内置的 GitHub 地址。换好后市场会立即按新地址刷新。' },
+          h(Row, { label: '索引地址', hint: '完整 http(s) 链接，指向 index.json。默认：' + (regDef || 'GitHub 仓库') },
+            h('input', { className: 'ab-input', style: { width: 'min(420px, 100%)' }, value: regUrl, placeholder: 'https://…/registry/index.json', onChange: (e) => setRegUrl(e.target.value) })),
+          h('div', { className: 'ab-flex', style: { marginTop: 8 } },
+            h(Btn, { small: true, disabled: busy === 'reg', onClick: saveReg }, busy === 'reg' ? '保存中…' : '保存地址'),
+            h(Btn, { small: true, disabled: busy === 'reg' || !regUrl, onClick: () => { setRegUrl(''); saveReg() } }, '恢复内置 GitHub 地址'))),
         !data ? h(Empty, { icon: '⏳', text: '加载中…' }) : null,
         data && data.ok === false ? h('div', { className: 'ab-note warn' }, '市场打不开：' + data.message) : null,
         data && data.ok !== false && !shown.length ? h(Empty, { icon: '🐟', text: list.length ? '没有符合条件的模块' : '市场里还没有模块' }) : null,
@@ -4724,6 +4803,54 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       )
     }
 
+    /** 云备份（Gitee 私有仓库）：每天到点自动打包，把最新备份推上去，远端只留最近 N 份。 */
+    function RemoteBackup({ toast }) {
+      const [s, setS] = useState(null)
+      const [form, setForm] = useState(null)
+      const set = (k) => (e) => setForm({ ...form, [k]: k === 'keep' ? Math.max(1, Math.round(Number(e.target.value) || 1)) : (k === 'enabled' || k === 'autoCreate' ? e.target.checked : e.target.value) })
+      const load = () => get('/backup/remote/state').then((st) => { setS(st); const v = st.remote || {}; setForm({ enabled: !!v.enabled, owner: v.owner || '', repo: v.repo || '', token: '', branch: v.branch || 'master', time: v.time || '03:30', keep: v.keep || 7, autoCreate: v.autoCreate !== false }) })
+      useEffect(() => { load() }, [])
+      const running = Boolean(s && s.job && s.job.running)
+      useEffect(() => { if (!running) return; const t = setInterval(load, 1000); return () => clearInterval(t) }, [running])
+      const call = (p, body) => fetch(API + p, { method: 'POST', headers: { 'x-aurabot-backup': '1', 'content-type': 'application/json' }, body: JSON.stringify(body || {}) }).then((r) => r.json())
+      const after = (r2) => { toast(r2.ok ? (r2.message || '好了') : r2.message, r2.ok ? 'ok' : 'err'); load() }
+      if (!form) return null
+      const job = s && s.job
+      const Input = (k, placeholder, type) => h('input', { className: 'ab-input', type: type || 'text', placeholder, value: form[k], onChange: set(k), style: { minWidth: 0 } })
+      const Field = (label, k, placeholder, type) => h('div', { style: { flex: 1, minWidth: 0 } },
+        h('div', { className: 'ab-small ab-muted', style: { marginBottom: 2 } }, label),
+        Input(k, placeholder, type))
+      return h(Card, { title: '云备份（Gitee 私有仓库）', desc: '每天到点自动打包一份备份，推到你自己的 Gitee 私有仓库，换电脑或坏盘时也能找回来。' },
+        h('div', { className: 'ab-note warn', style: { marginBottom: 10 } }, '⚠️ 仓库必须是「私有」的！备份里有你全部的聊天记录、记忆和账号凭证，推到公开仓库等于把它们挂到网上。下面照引导做就不会出错。'),
+        h('div', { className: 'ab-flex', style: { alignItems: 'center' } },
+          h('label', { className: 'ab-small', style: { display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' } }, h('input', { type: 'checkbox', checked: form.enabled, onChange: set('enabled') }), '每天自动备份并推送'),
+          form.enabled ? h('span', { className: 'ab-small ab-muted' }, '下次：' + (s && s.nextAt ? String(s.nextAt).slice(0, 16).replace('T', ' ') : '到点就跑')) : null),
+        h('div', { className: 'ab-flex', style: { marginTop: 10 } },
+          Field('Gitee 用户名', 'owner', '如 gitee.com/小鱼 里的「小鱼」'),
+          Field('仓库名（私有）', 'repo', '如 aurabot-backup，没有会自动建'),
+          Field('分支（一般不用改）', 'branch', 'master')),
+        h('div', { className: 'ab-flex', style: { marginTop: 8 } },
+          Field('Gitee 私人令牌', 'token', s && s.remote && s.remote.hasToken ? '已保存，留空就不改' : '下面第 2 步生成的那串', 'password'),
+          Field('每天几点备份', 'time', '如 03:30'),
+          Field('远端留几份', 'keep', '如 7')),
+        h('div', { className: 'ab-flex', style: { marginTop: 8, alignItems: 'center' } },
+          h('label', { className: 'ab-small', style: { display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' } }, h('input', { type: 'checkbox', checked: form.autoCreate, onChange: set('autoCreate') }), '仓库不存在时自动建（建的就是私有，推荐开）'),
+          h('span', { className: 'ab-flex' },
+            h(Btn, { small: true, kind: 'primary', disabled: running, onClick: async () => { const body = { ...form }; if (!body.token) delete body.token; after(await call('/backup/remote/config', body)) } }, '保存设置'),
+            h(Btn, { small: true, disabled: running, onClick: async () => { if (!confirm('现在就把最新备份推到 Gitee？（不会重新打包，推 backups 里最新的一份）')) return; after(await call('/backup/push')) } }, running ? '推送中…' : '立即推送'))),
+        job && job.error ? h('div', { className: 'ab-note err', style: { marginTop: 10 } }, '推送失败：' + job.error) : null,
+        job && job.result ? h('div', { className: 'ab-small ab-muted', style: { marginTop: 10 } }, '上次推送：' + job.result.message) : null,
+        h('details', { open: !(s && s.remote && s.remote.hasToken), style: { marginTop: 10 } },
+          h('summary', { className: 'ab-small', style: { cursor: 'pointer' } }, '📖 第一次用？跟着下面 4 步做（点这里收起）'),
+          h('div', { className: 'ab-small ab-muted', style: { marginTop: 8, lineHeight: 1.8 } },
+            h('div', null, h('b', null, '第 1 步 · 注册 Gitee：'), '打开 ', h('a', { href: 'https://gitee.com/signup', target: '_blank', rel: 'noreferrer' }, 'gitee.com'), ' 注册一个账号（手机号或邮箱都行，免费的）。'),
+            h('div', null, h('b', null, '第 2 步 · 生成令牌：'), '登录后点右上角头像 →「设置」→ 左侧「安全设置」→「私人令牌」→「+ 生成新令牌」，勾选 ', h('b', null, 'projects'), ' 权限后提交，把显示出来的那串字符复制粘贴到上面的「Gitee 私人令牌」里（只显示一次，丢了就重新生成一个）。'),
+            h('div', null, h('b', null, '第 3 步 · 安装 git：'), '打开 ', h('a', { href: 'https://git-scm.com/downloads', target: '_blank', rel: 'noreferrer' }, 'git-scm.com/downloads'), '，下载 Windows 版，一路点「下一步」装完，然后重启 DSH。装过的可以跳过。'),
+            h('div', null, h('b', null, '第 4 步 · 填上面的表格：'), '「Gitee 用户名」填你个人主页地址 gitee.com/ 后面那串；「仓库名」自己起一个，比如 aurabot-backup；「私人令牌」粘第 2 步的；勾上「每天自动备份并推送」，点「保存设置」。仓库让插件自动建就行（建出来就是私有的）。如果自己在 Gitee 网页上建，右上角「+」→ 新建仓库时务必选 ', h('b', null, '「私有」'), '，不要勾「设置初始化 README」。'),
+            h('div', { style: { marginTop: 6 } }, '弄完点一次「立即推送」试试，提示「已推送」就成功了，之后每天都会自动备份。备份超过 95MB 会自动分成若干卷推送（文件名带 .part01、.part02…）；恢复时把各卷按顺序合并回一个 zip 再导入——Windows 命令示例：copy /b aurabot-backup-xxx.zip.part01+aurabot-backup-xxx.zip.part02+… 完整的.zip')),
+        h('div', { className: 'ab-small ab-muted', style: { marginTop: 10 } }, '令牌只存在本机配置里，不会上传；推送走电脑上装的 git。有报错看上面的红字，一般都是令牌权限没勾对或 git 没装。')))
+    }
+
     /** 备份：打包数据目录，换电脑时导入，重启 DSH 后换上。 */
     function Backup({ toast }) {
       const [s, setS] = useState(null)
@@ -4758,6 +4885,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
           job && job.error ? h('div', { className: 'ab-note err', style: { marginTop: 10 } }, '备份失败：' + job.error) : null,
           job && job.result ? h('div', { className: 'ab-small ab-muted', style: { marginTop: 10 } }, '刚生成：' + job.result.name + '，' + job.result.files + ' 个文件' + (job.result.skipped.length ? '；有 ' + job.result.skipped.length + ' 个文件没能带上：' + job.result.skipped.slice(0, 5).join('、') : '')) : null,
           s && s.list.length ? h('div', { style: { marginTop: 10 } }, s.list.slice(0, 8).map((b) => h('div', { key: b.name, className: 'ab-small' }, b.name + ' · ' + size(b.bytes)))) : null),
+        h(RemoteBackup, { toast }),
         h(Card, { title: '恢复', desc: '在新电脑上先装好 DSH 和 Aurabot，再把备份拖进来。重启 DSH 后自动换上设置和数据、重新下载市场模块、放回 QQ 会话，原来的文件留在 backups 文件夹。' },
           s && s.modules && s.modules.length ? h('div', { className: 'ab-small ab-muted', style: { marginBottom: 8 } }, '还没装回来的模块：' + s.modules.join('、') + '（下次启动再试）') : null,
           s && s.pending ? h('div', { className: 'ab-note warn' }, '已导入 ' + s.pending.files + ' 个文件（备份于 ' + String(s.pending.createdAt || '').slice(0, 16).replace('T', ' ') + '），重启 DSH 后换上。',

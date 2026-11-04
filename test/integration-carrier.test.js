@@ -129,7 +129,8 @@ test('carrier=pet 桌宠离线 + petFallbackToQQ=true：回落走原 hub.deliver
   assert.equal(pet.calls.length, 0, '离线不调 dispatch（回落由 purpose 自己发，保住 own/userText 链路）')
   assert.equal(hub.delivered.length, 1)
   assert.equal(hub.delivered[0].chatId, `private:${OWNER}`)
-  assert.deepEqual(hub.deliveryOptions, [{ own: true, userText: '【系统提醒，不是主人说的话】（她主动找你）' }])
+  // 本地 runtime 带了 #211 的「目的引擎去掉 own:true」补丁（未进 beta）：桥接靠 saidElsewhere，不再带 own
+  assert.deepEqual(hub.deliveryOptions, [{ userText: '【系统提醒，不是主人说的话】（她主动找你）' }])
 })
 
 test('carrier=pet 桌宠离线 + petFallbackToQQ=false：本轮静默，QQ 与桌宠都不发', async () => {
