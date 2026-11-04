@@ -427,10 +427,20 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     return chat.userId === getConfig().ownerQQ ? `QQ · ${owner}私聊` : `QQ 私聊 · ${chat.nickname || chat.userId}`
   }
 
+  // 后台会话点名 preset（自驱引擎 P0.2，docs/AUTOTELIC-PLAN.md §3/§4.2）：
+  // 只有主人明确开了 ext.autotelic.presetIdOverride 才接受 chat.presetId 覆盖（默认关，最坏情况也只是「她不会动」）；
+  // noTools 永远压过 presetId——purpose/qzone 的纯文本回合不许借机拿到 preset 工具。
+  // 注意：system 会话的 level 判定与 access.presetFor 都不改（改了 system 会话会拿到主人专属工具）。
+  function presetForChat(chat, level) {
+    const cfg = getConfig()
+    const wanted = chat.noTools ? '' : String(chat.presetId || '').trim()
+    return wanted && cfg.ext?.autotelic?.presetIdOverride ? wanted : presetFor(level, cfg)
+  }
+
   async function createSession(chat, level) {
     const ws = await ensureWorkspace()
     assertActive()
-    const preset = presetFor(level, getConfig())
+    const preset = presetForChat(chat, level)
     const r = await controller().create({ workspaceId: ws.id, agentPreset: preset })
     assertActive()
     const sid = String(r.sessionId)
@@ -461,7 +471,8 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
   async function agentFor(chat) {
     const cfg = getConfig()
     const level = chat.kind === 'system' ? (chat.noTools ? 'chat' : 'social') : levelFor(cfg, chat)
-    const preset = presetFor(level, cfg)
+    // 复用键是 entry.preset（resolved 后的值）：presetId 变了 preset 就变，自然触发一次重建（预期行为）
+    const preset = presetForChat(chat, level)
     const entry = map().chats[chat.chatId]
     let sid = entry && entry.preset === preset && entry.level === level ? entry.sessionId : ''
     let agent = null
@@ -2238,9 +2249,11 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
    *  于是工作区里各自一条会话、进度互不阻塞，也不会把两种提示词混进同一段上下文。
    *  model：可选 { provider, model, reasoningEffort? }。给了就这个 system 会话从本轮起用指定模型
    *  （只动这个后台会话，不改 DSH 全局默认；轻活想用便宜模型的模块走这个口）。 */
-  async function runSystemTurn(name, title, prompt, { timeoutMs = 180000, noTools = false, key: scope = '', model = null } = {}) {
+  async function runSystemTurn(name, title, prompt, { timeoutMs = 180000, noTools = false, key: scope = '', model = null, presetId = '' } = {}) {
     const suffix = String(scope || '').trim().replace(/[^\w:-]/g, '').slice(0, 32)
-    const chat = { chatId: suffix ? `system:${name}:${suffix}` : `system:${name}`, kind: 'system', title, noTools: !!noTools }
+    // presetId（P0.4）：后台会话点名用哪个 preset（如 aurabot-autotelic）。默认 undefined 行为完全不变；
+    // 是否真生效由 presetForChat 决定（noTools 压过它 + 主人的 ext.autotelic.presetIdOverride 开关）。
+    const chat = { chatId: suffix ? `system:${name}:${suffix}` : `system:${name}`, kind: 'system', title, noTools: !!noTools, presetId: String(presetId || '') }
     assertActive()
     if (systemStarting.has(chat.chatId)) throw new Error('这个后台会话的上一轮还没结束')
     systemStarting.add(chat.chatId)
