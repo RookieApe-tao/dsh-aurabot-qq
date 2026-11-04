@@ -35,6 +35,20 @@ function dayFile(dir, d) {
   return join(dir, `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}.jsonl`)
 }
 
+/** 读某一天的审计流水（面板「这一天的记录」弹窗用）。date = 'YYYY-MM-DD'；返回按序解析后的行。 */
+export async function readAuditDay(dir, date) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || ''))) return []
+  try {
+    const text = await readFile(join(dir, `${date}.jsonl`), 'utf8')
+    const out = []
+    for (const line of text.split('\n')) {
+      if (!line.trim()) continue
+      try { const { hash, prevHash, ...rec } = JSON.parse(line); out.push(rec) } catch { /* 坏行跳过（校验器会报） */ }
+    }
+    return out
+  } catch { return [] }
+}
+
 /**
  * 从目录里把链读回来并校验。返回 { ok, total, brokenAt }：
  * brokenAt = null 表示整条链连续；否则是第一条对不上的记录（文件名 + 行号 + 原因）。

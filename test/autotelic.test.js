@@ -183,7 +183,7 @@ test('模块壳：默认全关、状态路由返回审计链校验，enabled=fal
   assert.deepEqual(status.heartbeats, [])
   assert.equal(status.summary.total, 0)
   assert.deepEqual(status.tasks, [], '默认关时账本是空的')
-  assert.deepEqual(Object.keys(routes).sort(), ['/autotelic/env', '/autotelic/journal', '/autotelic/preview', '/autotelic/proposals', '/autotelic/run', '/autotelic/skills', '/autotelic/status', '/autotelic/step', '/autotelic/tune'].sort(), 'P0~P4：状态/预览/手动跑/推进一步/调参/复盘/技能/提案/环境')
+  assert.deepEqual(Object.keys(routes).sort(), ['/autotelic/day', '/autotelic/env', '/autotelic/journal', '/autotelic/preview', '/autotelic/proposals', '/autotelic/run', '/autotelic/skills', '/autotelic/status', '/autotelic/step', '/autotelic/tune'].sort(), 'P0~P4：状态/预览/手动跑/推进一步/调参/复盘/技能/提案/环境/某天记录')
 })
 
 test('模块壳：host 接线后状态路由显示「审计已开启」与当日条数', async (t) => {

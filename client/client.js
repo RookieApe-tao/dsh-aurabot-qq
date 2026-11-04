@@ -2201,6 +2201,44 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       }
       const tasks = (s && s.tasks) || []
       const sm = (s && s.summary) || {}
+      // 点任务行 → 打开「这一天的记录」弹窗（当天审计流水 + 任务 + 复盘刊物）
+      const [dayM, setDayM] = useState(null) // { date, data }
+      const dkey = (ts) => { const d = new Date(ts); const p = (n) => String(n).padStart(2, '0'); return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) }
+      const openTaskDay = (t) => {
+        const date = dkey(t.updatedAt || t.createdAt)
+        setDayM({ date, data: null })
+        get('/autotelic/day?date=' + date).then((r) => { if (r.ok) setDayM({ date, data: r }); else { toast(r.message || '没读到', 'err'); setDayM(null) } }).catch((e) => { toast(e.message, 'err'); setDayM(null) })
+      }
+      const auditLine = (a, i) => h('div', { key: i, className: 'ab-small', style: { display: 'flex', gap: 8, padding: '2px 0', borderBottom: '1px dashed var(--ab-line, #dbe5ea)' } },
+        h('span', { className: 'ab-muted', style: { flex: 'none', width: 64 } }, String(a.at || '').slice(11, 19)),
+        h('span', { style: { flex: 'none', width: 120, color: a.kind === 'tool/denied' ? '#c62828' : 'inherit' } }, (a.kind || '') + (a.tool ? ' · ' + a.tool : '')),
+        h('span', { className: 'ab-muted', style: { flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, clipText(a.outcome || (typeof a.args === 'string' ? a.args : JSON.stringify(a.args) || ''), 120)))
+      const clipText = (v, n) => { const t = String(v || ''); return t.length > n ? t.slice(0, n) + '…' : t }
+      const dayModal = dayM ? h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(12,28,38,.45)', zIndex: 80, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '6vh 16px' }, onClick: () => setDayM(null) },
+        h('div', { className: 'ab-card', style: { width: 'min(760px, 100%)', maxHeight: '86vh', overflow: 'auto' }, onClick: (e) => e.stopPropagation() },
+          h('div', { className: 'ab-flex', style: { alignItems: 'center', marginBottom: 8 } },
+            h('b', null, '这一天的记录 · ' + dayM.date),
+            h('span', { style: { flex: 1 } }),
+            h(Btn, { small: true, onClick: () => setDayM(null) }, '关闭')),
+          !dayM.data ? h(Empty, { icon: '⏳', text: '读账本中…' }) : h('div', null,
+            h('div', { className: 'ab-small ab-muted', style: { marginBottom: 6 } },
+              '审计 ' + (dayM.data.audit || []).length + ' 条 · 任务 ' + (dayM.data.tasks || []).length + ' 个'),
+            (dayM.data.tasks || []).length ? h('div', { className: 'ab-list', style: { marginBottom: 10 } },
+              (dayM.data.tasks || []).map((t) => h('div', { key: t.id, className: 'ab-li' },
+                h('div', { className: 'meta' }, h('b', null, t.title), ' ', h('span', { className: 'ab-badge' }, TASK_BADGE[t.status] || t.status), ' · 好奇 ' + (t.score != null ? t.score.toFixed(2) : '?')),
+                h('div', { className: 'body ab-small' }, t.reason),
+                (t.steps || []).map((st2, i) => h('div', { key: i, className: 'ab-small ab-muted' }, '· 步 ' + (i + 1) + ' ' + st2.desc + ' → ' + st2.status + (st2.attempts ? '（试 ' + st2.attempts + ' 次）' : '') + (st2.why ? '：' + st2.why : ''))),
+                t.why ? h('div', { className: 'ab-small', style: { color: '#c62828' } }, '→ ' + t.why) : null))) : null,
+            dayM.data.daily ? h('div', { style: { marginBottom: 10 } },
+              h('div', { className: 'ab-small ab-muted', style: { marginBottom: 4 } }, '当日每日一页：'),
+              h('div', { className: 'ab-small', style: { whiteSpace: 'pre-wrap', background: 'var(--ab-bg, #f6fafb)', padding: 10, borderRadius: 8 } }, dayM.data.daily)) : null,
+            dayM.data.dream ? h('div', { style: { marginBottom: 10 } },
+              h('div', { className: 'ab-small ab-muted', style: { marginBottom: 4 } }, '当日做梦：'),
+              h('div', { className: 'ab-small', style: { whiteSpace: 'pre-wrap', background: 'var(--ab-bg, #f6fafb)', padding: 10, borderRadius: 8 } }, dayM.data.dream)) : null,
+            h('div', { className: 'ab-small ab-muted', style: { margin: '6px 0 4px 2px' } }, '审计流水（机械记录，按序）：'),
+            (dayM.data.audit || []).length ? h('div', null, (dayM.data.audit || []).map(auditLine))
+              : h('div', { className: 'ab-small ab-muted' }, '这一天账本上没有工具调用。')),
+        )) : null
       const chain = s && s.audit && s.audit.chain
       const lastBeat = s && s.heartbeats && s.heartbeats.length ? s.heartbeats[s.heartbeats.length - 1] : null
       // 状态 pill：一眼看清「她在不在动 + 账本干不干净」
@@ -2212,7 +2250,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         s.enabled ? pill('', lastBeat ? '上次心跳 ' + timeAgo(lastBeat.at) : '还没心跳') : null,
       ].filter(Boolean)
       const TASK_BADGE = { active: '在办', done: '办成', failed: '失败', blocked: '卡住', abandoned: '放弃' }
-      const taskLine = (t) => h('div', { key: t.id, className: 'ab-li' },
+      const taskLine = (t) => h('div', { key: t.id, className: 'ab-li', style: { cursor: 'pointer' }, title: '点开看这一天的记录', onClick: () => openTaskDay(t) },
         h('div', { className: 'meta' },
           h('b', null, t.title), ' ',
           h('span', { className: 'ab-badge' }, TASK_BADGE[t.status] || t.status),
@@ -2326,6 +2364,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
           !jr ? h(Empty, { icon: '⏳', text: '加载中…' })
             : jAll && jAll.length ? h('div', { className: 'ab-list' }, jAll)
               : h(Empty, { icon: '🌙', text: '还没有复盘。攒够几件完结、或到了每日一页的点儿，她会自己写。' })),
+        dayModal,
       )
     }
 

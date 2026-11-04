@@ -7,7 +7,7 @@
 // /autotelic/preview 零副作用预览、/autotelic/status 任务列表与心跳节奏。
 // P0 地基：审计账本（哈希链，host.js 挂钩子）。P2 起她才会动手。
 
-import { verifyAuditChain } from '../../autotelic/audit.js'
+import { verifyAuditChain, readAuditDay } from '../../autotelic/audit.js'
 import { createRuntime, isQuietNow } from '../../autotelic/runtime.js'
 import { createExec } from '../../autotelic/exec.js'
 import { createJournal } from '../../autotelic/reflect.js'
@@ -341,6 +341,24 @@ export default {
     })
     // 复盘刊物：每日一页 + 做梦记录（P2.5/P2.7 的面板口）。
     api.route('/autotelic/journal', async () => ({ ok: true, daily: journal.list('daily'), dreams: journal.list('dreams') }))
+    // 某一天的记录（面板点任务行弹窗用）：当天审计流水 + 当天立/动过的任务 + 当天的复盘刊物。
+    api.route('/autotelic/day', async (req) => {
+      const date = String(api.core.http.query(req).date || '').trim()
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, message: '日期格式要 YYYY-MM-DD' }
+      const audit = await readAuditDay(auditDir(), date)
+      const dayTs = new Date(`${date}T00:00:00`).getTime()
+      const dayEnd = dayTs + 24 * 3600_000
+      const inDay = (ts) => ts >= dayTs && ts < dayEnd
+      const tasks = runtime.book().list().filter((t) => inDay(t.createdAt) || inDay(t.updatedAt))
+      return {
+        ok: true,
+        date,
+        audit,
+        tasks,
+        daily: journal.read('daily', date),
+        dream: journal.read('dreams', date),
+      }
+    })
 
     return { auditDir, runtime }
   },
