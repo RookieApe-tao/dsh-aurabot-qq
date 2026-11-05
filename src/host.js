@@ -116,6 +116,9 @@ export function apply(ctx) {
       : '')
   })
   variable('aurabot_rules_social', () => rewrite('rules', rulesText('social', cfg, rulesOpts('social')), 'social'))
+  // 她的后台工作间（自驱引擎 preset aurabot-autotelic）：有 fs 只读、无 shell、无 QQ 社交工具。
+  // 不能套 social 规则——那句「不能读写电脑上的文件」跟她手里的 fs 工具自相矛盾。
+  variable('aurabot_rules_autotelic', () => rewrite('rules', rulesText('autotelic', cfg, rulesOpts('autotelic')), 'autotelic'))
 
   // ---------- QQ 网关 ----------
   const snowluma = createSnowLumaManager({
