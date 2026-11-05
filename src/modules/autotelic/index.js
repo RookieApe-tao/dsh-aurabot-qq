@@ -150,7 +150,9 @@ export default {
               const day = new Date()
               const p2 = (n) => String(n).padStart(2, '0')
               const safe = String(title || '无题').replace(/[\\/:*?"<>|\s]+/g, '-').slice(0, 40) || '无题'
-              const file = api.dataDir('notes', `${day.getFullYear()}-${p2(day.getMonth() + 1)}-${p2(day.getDate())}-${safe}.md`)
+              // 正在办任务时文件名打任务前缀（<taskId>.），弹窗才能按任务归账（点哪条出哪条的）
+              const cur = runtime.currentTaskId ? runtime.currentTaskId + '.' : ''
+              const file = api.dataDir('notes', `${cur}${day.getFullYear()}-${p2(day.getMonth() + 1)}-${p2(day.getDate())}-${safe}.md`)
               const { mkdirSync, writeFileSync } = await import('node:fs')
               mkdirSync(api.dataDir('notes'), { recursive: true })
               writeFileSync(file, `# ${title}\n\n${text}\n`, 'utf8')
@@ -357,16 +359,19 @@ export default {
         // 这条任务的流水账 = 它立项后、最后一次活动前落账的条目（在办则算到现在）
         const from = task.createdAt
         const to = task.status === 'active' ? Date.now() : (task.updatedAt || task.createdAt)
-        // 她写的笔记（notes/）：按文件修改时间落在任务生命周期内的都算这条任务的产出
+        // 她写的笔记（notes/）：优先按文件名的 <taskId>. 前缀归账；老文件没前缀的按修改时间落在任务窗口内兜底
         const notes = []
         try {
           const nDir = api.dataDir('notes')
-          for (const f of readdirSync(nDir).filter((f) => f.endsWith('.md'))) {
+          const all = readdirSync(nDir).filter((f) => f.endsWith('.md'))
+          const prefixed = all.filter((f) => f.startsWith(taskId + '.'))
+          const files = prefixed.length ? prefixed : all.filter((f) => {
+            try { const st = statSync(join(nDir, f)); return st.mtimeMs >= from && st.mtimeMs <= to + 60_000 } catch { return false }
+          })
+          for (const f of files) {
             const full = join(nDir, f)
             const st = statSync(full)
-            if (st.mtimeMs >= from && st.mtimeMs <= to + 60_000) {
-              notes.push({ file: f, at: st.mtimeMs, text: readFileSync(full, 'utf8').slice(0, 6000) })
-            }
+            notes.push({ file: f, at: st.mtimeMs, text: readFileSync(full, 'utf8').slice(0, 6000) })
           }
         } catch { /* notes 目录还没有，正常 */ }
         notes.sort((a, b) => a.at - b.at)

@@ -51,6 +51,7 @@ export function createRuntime({ settings, cfg = {}, hub = {}, memoryOf = null, p
   let running = false
   let book = null
   let bookLimits = ''
+  let currentTaskId = '' // 正在办的任务（做事回合期间非空；工具落盘文件用它打前缀，弹窗按前缀归账）
 
   /** 记忆列表（memory 模块没开 / 抛错都按空处理，采集继续）。 */
   function memoryRecordsOf(mem) {
@@ -212,6 +213,8 @@ export function createRuntime({ settings, cfg = {}, hub = {}, memoryOf = null, p
     const begin = bk.beginStep(task.id)
     if (!begin.ok) return { outcome: 'no-step', why: begin.why }
     const stepDesc = (task.steps || []).find((x) => ['running'].includes(x.status)) || begin.step || { desc: '', level: 'L0' }
+    currentTaskId = task.id // 这期间她的工具调用能对上「现在是在给哪条任务做事」（notes 前缀等）
+    try {
     const r = await act.runStep(task, stepDesc)
     if (r.hadTools) bk.recordAction() // L1 记账：带工具的做事回合才占动作预算（L0 只想不算）
     // 死循环熔断（场景 6）：同任务同「步骤+观察」第 2 次 → abandoned
@@ -227,6 +230,9 @@ export function createRuntime({ settings, cfg = {}, hub = {}, memoryOf = null, p
     }
     if (manual || !r.ok) log?.info?.(`自驱：「${task.title}」这步${r.ok ? '办完了' : '没办成'}${r.hadTools ? '（带工具）' : '（只想）'}`)
     return { outcome: r.ok ? 'step-done' : 'step-failed', taskId: task.id, hadTools: r.hadTools, reflected, taskStatus: end.taskStatus }
+    } finally {
+      currentTaskId = '' // 做事回合结束就摘掉当前任务标记，别让下一轮的工具误挂到这条上
+    }
   }
 
   /**
@@ -333,6 +339,7 @@ export function createRuntime({ settings, cfg = {}, hub = {}, memoryOf = null, p
     preview,
     book: bookFor,
     get running() { return running },
+    get currentTaskId() { return currentTaskId },
     isQuietNow: (at = now()) => isQuietNow(settings(), at),
   }
 }

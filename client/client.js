@@ -2234,6 +2234,15 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         pill(s.audit && s.audit.wired ? 'ok' : '', s.audit && s.audit.wired ? '审计已接线' : '审计未接线'),
         s.enabled ? pill('', lastBeat ? '上次心跳 ' + timeAgo(lastBeat.at) : '还没心跳') : null,
       ].filter(Boolean)
+      // 「她在想的事」分页 + 状态筛选（点行还是打开这条任务的流水账）
+      const [tFilter, setTFilter] = useState('all')
+      const [tPage, setTPage] = useState(0)
+      const PER_PAGE = 6
+      const tFiltered = tasks.filter((t) => tFilter === 'all' || t.status === tFilter)
+      const tPages = Math.max(1, Math.ceil(tFiltered.length / PER_PAGE))
+      const tPageSafe = Math.min(tPage, tPages - 1)
+      const tShown = tFiltered.slice(tPageSafe * PER_PAGE, tPageSafe * PER_PAGE + PER_PAGE)
+      const STATUS_OPTS = [['all', '全部'], ['active', '在办'], ['done', '办成'], ['failed', '失败'], ['blocked', '卡住'], ['abandoned', '放弃']]
       const taskLine = (t) => h('div', { key: t.id, className: 'ab-li', style: { cursor: 'pointer' }, title: '点开看这条任务的流水账', onClick: () => openTaskDay(t) },
         h('div', { className: 'meta' },
           h('b', null, t.title), ' ',
@@ -2310,9 +2319,14 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         ),
         // ---------- 卡 2：她在想的事 ----------
         h(Card, { title: '她在想的事', desc: '进行中 ' + (sm.active || 0) + ' · 办成 ' + (sm.done || 0) + ' · 卡住 ' + (sm.blocked || 0) + ' · 放弃 ' + (sm.abandoned || 0) },
+          h(Row, { label: '筛选', hint: '只看某一类任务；点行看这条的流水账' },
+            h(Select, { value: tFilter, width: 130, onChange: (v) => { setTFilter(v); setTPage(0) }, options: STATUS_OPTS.map(([value, label]) => ({ value, label })) }),
+            h('span', { className: 'ab-muted ab-small' }, '共 ' + tFiltered.length + ' 条 · 第 ' + (tPageSafe + 1) + ' / ' + tPages + ' 页'),
+            h(Btn, { small: true, disabled: tPageSafe <= 0, onClick: () => setTPage(tPageSafe - 1) }, '‹ 上一页'),
+            h(Btn, { small: true, disabled: tPageSafe >= tPages - 1, onClick: () => setTPage(tPageSafe + 1) }, '下一页 ›')),
           !s ? h(Empty, { icon: '⏳', text: '加载中…' })
-            : tasks.length === 0 ? h(Empty, { icon: '💭', text: '账本还空着。开着总开关等她心跳，或点上面的「现在想一轮」。' })
-              : h('div', { className: 'ab-list' }, tasks.map(taskLine))),
+            : tShown.length === 0 ? h(Empty, { icon: '💭', text: tFiltered.length ? '这一页没有内容' : '账本还空着（或这个筛选下没有任务）。开着总开关等她心跳，或点上面的「现在想一轮」。' })
+              : h('div', { className: 'ab-list' }, tShown.map(taskLine))),
         // ---------- 卡 3：节奏与预算（预设 + 滑块/时间控件） ----------
         h(Card, { title: '节奏与预算', desc: '上限是你定的；她能往下调，永远调不上来。' },
           h(Row, { label: '作息预设', hint: '一键铺一整套作息（安静时段 / 做梦 / 每日一页）；套用后点右下角「保存设置」才生效' },
