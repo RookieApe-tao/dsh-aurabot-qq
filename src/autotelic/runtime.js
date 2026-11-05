@@ -233,6 +233,17 @@ export function createRuntime({ settings, cfg = {}, hub = {}, memoryOf = null, p
     currentTaskId = task.id // 这期间她的工具调用能对上「现在是在给哪条任务做事」（notes 前缀等）
     try {
     const r = await act.runStep(task, stepDesc)
+    // 【进工作间自审】2026-11-05 少爷定：进工作间第一件事由模型判断「这事值不值得做」，
+    // 不值得就由她回报 abandon → 任务直接关掉（不算失败、不写反思、不重复烧预算）。
+    // 提示词在 exec.buildActPrompt 里；这条接住她的否决。
+    if (r.abandon) {
+      bk.recordAction() // 这一轮确实起了回合，仍占一次动作预算
+      const why = String(r.why || r.observation || '她判断这事不值得做').slice(0, 200)
+      bk.close(task.id, 'abandoned', `进工作间自审不通过：${why}`)
+      auditNote?.({ kind: 'autotelic/abandon', tool: 'self-review', args: { task: task.title }, outcome: why })
+      log?.info?.(`自驱：「${task.title}」进工作间后自审不通过，关掉 —— ${why}`)
+      return { outcome: 'act-abandoned', taskId: task.id, why }
+    }
     // 瞬态退避（2026-11-05 修「冷却中冤死」）：后台会话冷却/超时这类瞬态失败不算步失败——
     // 不计 attempts、不进熔断指纹，退回 pending 下个心跳自然重试。
     // （真机账本：4 个 blocked 里 3 个是「后台会话冷却中/等太久了」，全属冤死。）

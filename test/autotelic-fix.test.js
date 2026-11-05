@@ -12,6 +12,7 @@ import { join } from 'node:path'
 import { proposeTasks, buildTodos } from '../src/autotelic/engine.js'
 import { createBook } from '../src/autotelic/book.js'
 import { createRuntime } from '../src/autotelic/runtime.js'
+import { buildActPrompt, parseActMemo } from '../src/autotelic/exec.js'
 
 // —— 造素材：collectMaterials 的 items 带 needAffinity（keyword 命中才有分），测试里直接给 ——
 
@@ -135,6 +136,47 @@ test('真失败照样计数：非瞬态且观察不同的失败 2 次仍会 bloc
   await rt.step()
   const saved = JSON.parse(readFileSync(file, 'utf8'))
   assert.equal(saved.tasks.find((x) => x.id === 't2').status, 'blocked', '真失败两次还是要 blocked')
+})
+
+// —— 进工作间自审（2026-11-05 少爷定：立项后由模型判断值不值得做）——
+
+test('工作间提示词：开头就要求自审，不值得输出 abandon', () => {
+  const prompt = buildActPrompt({ title: '名字', reason: '主人说了「名字」' }, { desc: '弄明白', level: 'L0' })
+  assert.match(prompt, /值不值得做/, '开头就要自审')
+  assert.match(prompt, /abandon/, '不值得要输出 abandon')
+  assert.match(prompt, /关掉/, '说明会被关掉')
+})
+
+test('abandon 回包解析：模型说放弃 → abandon=true + why', () => {
+  const m = parseActMemo('{"abandon": true, "why": "这只是主人随口叫了我一声，没有可办的事"}')
+  assert.equal(m.abandon, true)
+  assert.match(m.why, /随口/)
+})
+
+test('正常回包不误判 abandon：没有 abandon 字段 = 继续做', () => {
+  const m = parseActMemo('{"done": true, "observation": "查到了", "lesson": "下次先查笔记"}')
+  assert.equal(m.abandon, false, '没有 abandon 字段不许误判')
+  assert.equal(m.ok, true)
+})
+
+test('进工作间自审不通过 → 任务直接 abandoned（不算失败、不写反思）', async (t) => {
+  const file = tmpLedger(t, [mkTask('t3', '名字')])
+  const closed = []
+  const rt = createRuntime({
+    settings: () => ({ ...BASE_SETTINGS }),
+    hub: {},
+    ledgerFile: file,
+    auditNote: (e) => closed.push(e),
+    act: { runStep: async () => ({ ok: false, abandon: true, why: '这只是个称呼，没内容可挖', observation: '', hadTools: false }) },
+  })
+  const r = await rt.step()
+  assert.equal(r.outcome, 'act-abandoned', `自审否决要走 act-abandoned，实得 ${r.outcome}`)
+  const saved = JSON.parse(readFileSync(file, 'utf8'))
+  const t3 = saved.tasks.find((x) => x.id === 't3')
+  assert.equal(t3.status, 'abandoned', '任务被关掉')
+  assert.match(t3.why, /自审不通过/, '关掉原因写清楚')
+  assert.ok(closed.some((e) => e.kind === 'autotelic/abandon'), '自审否决要进审计')
+  assert.equal(saved.actions.length, 1, '这一轮确实起了回合，占一次动作预算')
 })
 
 // —— 附带：buildTodos 的产物能被 addTask 原样落账 ——
