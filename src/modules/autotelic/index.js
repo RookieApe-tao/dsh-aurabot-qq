@@ -13,6 +13,7 @@ import { createExec } from '../../autotelic/exec.js'
 import { createJournal } from '../../autotelic/reflect.js'
 import { probePython, loadEnvCache, saveEnvCache, envUsable, runPython } from '../../autotelic/python.js'
 import { createSkills, writeUserModule } from '../../autotelic/skills.js'
+import { probeTakeovers, applyTakeover, restoreTakeover, findFlipped, repressTakeover, takeoverView } from '../../autotelic/takeover.js'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -21,7 +22,7 @@ export default {
   name: '自驱引擎（实验）',
   version: '0.4.0',
   description: '给她自己的后台会话与账本：独立 preset、机械审计（哈希链）、好奇判分与立项、L1 分级执行（反思/每日一页/做梦）、Python 与用户模块（P3）、技能库与提案通道（P4）。默认关闭，全关时插件行为与旧版一致。',
-  files: ['autotelic/audit.js', 'autotelic/engine.js', 'autotelic/book.js', 'autotelic/runtime.js', 'autotelic/exec.js', 'autotelic/reflect.js', 'autotelic/python.js', 'autotelic/skills.js'],
+  files: ['autotelic/audit.js', 'autotelic/engine.js', 'autotelic/book.js', 'autotelic/runtime.js', 'autotelic/exec.js', 'autotelic/reflect.js', 'autotelic/python.js', 'autotelic/skills.js', 'autotelic/takeover.js'],
   // 独立标签页「自驱引擎」（页面在 client/client.js：TABS/TAB_MODS/NAV_GROUPS/Autotelic 组件）。
   tab: 'autotelic',
   defaults: {
@@ -49,6 +50,9 @@ export default {
     allowPython: true, // 允许她跑 Python 脚本
     pythonBin: '', // 留空 = 自动探测（§1.2）；填了就校验后直接用
     scriptTimeoutMs: 120000, // 单次脚本超时
+    // —— 接管浏览模块（docs/AUTOTELIC-TAKEOVER.md；主人手动点，不自动）——
+    takeover: false, // 接管开关（按钮）；开着时压制 douyin/bili 的自主循环，刷什么归好奇评分
+    takenOver: {}, // 接管时记下的原值备份（内部键，面板只读展示；重启据此重压）
   },
   settings: [
     { key: 'enabled', label: '启用自驱引擎', type: 'switch', hint: '默认关。开着时她每分钟想一次「有什么值得自己弄清楚的」，够好奇就立项记账（只在脑子里办，不出门）' },
@@ -71,6 +75,7 @@ export default {
     { key: 'allowPython', label: '允许跑 Python 脚本', type: 'switch' },
     { key: 'pythonBin', label: 'Python 解释器路径', type: 'string', hint: '留空 = 自动探测（会滤掉商店占位别名）；探测不到时填全路径' },
     { key: 'scriptTimeoutMs', label: '脚本超时（毫秒）', type: 'number', min: 1000, max: 600000 },
+    { key: 'takeover', label: '接管浏览模块', type: 'switch', hint: '手动点开才生效：压制抖音/B站的自动循环，刷什么由好奇评分决定（不关模块总开关，她的手还在）。关掉自动还原原配置' },
   ],
   setup(api) {
     // 审计目录：api.dataDir 已自动带 modules-data/autotelic 前缀，别再叠一层「autotelic」（§2.1 的坑）。
@@ -135,6 +140,35 @@ export default {
     }
     const isHer = (where) => String(where?.chat?.chatId || '').startsWith('system:autotelic')
     const clip = (s, n) => { const t = String(s || ''); return t.length > n ? t.slice(0, n) + '…' : t }
+
+    // ---------- 接管浏览模块（docs/AUTOTELIC-TAKEOVER.md） ----------
+    // 主人手动点按钮，不自动。压制靠写配置（模块每次运行都现读 settings，改了立即生效，不改它们代码）。
+    // 不关模块总开关 enabled——关了 api.use('douyin') 就拿不到，她的手就断了。
+    /** 在跑的浏览型模块 id（探测式：凡含 autoBrowse 的家族 + 例外表）。 */
+    const liveModuleIds = () => {
+      try {
+        const list = api.core?.modules?.status?.() || []
+        return list.filter((m) => m && m.running !== false).map((m) => m.id).filter(Boolean)
+      } catch { return [] }
+    }
+    const takeoverProbe = () => probeTakeovers({ getConfig: api.config, liveIds: liveModuleIds(), extra: api.settings().takeoverExtra || [] })
+    const takeoverBackup = () => (api.settings().takenOver && typeof api.settings().takenOver === 'object') ? api.settings().takenOver : {}
+    /** 写备份到配置（落盘，重启据此重压）。 */
+    const saveBackup = (backup) => api.saveSettings({ takenOver: backup })
+    /** 重新压制（恢复接管口径，2026-11-05 主人定）：重启后重压，不还原。幂等。 */
+    function repressIfNeeded() {
+      const backup = takeoverBackup()
+      if (!Object.keys(backup).length) return []
+      const done = repressTakeover({ getConfig: api.config, setConfig: api.setConfig, backup })
+      if (done.length) {
+        api.log.info?.(`自驱：恢复接管，重压 ${done.map((d) => d.id).join('、')}`)
+        note({ kind: 'autotelic/takeover', args: { action: 'repress', targets: done }, outcome: '重启后恢复接管（幂等重压）' })
+      }
+      return done
+    }
+    // 启动先重压（上次接管过就继续生效，别让插件重启悄悄失效）
+    repressIfNeeded()
+
     api.tool((where) => {
       if (!api.settings().enabled || !isHer(where)) return []
       return [
@@ -320,7 +354,18 @@ export default {
     })
 
     // 心跳：每分钟一次判定（§4.5）。enabled=false 时 tick 第一行就返回，零 IO。
-    api.every(60_000, () => runtime.tick().catch(() => {}), '自驱引擎心跳')
+    api.every(60_000, () => {
+      // 接管兜底：主人手动把它改回 true → 压回去（接管期间这个键归 autotelic 管）并留痕
+      try {
+        const flipped = findFlipped({ getConfig: api.config, backup: takeoverBackup() })
+        if (flipped.length) {
+          repressTakeover({ getConfig: api.config, setConfig: api.setConfig, backup: takeoverBackup() })
+          note({ kind: 'autotelic/takeover', args: { action: 'resuppress', targets: flipped.map((f) => f.id) }, outcome: '主人手动改回，接管期间被压回' })
+          api.log.info?.(`自驱：接管兜底，压回 ${flipped.map((f) => f.id).join('、')}`)
+        }
+      } catch (error) { api.log.debug?.('自驱：接管兜底出错：', error?.message) }
+      return runtime.tick().catch(() => {})
+    }, '自驱引擎心跳')
 
     // P0.6 + P1：状态路由（审计 + 任务账本 + 心跳节奏 §10.2：显示节奏而非「运行中」）。
     api.route('/autotelic/status', async () => {
@@ -340,6 +385,7 @@ export default {
         skills: skills.list().slice(0, 12),
         proposals: (() => { try { return readdirSync(api.dataDir('proposals')).filter((f) => f.endsWith('.md')).length } catch { return 0 } })(),
         sayPending: (() => { try { return (JSON.parse(readFileSync(api.dataDir('say-pending.json'), 'utf8') || '[]') || []).length } catch { return 0 } })(),
+        takeover: takeoverView(takeoverBackup()),
       }
     })
     // 零副作用预览（验收 2/3）：今天会立什么项、为什么、分数多少、落选原因。
@@ -358,6 +404,38 @@ export default {
       const r = await runtime.step({ manual: true })
       return { ok: r.outcome !== 'error', message: stepMessage(r), ...r }
     })
+    // 接管 / 还原（主人的按钮，手动点）：压制浏览型模块的自主循环，刷什么归好奇评分
+    api.route('/autotelic/takeover', async (req) => {
+      const body = await api.core.http.body?.(req).catch(() => ({})) || {}
+      const want = body.on === undefined ? !api.settings().takeover : Boolean(body.on)
+      if (want) {
+        const probe = takeoverProbe()
+        if (!probe.length) {
+          const live = liveModuleIds()
+          return { ok: false, message: `没找到可接管的浏览模块${live.length ? `（在跑：${live.join('、')}）` : '（没有模块在跑？）'}。装了抖音/B站之类的模块再点`, takeover: takeoverView(takeoverBackup()) }
+        }
+        const backup = applyTakeover({ getConfig: api.config, setConfig: api.setConfig, probe })
+        saveBackup(backup)
+        api.saveSettings({ takeover: true })
+        note({ kind: 'autotelic/takeover', args: { action: 'on', targets: Object.keys(backup) }, outcome: '主人手动点开接管' })
+        api.log.info?.(`自驱：接管浏览模块 ${Object.keys(backup).join('、')}（自主循环压制，兴趣归好奇评分）`)
+        return { ok: true, message: `接管了 ${Object.keys(backup).join('、')}：自主循环已压制，模块总开关不动（她的手还在）。刷什么由好奇评分决定`, takeover: takeoverView(backup) }
+      }
+      const done = restoreTakeover({ getConfig: api.config, setConfig: api.setConfig, backup: takeoverBackup() })
+      saveBackup({})
+      api.saveSettings({ takeover: false })
+      note({ kind: 'autotelic/takeover', args: { action: 'off', targets: done.map((d) => d.id) }, outcome: '主人手动关掉接管，原值已还原' })
+      api.log.info?.(`自驱：关掉接管，还原 ${done.map((d) => d.id).join('、') || '（没接管过）'}`)
+      return { ok: true, message: done.length ? `已还原 ${done.map((d) => d.id).join('、')} 的原配置` : '没接管过，不用还原', takeover: takeoverView({}) }
+    })
+    // 接管状态（面板展示 + 原值透明：不显示主人会以为模块坏了）
+    api.route('/autotelic/takeover-status', async () => ({
+      ok: true,
+      on: Boolean(api.settings().takeover),
+      takeover: takeoverView(takeoverBackup()),
+      candidates: takeoverProbe().map((t) => ({ id: t.id, key: t.key, from: t.from })),
+      live: liveModuleIds(),
+    }))
     // 她自己调参数（P2.6，C5）：白名单 + 上限钳制 + 本次调整进审计。主人也能代调（by=owner 不钳制方向）。
     api.route('/autotelic/tune', async (req) => {
       const body = await api.core.http.body(req).catch(() => ({}))
@@ -416,7 +494,16 @@ export default {
       return { ok: true, date, audit, tasks, daily: journal.read('daily', date), dream: journal.read('dreams', date) }
     })
 
-    return { auditDir, runtime }
+    return {
+      auditDir,
+      runtime,
+      // 接管能力（面板走 /autotelic/takeover 路由；这里给编程调用留口）
+      takeover: {
+        probe: takeoverProbe,
+        status: () => ({ on: Boolean(api.settings().takeover), ...takeoverView(takeoverBackup()) }),
+        repress: repressIfNeeded,
+      },
+    }
   },
 }
 

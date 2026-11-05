@@ -183,7 +183,7 @@ test('模块壳：默认全关、状态路由返回审计链校验，enabled=fal
   assert.deepEqual(status.heartbeats, [])
   assert.equal(status.summary.total, 0)
   assert.deepEqual(status.tasks, [], '默认关时账本是空的')
-  assert.deepEqual(Object.keys(routes).sort(), ['/autotelic/day', '/autotelic/env', '/autotelic/journal', '/autotelic/preview', '/autotelic/proposals', '/autotelic/run', '/autotelic/skills', '/autotelic/status', '/autotelic/step', '/autotelic/tune'].sort(), 'P0~P4：状态/预览/手动跑/推进一步/调参/复盘/技能/提案/环境/某天记录')
+  assert.deepEqual(Object.keys(routes).sort(), ['/autotelic/day', '/autotelic/env', '/autotelic/journal', '/autotelic/preview', '/autotelic/proposals', '/autotelic/run', '/autotelic/skills', '/autotelic/status', '/autotelic/step', '/autotelic/takeover', '/autotelic/takeover-status', '/autotelic/tune'].sort(), 'P0~P4 + 接管：状态/预览/手动跑/推进一步/调参/复盘/技能/提案/环境/某天记录/接管与还原/接管状态')
 })
 
 test('模块壳：host 接线后状态路由显示「审计已开启」与当日条数', async (t) => {
@@ -210,11 +210,16 @@ test('模块壳：host 接线后状态路由显示「审计已开启」与当日
   assert.equal(status.audit.chain.total, 0) // 空行不算条目
 })
 
-test('声明式配置：settings 键与 defaults 一一对应，首期不存在的键不许混进来', () => {
+test('声明式配置：settings 覆盖所有用户可见键，内部键不进面板', () => {
   const keys = module.settings.map((s) => s.key)
-  assert.deepEqual(keys.sort(), Object.keys(module.defaults).sort(), 'settings 数组与 defaults 完全对齐（面板按数组生成）')
+  // 内部状态键（takenOver = 接管原值备份）：不进 settings 数组，面板不展示表单，只在状态里只读显示
+  const INTERNAL = ['takenOver']
+  const visible = Object.keys(module.defaults).filter((k) => !INTERNAL.includes(k)).sort()
+  assert.deepEqual(keys.sort(), visible, 'settings 数组与 defaults 对齐（内部键除外；面板按数组生成）')
+  for (const k of INTERNAL) assert.equal(keys.includes(k), false, `内部键 ${k} 不该出现在面板表单里`)
   assert.equal(module.defaults.enabled, false, '总开关默认关')
   assert.equal(module.defaults.presetIdOverride, false, 'presetId 覆盖开关默认关（§9）')
+  assert.equal(module.defaults.takeover, false, '接管默认关（主人手动点才生效，TAKEOVER §3）')
   for (const forbidden of ['l2PerDay', 'budgetTokensPerDay']) {
     assert.equal(keys.includes(forbidden), false, `${forbidden} 首期不存在（§2.2 / §4.8）`)
   }
