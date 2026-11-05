@@ -2210,33 +2210,34 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         setDayM({ date, data: null })
         get('/autotelic/day?date=' + date).then((r) => { if (r.ok) setDayM({ date, data: r }); else { toast(r.message || '没读到', 'err'); setDayM(null) } }).catch((e) => { toast(e.message, 'err'); setDayM(null) })
       }
-      const auditLine = (a, i) => h('div', { key: i, className: 'ab-small', style: { display: 'flex', gap: 8, padding: '2px 0', borderBottom: '1px dashed var(--ab-line, #dbe5ea)' } },
-        h('span', { className: 'ab-muted', style: { flex: 'none', width: 64 } }, String(a.at || '').slice(11, 19)),
-        h('span', { style: { flex: 'none', width: 120, color: a.kind === 'tool/denied' ? '#c62828' : 'inherit' } }, (a.kind || '') + (a.tool ? ' · ' + a.tool : '')),
-        h('span', { className: 'ab-muted', style: { flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, clipText(a.outcome || (typeof a.args === 'string' ? a.args : JSON.stringify(a.args) || ''), 120)))
       const clipText = (v, n) => { const t = String(v || ''); return t.length > n ? t.slice(0, n) + '…' : t }
-      const dayModal = dayM ? h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(12,28,38,.45)', zIndex: 80, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '6vh 16px' }, onClick: () => setDayM(null) },
-        h('div', { className: 'ab-card', style: { width: 'min(760px, 100%)', maxHeight: '86vh', overflow: 'auto' }, onClick: (e) => e.stopPropagation() },
-          h('div', { className: 'ab-flex', style: { alignItems: 'center', marginBottom: 8 } },
+      // 审计行用纯文本堆叠（不玩 flex 固定宽），样式全部沿用页面既有类
+      const auditLine = (a, i) => h('div', { key: i, className: 'ab-small', style: { padding: '3px 0', borderBottom: '1px dashed var(--ab-line, #dbe5ea)', wordBreak: 'break-all' } },
+        a.kind === 'tool/denied'
+          ? h('span', { style: { color: '#c62828' } }, '⛔ ' + clipText((a.at || '').slice(11, 19) + '　' + (a.kind || '') + (a.tool ? ' · ' + a.tool : '') + '　' + clipText(a.outcome || a.args || '', 160), 220))
+          : clipText((a.at || '').slice(11, 19) + '　' + (a.kind || '') + (a.tool ? ' · ' + a.tool : '') + '　' + clipText(a.outcome || (typeof a.args === 'string' ? a.args : JSON.stringify(a.args) || ''), 160), 260))
+      const dayModal = dayM ? h('div', { style: { position: 'fixed', top: '0px', left: '0px', right: '0px', bottom: '0px', background: 'rgba(12,28,38,.45)', zIndex: '80', overflowY: 'auto', padding: '24px' }, onClick: () => setDayM(null) },
+        h('div', { className: 'ab-card', style: { maxWidth: '760px', margin: '0px auto' }, onClick: (e) => e.stopPropagation() },
+          h('div', { className: 'ab-flex', style: { alignItems: 'center', marginBottom: '8px' } },
             h('b', null, '这一天的记录 · ' + dayM.date),
-            h('span', { style: { flex: 1 } }),
+            h('span', { style: { flex: '1 1 auto', display: 'inline-block' } }),
             h(Btn, { small: true, onClick: () => setDayM(null) }, '关闭')),
           !dayM.data ? h(Empty, { icon: '⏳', text: '读账本中…' }) : h('div', null,
-            h('div', { className: 'ab-small ab-muted', style: { marginBottom: 6 } },
+            h('div', { className: 'ab-small ab-muted', style: { marginBottom: '6px' } },
               '审计 ' + (dayM.data.audit || []).length + ' 条 · 任务 ' + (dayM.data.tasks || []).length + ' 个'),
-            (dayM.data.tasks || []).length ? h('div', { className: 'ab-list', style: { marginBottom: 10 } },
+            (dayM.data.tasks || []).length ? h('div', { className: 'ab-list', style: { marginBottom: '10px' } },
               (dayM.data.tasks || []).map((t) => h('div', { key: t.id, className: 'ab-li' },
                 h('div', { className: 'meta' }, h('b', null, t.title), ' ', h('span', { className: 'ab-badge' }, TASK_BADGE[t.status] || t.status), ' · 好奇 ' + (t.score != null ? t.score.toFixed(2) : '?')),
                 h('div', { className: 'body ab-small' }, t.reason),
                 (t.steps || []).map((st2, i) => h('div', { key: i, className: 'ab-small ab-muted' }, '· 步 ' + (i + 1) + ' ' + st2.desc + ' → ' + st2.status + (st2.attempts ? '（试 ' + st2.attempts + ' 次）' : '') + (st2.why ? '：' + st2.why : ''))),
                 t.why ? h('div', { className: 'ab-small', style: { color: '#c62828' } }, '→ ' + t.why) : null))) : null,
-            dayM.data.daily ? h('div', { style: { marginBottom: 10 } },
-              h('div', { className: 'ab-small ab-muted', style: { marginBottom: 4 } }, '当日每日一页：'),
-              h('div', { className: 'ab-small', style: { whiteSpace: 'pre-wrap', background: 'var(--ab-bg, #f6fafb)', padding: 10, borderRadius: 8 } }, dayM.data.daily)) : null,
-            dayM.data.dream ? h('div', { style: { marginBottom: 10 } },
-              h('div', { className: 'ab-small ab-muted', style: { marginBottom: 4 } }, '当日做梦：'),
-              h('div', { className: 'ab-small', style: { whiteSpace: 'pre-wrap', background: 'var(--ab-bg, #f6fafb)', padding: 10, borderRadius: 8 } }, dayM.data.dream)) : null,
-            h('div', { className: 'ab-small ab-muted', style: { margin: '6px 0 4px 2px' } }, '审计流水（机械记录，按序）：'),
+            dayM.data.daily ? h('div', { style: { marginBottom: '10px' } },
+              h('div', { className: 'ab-small ab-muted', style: { marginBottom: '4px' } }, '当日每日一页：'),
+              h('div', { className: 'ab-small', style: { whiteSpace: 'pre-wrap', background: 'var(--ab-bg, #f6fafb)', padding: '10px', borderRadius: '8px' } }, dayM.data.daily)) : null,
+            dayM.data.dream ? h('div', { style: { marginBottom: '10px' } },
+              h('div', { className: 'ab-small ab-muted', style: { marginBottom: '4px' } }, '当日做梦：'),
+              h('div', { className: 'ab-small', style: { whiteSpace: 'pre-wrap', background: 'var(--ab-bg, #f6fafb)', padding: '10px', borderRadius: '8px' } }, dayM.data.dream)) : null,
+            h('div', { className: 'ab-small ab-muted', style: { margin: '6px 0px 4px 2px' } }, '审计流水（机械记录，按序）：'),
             (dayM.data.audit || []).length ? h('div', null, (dayM.data.audit || []).map(auditLine))
               : h('div', { className: 'ab-small ab-muted' }, '这一天账本上没有工具调用。')),
         )) : null
@@ -2278,14 +2279,14 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       const NumRow = ({ label, hint, k, min, max, step = 1, suffix = '' }) => h(Row, { label, hint },
         h('div', { className: 'ab-flex', style: { alignItems: 'center', gap: 8 } },
           h('input', { type: 'range', min, max, step, style: { flex: 1, minWidth: 110, accentColor: 'var(--ab-sea, #2a86c6)' }, value: Number(dv(k)), onChange: (e) => ap({ [k]: Number(e.target.value) }) }),
-          h('input', { className: 'ab-input', type: 'number', min, max, step, style: { width: 84 }, value: Number(dv(k)), onChange: (e) => { const v = Number(e.target.value); if (Number.isFinite(v)) ap({ [k]: v }) } }),
+          h('input', { className: 'ab-input', type: 'number', min, max, step, style: { width: '84px' }, value: Number(dv(k)), onChange: (e) => { const v = Number(e.target.value); if (Number.isFinite(v)) ap({ [k]: v }) } }),
           suffix ? h('span', { className: 'ab-muted ab-small', style: { whiteSpace: 'nowrap' } }, suffix) : null))
       // 时间对（起~止）：原生 time 控件；两格都空 = 该功能关闭
       const TimeRow = ({ label, hint, kf, kt, clearHint }) => h(Row, { label, hint },
         h('div', { className: 'ab-flex', style: { alignItems: 'center', gap: 8 } },
-          h('input', { className: 'ab-input', type: 'time', style: { width: 118 }, value: String(aut[kf] || ''), onChange: (e) => ap({ [kf]: e.target.value }) }),
+          h('input', { className: 'ab-input', type: 'time', style: { width: '118px' }, value: String(aut[kf] || ''), onChange: (e) => ap({ [kf]: e.target.value }) }),
           h('span', { className: 'ab-muted ab-small' }, '到'),
-          h('input', { className: 'ab-input', type: 'time', style: { width: 118 }, value: String(aut[kt] || ''), onChange: (e) => ap({ [kt]: e.target.value }) }),
+          h('input', { className: 'ab-input', type: 'time', style: { width: '118px' }, value: String(aut[kt] || ''), onChange: (e) => ap({ [kt]: e.target.value }) }),
           h(Btn, { small: true, onClick: () => ap({ [kf]: '', [kt]: '' }) }, '清空=关'),
           aut[kf] && aut[kt] ? h('span', { className: 'ab-muted ab-small' }, clearHint || '') : h('span', { className: 'ab-muted ab-small' }, '未启用')))
       // 节奏预设：一键铺一整套作息；「恢复默认」回到出厂值
@@ -2705,7 +2706,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         pet?.scale != null ? h(Row, { label: '人物大小', hint: '0.5~2 倍，1 = 原始大小。拖滑块或在框里填数都可以，点保存后桌宠会自己整窗缩放（拖拽/甩抛物理跟着对齐），不用重启' },
           h('div', { className: 'ab-flex', style: { alignItems: 'center', gap: 8 } },
             h('input', { type: 'range', min: 0.5, max: 2, step: 0.05, style: { flex: 1, minWidth: 120, accentColor: 'var(--ab-sea, #2a86c6)' }, value: Number(scVal == null ? (pet?.scale || 1) : scVal), onChange: (e) => setScVal(e.target.value) }),
-            h('input', { className: 'ab-input', type: 'number', min: 0.5, max: 2, step: 0.05, style: { width: 84 }, value: scVal == null ? (pet?.scale || 1) : scVal, onChange: (e) => setScVal(e.target.value) }),
+            h('input', { className: 'ab-input', type: 'number', min: 0.5, max: 2, step: 0.05, style: { width: '84px' }, value: scVal == null ? (pet?.scale || 1) : scVal, onChange: (e) => setScVal(e.target.value) }),
             h('span', { className: 'ab-muted ab-small', style: { whiteSpace: 'nowrap' } }, '倍'),
             h(Btn, { small: true, disabled: busy === 'scale', onClick: async () => { const v = Number(scVal == null ? (pet?.scale || 1) : scVal); if (!(v >= 0.5 && v <= 2)) { toast('大小要填 0.5 ~ 2 之间的数', 'err'); return } setBusy('scale'); try { await savePet({ petScale: Math.round(v * 20) / 20 }, '人物大小已保存'); setScVal(null) } finally { setBusy(''); load() } } }, busy === 'scale' ? '保存中…' : '保存'))) : null,
         // 只有 1.0.4 以上的桌宠模块才支持松手落地开关（老模块不显示，免得拨了没反应）
