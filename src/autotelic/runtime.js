@@ -142,7 +142,7 @@ export function createRuntime({ settings, cfg = {}, hub = {}, memoryOf = null, p
       maxCandidates: Number(s.maxCandidates) || 3,
       now: at,
     })
-    return { materials, ...r, book: bk }
+    return { materials, ...r, book: bk, tasks, coolSourceIds, at }
   }
 
   /** 零副作用预览（P1.5，验收 2/3）：今天会立什么项、为什么、分数多少。不调模型、不落盘。 */
@@ -169,12 +169,12 @@ export function createRuntime({ settings, cfg = {}, hub = {}, memoryOf = null, p
     let outcome = 'idle'
     let detail = {}
     try {
-      const { materials, candidates, rejected, lastOutcome } = appraise()
+      const { materials, candidates, rejected, lastOutcome, tasks, coolSourceIds, at } = appraise()
       let noWhy = ''
       if (!materials.length) outcome = 'skipped-no-material' // 场景 2
       else if (!candidates.length) outcome = lastOutcome // 场景 3：低于阈值，素材留池
       else {
-        // 便宜模型自评（可关）：一次后台回合微调分数；失败静默回退公式分
+        // 便宜模型评估（可关）：一次后台回合微调分数；失败静默回退公式分
         const model = parseEvalModel(s.evalModel)
         if (model && typeof evalTurn === 'function') {
           try {
@@ -188,6 +188,48 @@ export function createRuntime({ settings, cfg = {}, hub = {}, memoryOf = null, p
             const m = String(raw || '').match(/\[[\s\S]*\]/)
             if (m) mergeModelScores(JSON.parse(m[0]), candidates).forEach((c, i) => { if (c && candidates[i]) candidates[i] = c })
           } catch (error) { log?.debug?.('自驱：模型自评失败，用公式分：', error?.message) }
+        }
+        // 对话闸第二机会（2026-11-05 主人定）：对话型素材默认拒，但配了模型时交给模型评
+        // 「这件事本身值得办吗」——值得的放回立项席。内容型候选的评估由上面的自评覆盖。
+        const chatGate = s.chatGate !== false
+        let conversationalAllowed = new Set()
+        if (chatGate && model && typeof evalTurn === 'function') {
+          const talkers = rejected.filter((x) => /对话型素材不立项/.test(x.why || '')).slice(0, 6)
+          if (talkers.length) {
+            try {
+              const prompt = [
+                '自驱引擎把下面这些话拦下了，没当成「要办的事」。判断：哪几条其实是一件值得她花自己的时间去弄清楚的事？（不是寒暄、应答、称呼、撒娇）',
+                '只输出 JSON 数组：[{"t":"原文片段","worth":true}]；worth 只给 true/false，拿不准给 false。', '',
+                ...talkers.map((x) => `- ${x.title}`),
+              ].join('\n')
+              const raw = await evalTurn(prompt, { model, timeoutMs: 60000 })
+              const arr = JSON.parse(String(raw || '').match(/\[[\s\S]*\]/)?.[0] || '[]')
+              // 放行按 sourceId 定位：rejected 现在带 sourceId（对话型被拦的那条素材）
+              const bySid = new Map(rejected.filter((x) => x.sourceId).map((x) => [x.sourceId, x]))
+              for (const item of arr || []) {
+                if (item?.worth !== true || !item.t) continue
+                const t = String(item.t)
+                const hit = bySid.get(t) || rejected.find((x) => x.sourceId && (t.includes(String(x.title).slice(0, 10)) || String(x.title).includes(t.slice(0, 10))))
+                if (hit?.sourceId) conversationalAllowed.add(hit.sourceId)
+              }
+            } catch (error) { log?.debug?.('自驱：对话闸评估失败，维持默认拒：', error?.message) }
+          }
+        }
+        if (conversationalAllowed.size) {
+          const retry = proposeTasks({
+            materials,
+            activeTasks: tasks.filter((t) => t.status === 'active'),
+            recentTitles: tasks.slice(-12).map((t) => t.title),
+            coolSourceIds,
+            conversationalAllowed,
+            minCuriosity: s.minCuriosity,
+            maxCandidates: Number(s.maxCandidates) || 3,
+            now: at,
+          })
+          if (retry.candidates.length) {
+            candidates.push(...retry.candidates)
+            log?.info?.(`自驱：对话闸放行 ${retry.candidates.length} 个（模型评估「值得办」）`)
+          }
         }
         const added = []
         for (const c of candidates) {

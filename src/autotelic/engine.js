@@ -24,6 +24,45 @@ export const CURIOSITY_WEIGHTS = Object.freeze({
 
 const RELEVANCE = Object.freeze({ owner: 1, self: 0.8, member: 0.5, media: 0.5, thought: 0.6, memory: 0.7 })
 
+/**
+ * 素材分类（2026-11-05 修「聊天对话被立项成任务」，少爷真机反馈）：
+ * 「你叫大肥鱼」「我都不知道改回你什么呀宝」这些私聊对话被立成了任务——
+ * 关键词命中（identity）就把日常对话推上立项席，完全失灵。
+ *
+ * 两类素材：
+ *   contentful（内容型）：有实义信息量——分享的内容、完整的知识点、一段有上下文的话。
+ *     → 正常走好奇评分，可立项；
+ *   conversational（对话型）：寒暄、问答、口语往来——「汪汪」「哈哈好的」「你叫大肥鱼」。
+ *     → 默认不立项（进记忆就好）；只有模型评估说「这件事本身值得办」才放行（chatGate）。
+ *
+ * 纯启发式（不调模型）：长度、口语密度、是否问句、是否她的自言自语。
+ */
+export function classifyMaterial(m) {
+  const text = String(m.text || '').trim()
+  const who = String(m.who || '')
+  const isBot = m.isSelf === true || who === 'bot' || who === '你'
+  // 她自己的发言（分享过的内容除外——那是 media 类）
+  if (isBot) {
+    const looksLikeShare = text.length >= 30 && /[。！？]/.test(text)
+    return { type: looksLikeShare ? 'contentful' : 'conversational', reason: isBot ? '她自己的发言' : '' }
+  }
+  // 长度：去掉标点/语气词后 <4 实义字 = 纯语气词（「汪汪」「嗯嗯」），无可办内容。
+  // 门槛不能太高——「拆解刷B站原理」这种 7 字主题短语是合法的内容型素材。
+  const plain = text.replace(/[，。！？、~～.,!?\s汪汪嗯嗯哦噢诶啊呀哈哈嘻嘻哼叭]/g, '')
+  if (plain.length < 4) return { type: 'conversational', reason: '纯语气词，没有实义内容' }
+  // 纯问句 / 寒暄 / 称呼：这是在跟爸爸说话，不是在提供内容。
+  // 问句只有**短的**才算闲聊（<20 字）——长问句往往是真问题（「想学 ffmpeg 批量转竖屏有什么办法」）。
+  const conversationalPatterns = [
+    /^(早|晚安|吃了吗|在吗|睡了吗|你好|哈喽|嘿嘿|哈哈)/,
+    /^(你|我|他|这|那|什么|怎么|为什么)/,
+  ]
+  if (conversationalPatterns.some((re) => re.test(text)) || (text.length < 20 && /[吗呢吧]$/.test(text))) {
+    return { type: 'conversational', reason: '对话寒暄/短提问' }
+  }
+  // 剩下的：长度够、不是寒暄句式 → 内容型
+  return { type: 'contentful', reason: '' }
+}
+
 const clamp01 = (v) => Math.max(0, Math.min(1, Number(v) || 0))
 
 /**
@@ -65,7 +104,7 @@ export function curiosityOf(material, { recentTitles = [] } = {}) {
  *   candidate = { title, reason, score, parts, todos:[{desc, level:'L0'}], sourceId }
  *   rejected  = { title, score, why }（面板要能看到分数与落选原因，验收场景 3）
  */
-export function proposeTasks({ materials = [], activeTasks = [], recentTitles = [], coolSourceIds = [], minCuriosity = 0.55, maxCandidates = 3, now = Date.now() } = {}) {
+export function proposeTasks({ materials = [], activeTasks = [], recentTitles = [], coolSourceIds = [], conversationalAllowed = new Set(), minCuriosity = 0.55, maxCandidates = 3, now = Date.now() } = {}) {
   if (!Array.isArray(materials) || !materials.length) return { candidates: [], rejected: [], lastOutcome: 'skipped-no-material' }
   const scored = materials
     .map((m) => ({ m, c: curiosityOf(m, { recentTitles }) }))
@@ -77,6 +116,13 @@ export function proposeTasks({ materials = [], activeTasks = [], recentTitles = 
   const activeSourceIds = new Set(activeTasks.map((t) => String(t.sourceId || '')).filter(Boolean))
   const coolSet = new Set(coolSourceIds.map(String))
   for (const { m, c } of scored) {
+    // 素材分类（2026-11-05 修「聊天对话被立项」）：对话型默认拒，模型放行的（conversationalAllowed）除外
+    const cls = classifyMaterial(m)
+    const sid0 = String(m.id || '')
+    if (cls.type === 'conversational' && !(sid0 && conversationalAllowed.has(sid0))) {
+      rejected.push({ title: (c.topic || m.text || '').slice(0, 40), score: c.score, why: `对话型素材不立项（${cls.reason}）；进入工作间的是内容型素材`, sourceId: sid0 })
+      continue
+    }
     const title = c.topic || String(m.text || '').slice(0, 40)
     if (!title || title.length < 2) { rejected.push({ title, score: c.score, why: '素材太短，立不出方向' }); continue }
     // 最小实义门槛（2026-11-05 修「『汪汪』也立项」，少爷真机反馈）：少于 6 字或纯标点/语气词的
