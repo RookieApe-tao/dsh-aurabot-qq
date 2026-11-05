@@ -73,12 +73,15 @@ export function createExec({ settings, hub, auditNote, log } = {}) {
     const s = settings()
     const hadTools = toolsAllowed()
     const prompt = buildActPrompt(task, step, { quiet: false })
-    const opts = { timeoutMs: Number(s.actTimeoutMs) || 180000, noTools: !hadTools, key: `act-${task.id}` }
+    const opts = { timeoutMs: Number(s.actTimeoutMs) || 180000, noTools: !hadTools, key: 'workbench' }
     // §4.6b：做事用主模型（不传 model）；带工具时指 aurabot-autotelic preset（fs 只读，无 shell）
     if (hadTools) opts.presetId = 'aurabot-autotelic'
     let raw = ''
     try {
-      raw = await hub.runSystemTurn('autotelic-act', `${AUTOTELIC_CHAT_PREFIX}-act · ${task.title}`.slice(0, 40), prompt, opts)
+      // 2026-11-05 修「会话爆炸」（少爷真机反馈：任务多时侧栏一排 autotelic 会话）：
+      // 所有任务共享一个工作间会话（key=workbench），任务上下文由提示词带进去，
+      // 不再每任务一个会话（16 任务 = 16 条侧栏记录，不优雅也没必要）。
+      raw = await hub.runSystemTurn('autotelic-act', `${AUTOTELIC_CHAT_PREFIX} · 工作间`, prompt, opts)
     } catch (error) {
       log?.warn?.(`自驱：任务「${task.title}」这步出错：`, error?.message)
       return { ok: false, observation: `回合失败：${error?.message || error}`, memo: parseActMemo(''), hadTools, error: String(error?.message || error) }

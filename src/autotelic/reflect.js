@@ -16,10 +16,23 @@ import { parseClock } from '../purpose/engine.js'
 const pad2 = (n) => String(n).padStart(2, '0')
 export const dayKey = (at = Date.now()) => { const d = new Date(at); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}` }
 
-/** 反思文本（假设 / 证据 / 教训三段齐全，缺的段写「（没写）」——存在本身比内容重要）。 */
+/**
+ * 反思文本（2026-11-05 修「记忆被截断」）：memory.addEvent 硬截 200 字（memory.js:600），
+ * 旧格式「假设——…；证据——…；教训——…」光标签就吃掉大半，真正的结论被截掉。
+ * 新口径：**结论先行**——把最值钱的判断放最前面，假设/证据压成半句，格式标签只留一个。
+ * 各段截断收紧（结论 90 / 证据 45 / 教训 45），保证 200 字内全文完整。
+ */
 export function reflectionText(task, memo = {}) {
-  const cut = (s, n) => String(s || '').trim().slice(0, 200) || '（没写）'
-  return `【自驱·反思】${task.title}（${task.status}）：假设——${cut(memo.hypothesis)}；证据——${cut(memo.evidence)}；教训——${cut(memo.lesson)}`
+  const cut = (s, n) => String(s || '').trim().replace(/\s+/g, ' ').slice(0, n)
+  const title = cut(task.title, 30)
+  const lesson = cut(memo.lesson, 45)
+  const evidence = cut(memo.evidence, 45)
+  const hypothesis = cut(memo.hypothesis, 90)
+  // 结论 = 教训优先（它是「下次怎么办」），没有教训就用假设顶上（它至少是个判断）
+  const head = lesson || hypothesis || '（没写）'
+  const rest = [lesson ? `依据：${evidence || hypothesis || '（没写）'}` : `当初想：${hypothesis || '（没写）'}`]
+    .filter((x) => !/（没写）$/.test(x) || x.length > 12)
+  return `【自驱】${title}（${task.status}）：${head}${rest.length ? '。' + rest.join('。') : ''}`
 }
 
 /** 反思进长期记忆（P2.4）。memory 没开就静默跳过（她攒本事的路断了，但不炸主流程）。 */

@@ -47,23 +47,16 @@ test('进行中的同源素材也不重复立项（sourceId 精确挡，标题�
   assert.ok(r.rejected.some((x) => /进行中/.test(x.why)))
 })
 
-// —— 病一：任务书多步化 ——
+// —— 病一修复的形态（2026-11-05 三修：回归单步）——
+// 少爷真机反馈「一个兴趣处理三四次没必要」：做事回合已带工具，一轮能办完，
+// 多步拆解反而让一个兴趣花三四次模型调用 → buildTodos 回归单步清单式任务书。
 
-test('任务书多步化：收尾审判是所有任务的第 3 步（聊天联动，2026-11-05）', () => {
-  for (const need of ['learn', 'create', 'identity', 'play', 'connect', 'care']) {
+test('任务书回归单步：一轮清单式，不再拆多步（修「一个兴趣处理三四次」）', () => {
+  for (const need of ['learn', 'create', 'identity', 'install', 'play', 'connect', 'care']) {
     const steps = buildTodos('随便什么方向', need)
-    assert.ok(steps.length >= 3, `${need} 类至少 3 步（含收尾审判），实得 ${steps.length}`)
-    assert.match(steps[2].desc, /autotelic_propose_say/, '第 3 步是收尾审判：值不值得跟主人说')
-    assert.match(steps[2].desc, /别硬凑/, '审判标准里要有「别硬凑」（防为了说而说）')
-  }
-})
-
-test('任务书多步化：学/创/自我/装类追加第 4 步写记忆', () => {
-  for (const need of ['learn', 'create', 'identity', 'install']) {
-    const steps = buildTodos('随便什么方向', need)
-    assert.equal(steps.length, 4, `${need} 类 4 步，实得 ${steps.length}`)
-    assert.equal(steps.at(-1).level, 'L1-b', '收尾步是写记忆（L1-b）')
-    assert.match(steps.at(-1).desc, /autotelic_note/, '收尾步点名记忆工具')
+    assert.equal(steps.length, 1, `${need} 类任务书 = 1 步（一轮内办完判断/发言/写记忆），实得 ${steps.length}`)
+    assert.match(steps[0].desc, /autotelic_propose_say/, '清单里要有「值不值得说」的收尾')
+    assert.match(steps[0].desc, /autotelic_note/, '清单里要有「写进记忆」的收尾')
   }
 })
 
@@ -124,12 +117,13 @@ test('真失败照样计数：非瞬态且观察不同的失败 2 次仍会 bloc
   assert.equal(saved.tasks.find((x) => x.id === 't2').status, 'blocked', '真失败两次还是要 blocked')
 })
 
-// —— 附带：buildTodos 的产物能被 addTask 原样落账（多步不被吞） ——
+// —— 附带：buildTodos 的产物能被 addTask 原样落账 ——
 
-test('多步任务书经 addTask 落账后步数不变', () => {
+test('单步任务书经 addTask 落账后形状不变', () => {
   const bk = createBook({}) // 不落盘
   const todos = buildTodos('学算命的流派', 'learn')
   const r = bk.addTask({ title: '学算命的流派', reason: '好奇', todos, sourceId: 's9' })
   assert.equal(r.ok, true)
-  assert.equal(r.task.steps.length, todos.length, '多步不许被账本吞成一步')
+  assert.equal(r.task.steps.length, 1, '单步任务书不被账本改形')
+  assert.match(r.task.steps[0].desc, /autotelic_note/)
 })

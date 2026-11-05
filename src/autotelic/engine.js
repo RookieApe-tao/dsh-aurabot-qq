@@ -100,21 +100,25 @@ export function proposeTasks({ materials = [], activeTasks = [], recentTitles = 
 }
 
 /**
- * 任务书生成（2026-11-05 修「只会写判断笔记」）：不再单一模板——
- * 第一、二步固定是「判断 → 对照已有记忆沉淀结论」；第三步「收尾审判」：
- * 这个结论值不值得跟主人说一句（聊天联动的正向用法：值得说才调 propose_say，攒着评）。
- * 学/创/自我/装类追加第四步「用 autotelic_note 把结论写进记忆」（工具不可用就如实写 notes/）。
+ * 任务书（2026-11-05 三修，少爷真机反馈「一个兴趣处理三四次没必要」）：
+ * 回归**单步**——她的做事回合已带工具（fs 只读 + autotelic_* 全家桶），一轮就能
+ * 「弄明白 → 对照记忆 → 值得说就说 → 写进记忆」全做完。
+ * 多步拆解是「她没工具」时代的遗产：现在每步一个完整回合 = 一个兴趣花三四次模型调用。
  */
 export function buildTodos(title, need = '') {
-  const steps = [
-    { desc: `只读了解「${title}」：查已有记忆与素材，写下一段判断`, level: 'L0' },
-    { desc: `对比与沉淀：把上面的判断跟已有记忆对照一遍——站得住就提炼成一条 40 字内的结论，站不住就写清是哪条证据推翻的`, level: 'L0' },
-    { desc: `收尾审判：这个结论值不值得跟主人说一句？主人知道了会更有意思（新知识 / 反常识 / 与他有关 / 关系层的话）就说；只是自己的碎碎念就不说。值得说就用 autotelic_propose_say（带一句 reason），不值得就不调——别硬凑`, level: 'L0' },
-  ]
-  if (['learn', 'create', 'identity', 'install'].includes(need)) {
-    steps.push({ desc: `收尾：把结论里最值得留的一条用 autotelic_note 写进记忆（工具不可用就写进 notes/ 并注明工具不可用）`, level: 'L1-b' })
-  }
-  return steps
+  const tail = ['learn', 'create', 'identity', 'install'].includes(need)
+    ? '③ 最后用 autotelic_note 把最值得留的一条写进记忆（工具不可用就写进 notes/ 并注明）。'
+    : '③ 有值得留的结论也可以顺手用 autotelic_note 记一条。'
+  return [{
+    desc: [
+      `弄明白「${title}」：查已有记忆与素材，形成你自己的判断。一轮内办完：`,
+      `① 对照已有记忆，判断站不站得住；`,
+      `② 值得跟爸爸说一句就调 autotelic_propose_say（不硬凑，碎碎念不说）；`,
+      tail,
+      `你手里有工具，一轮就是一次完整的事，别拆成多轮。`,
+    ].join('\n'),
+    level: 'L0',
+  }]
 }
 
 /**
