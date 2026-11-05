@@ -9,7 +9,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { proposeTasks, buildTodos, classifyMaterial } from '../src/autotelic/engine.js'
+import { proposeTasks, buildTodos } from '../src/autotelic/engine.js'
 import { createBook } from '../src/autotelic/book.js'
 import { createRuntime } from '../src/autotelic/runtime.js'
 
@@ -78,38 +78,6 @@ test('最小实义门槛：纯语气词/超短素材不立项（修「汪汪也�
 test('最小实义门槛：正常长度的素材不受影响', () => {
   const r = proposeTasks({ materials: [mat('m2', '爸爸说想看看大肥鱼自主刷B站的实现原理', { need: 'identity', affinity: 0.9 })], ...BASE })
   assert.equal(r.candidates.length, 1, '正常素材照常立项')
-})
-
-// —— 对话闸（2026-11-05 主人定）：聊天对话不当任务，模型评估才放行 ——
-
-test('素材分类：寒暄/称呼/超短口语 = 对话型', () => {
-  const cases = [
-    ['你叫大肥鱼', ''], ['我都不知道改回你什么呀宝', ''], ['哈哈好的，去学习吧', ''],
-    ['汪汪', ''], ['晚安', ''], ['名字', ''],
-  ]
-  for (const [text] of cases) {
-    const c = classifyMaterial({ text, who: '爸爸' })
-    assert.equal(c.type, 'conversational', `「${text}」应是对话型，实得 ${c.type}（${c.reason}）`)
-  }
-})
-
-test('素材分类：内容型照常识别（完整信息量的一段话）', () => {
-  const c = classifyMaterial({ text: '今天刷到一个讲人工耳蜗如何把电信号转成听觉的科普视频，讲得特别清楚，把原理拆成了三步', who: '' })
-  assert.equal(c.type, 'contentful', `有实义内容该是内容型，实得 ${c.type}（${c.reason}）`)
-})
-
-test('对话闸：对话型默认拒（模型没放行时）', () => {
-  const m = mat('m-chat', '你叫大肥鱼', { need: 'identity', affinity: 1 })
-  const r = proposeTasks({ materials: [m], ...BASE })
-  assert.equal(r.candidates.length, 0, '对话型默认不立项')
-  assert.ok(r.rejected.some((x) => /对话型素材不立项/.test(x.why)))
-  assert.ok(r.rejected[0].sourceId === 'm-chat', 'rejected 要带 sourceId（模型放行时按它定位）')
-})
-
-test('对话闸：模型放行后（conversationalAllowed 含该 sourceId）可以立项', () => {
-  const m = mat('m-chat2', '爸爸说他在写一个监察 AI 自主行为的新机制，想让她讲讲自己的理解', { need: 'identity', affinity: 0.8 })
-  const r = proposeTasks({ materials: [m], conversationalAllowed: new Set(['m-chat2']), ...BASE })
-  assert.equal(r.candidates.length, 1, '模型评估说值得办，放行')
 })
 
 // —— 病三：瞬态退避 ——

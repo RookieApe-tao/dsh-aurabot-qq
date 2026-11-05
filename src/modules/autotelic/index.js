@@ -32,7 +32,6 @@ export default {
     // —— 判分与立项（P1）——
     minCuriosity: 0.55, // 好奇分阈值，不够不立项
     evalModel: '', // 便宜模型自评（'provider/model'）；留空 = 只用可复算公式
-    chatGate: true, // 对话闸（2026-11-05 主人定）：聊天对话默认不当任务，模型评估「这件事本身值得办」才放行
     maxCandidates: 3, // 一轮最多立几个项
     allowAct: true, // 允许动手（L1做事回合）；false 时只「想」不「做」
     actTimeoutMs: 180000, // 做事回合超时（§4.6b：做事用主模型，这里只限时长）
@@ -61,7 +60,6 @@ export default {
     { key: 'presetIdOverride', label: '允许后台会话指定 preset', type: 'switch', hint: 'hub 只在主人明确开了这个开关时才接受 presetId 覆盖（防误伤主聊天）' },
     { key: 'minCuriosity', label: '好奇分阈值', type: 'number', min: 0, max: 1, step: 0.05, hint: '低于这个分不立项；落选原因在「预览」里看得到' },
     { key: 'evalModel', label: '自评模型', type: 'string', hint: "provider/model 形式（如 workbuddy/hy4free）。给候选方向做一次便宜模型自评微调分数；留空只用公式" },
-    { key: 'chatGate', label: '对话闸', type: 'switch', hint: '开 = 聊天对话默认不当任务，模型评估「这件事本身值得办」才放行（修「聊天对话被立项成任务」）' },
     { key: 'maxCandidates', label: '一轮最多立项', type: 'number', min: 1, max: 5 },
     { key: 'allowAct', label: '允许动手（L1）', type: 'switch', hint: '立项后她会跑做事回合推进任务（presetIdOverride 开着才带工具；关着只「想」）。失败 2 次自动卡住，同指纹 2 次熔断' },
     { key: 'actTimeoutMs', label: '做事回合超时（毫秒）', type: 'number', min: 30000, max: 600000 },
