@@ -50,7 +50,7 @@ export function curiosityOf(material, { recentTitles = [] } = {}) {
     need ? `戳中了「${need}」的需要` : '有点意思',
     `新鲜度 ${Math.round(novelty * 100)}%`,
   ].filter(Boolean).join('，')
-  return { score, parts: { affinity, novelty, relevance, importance }, reason, topic }
+  return { score, parts: { affinity, novelty, relevance, importance }, need, reason, topic }
 }
 
 /**
@@ -65,7 +65,7 @@ export function curiosityOf(material, { recentTitles = [] } = {}) {
  *   candidate = { title, reason, score, parts, todos:[{desc, level:'L0'}], sourceId }
  *   rejected  = { title, score, why }（面板要能看到分数与落选原因，验收场景 3）
  */
-export function proposeTasks({ materials = [], activeTasks = [], recentTitles = [], minCuriosity = 0.55, maxCandidates = 3, now = Date.now() } = {}) {
+export function proposeTasks({ materials = [], activeTasks = [], recentTitles = [], coolSourceIds = [], minCuriosity = 0.55, maxCandidates = 3, now = Date.now() } = {}) {
   if (!Array.isArray(materials) || !materials.length) return { candidates: [], rejected: [], lastOutcome: 'skipped-no-material' }
   const scored = materials
     .map((m) => ({ m, c: curiosityOf(m, { recentTitles }) }))
@@ -73,11 +73,17 @@ export function proposeTasks({ materials = [], activeTasks = [], recentTitles = 
   const candidates = []
   const rejected = []
   const activeTitles = activeTasks.map((t) => String(t.title || ''))
+  // 同源硬身份（2026-11-05 修「重复立项饿死引擎」）：标题是截断片段，相似度不稳定，sourceId 才可靠
+  const activeSourceIds = new Set(activeTasks.map((t) => String(t.sourceId || '')).filter(Boolean))
+  const coolSet = new Set(coolSourceIds.map(String))
   for (const { m, c } of scored) {
     const title = c.topic || String(m.text || '').slice(0, 40)
     if (!title || title.length < 2) { rejected.push({ title, score: c.score, why: '素材太短，立不出方向' }); continue }
-    // 和进行中的任务撞了 = 已经在办，不再立项（同一个方向只开一个坑）
+    // 和进行中的任务撞了 = 已经在办，不再立项（同方向只开一个坑；同源素材标题截断后会绕过相似度，这里按 sourceId 精确挡）
     if (activeTitles.some((t) => textSimilarity(t, title) > 0.6)) { rejected.push({ title, score: c.score, why: '已有进行中的任务在同方向' }); continue }
+    const sid = String(m.id || '')
+    if (sid && activeSourceIds.has(sid)) { rejected.push({ title, score: c.score, why: '同源素材已有进行中的任务' }); continue }
+    if (sid && coolSet.has(sid)) { rejected.push({ title, score: c.score, why: '同源素材最近做过（冷却中），先换个方向' }); continue }
     if (candidates.some((x) => textSimilarity(x.title, title) > 0.6)) { rejected.push({ title, score: c.score, why: '和本轮别的候选重复' }); continue }
     if (c.score < minCuriosity) { rejected.push({ title, score: c.score, why: `好奇分 ${c.score.toFixed(2)} < 阈值 ${Number(minCuriosity).toFixed(2)}` }); continue }
     candidates.push({
@@ -85,12 +91,28 @@ export function proposeTasks({ materials = [], activeTasks = [], recentTitles = 
       reason: c.reason, // reason 必填（§3 P1.6，防拍脑袋）
       score: Number(c.score.toFixed(3)),
       parts: c.parts,
-      todos: [{ desc: `只读了解「${title}」：查已有记忆与素材，写下一段判断`, level: 'L0' }],
+      todos: buildTodos(title, c.need),
       sourceId: m.id || '',
     })
     if (candidates.length >= Math.max(1, maxCandidates)) break
   }
   return { candidates, rejected, lastOutcome: candidates.length ? 'proposed' : 'below-threshold' }
+}
+
+/**
+ * 任务书生成（2026-11-05 修「只会写判断笔记」）：不再单一模板——
+ * 第一、二步固定是「判断 → 对照已有记忆沉淀结论」，学/创/自我/装类追加第三步
+ * 「用 autotelic_note 把结论写进记忆」（工具不可用就如实写 notes/，模型自己报告）。
+ */
+export function buildTodos(title, need = '') {
+  const steps = [
+    { desc: `只读了解「${title}」：查已有记忆与素材，写下一段判断`, level: 'L0' },
+    { desc: `对比与沉淀：把上面的判断跟已有记忆对照一遍——站得住就提炼成一条 40 字内的结论，站不住就写清是哪条证据推翻的`, level: 'L0' },
+  ]
+  if (['learn', 'create', 'identity', 'install'].includes(need)) {
+    steps.push({ desc: `收尾：把结论里最值得留的一条用 autotelic_note 写进记忆（工具不可用就写进 notes/ 并注明工具不可用）`, level: 'L1-b' })
+  }
+  return steps
 }
 
 /**

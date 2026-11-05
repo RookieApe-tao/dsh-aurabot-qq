@@ -164,6 +164,23 @@ export function createBook({ file = '', now = () => Date.now(), maxActive = MAX_
       return { ok: true, taskStatus: t.status }
     },
 
+    /** 瞬态退避（2026-11-05 修「冷却中冤死」）：后台会话冷却/超时这类瞬态失败，
+     *  把 running 的步退回 pending、退一次失败计数——不占熔断指纹，也不该把任务憋成 blocked。
+     *  （真机账本：4 个 blocked 里 3 个是「后台会话冷却中/等太久了」这种瞬态，属冤死。） */
+    releaseStep(taskId, why = '') {
+      const t = state.tasks.find((x) => x.id === taskId)
+      if (!t) return { ok: false, why: '没有这个任务' }
+      const s = (t.steps || []).find((x) => x.status === 'running')
+      if (!s) return { ok: false, why: '没有在途的步' }
+      s.status = 'pending'
+      s.attempts = Math.max(0, (s.attempts || 1) - 1)
+      s.startedAt = 0
+      s.why = String(why || '').slice(0, 200)
+      t.updatedAt = nowOf({ now })
+      save()
+      return { ok: true }
+    },
+
     /**
      * 死循环熔断（P1.4，验收 6）：对 (tool,args,observation) 算指纹，同任务内同指纹第 2 次 → abandoned。
      * @returns {{looped:boolean, abandoned:boolean}}

@@ -243,6 +243,34 @@ export default {
           },
         }),
         api.defineTool({
+          name: 'autotelic_propose_persona',
+          description: '你想调整自己的人格卡（性格、说话习惯、跟主人的相处方式）时用：写一份修改稿存到 proposals/ 给主人过目——主人点头才会真的改人格卡，你写不到 personas/ 目录。起了念头就用，别憋着。',
+          properties: {
+            want: { type: 'string', description: '想改成什么样（写具体条目，比如「说话别老是反问」）' },
+            why: { type: 'string', description: '为什么想改（什么经历让你起了这个念头）' },
+          },
+          required: ['want', 'why'],
+          execute: async ({ want, why }) => {
+            const spendR = spend('autotelic_propose_persona')
+            if (!spendR.ok) return spendR
+            try {
+              const { mkdirSync, writeFileSync } = await import('node:fs')
+              mkdirSync(api.dataDir('proposals'), { recursive: true })
+              const day = new Date()
+              const p2 = (n) => String(n).padStart(2, '0')
+              const stamp = `${day.getFullYear()}${p2(day.getMonth() + 1)}${p2(day.getDate())}-${p2(day.getHours())}${p2(day.getMinutes())}`
+              const file = api.dataDir('proposals', `persona-${stamp}.md`)
+              writeFileSync(file, [
+                `# 人格修改提案（${stamp}）`, '',
+                '## 想改成什么样', '', String(want || '').trim(), '',
+                '## 为什么想改', '', String(why || '').trim(), '',
+              ].join('\n'), 'utf8')
+              note({ kind: 'autotelic/persona', args: { chars: clip(want, 200).length }, outcome: 'ok' })
+              return { ok: true, message: `人格修改稿写好了：${file}（主人批了才会真改）` }
+            } catch (error) { return { ok: false, message: `写不了：${error.message}` } }
+          },
+        }),
+        api.defineTool({
           name: 'autotelic_modules',
           description: '看看现在有哪些模块装着、开着（比如抖音、B站）。你只能看到清单——每个模块的具体能力要等主人逐个接给你。',
           properties: {},

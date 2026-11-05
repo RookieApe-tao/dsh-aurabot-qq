@@ -7,6 +7,12 @@
 //
 // 安静时段（§4.6）：只禁「打扰主人」（P4 的发言前判定用），不禁「她自己做事」——
 // 所以立项 / 做事在安静时段照常跑，夜里消耗照常记账（每日一页单列一行）。
+//
+// 瞬态退避（2026-11-05）：hub 的后台会话冷却/「等太久了」/「上一轮还没结束」都属瞬态——
+// 她的做事回合、purpose、diary 共享同一批后台会话窗，撞车是常态，不算她把事办砸了。
+
+/** 瞬态失败特征（hub 的后台会话冷却 / 等太久 / 上一轮没结束）。 */
+const TRANSIENT_RE = /冷却|等太久|还没结束/
 
 import { gatherMaterials, proposeTasks, mergeModelScores } from './engine.js'
 import { createBook } from './book.js'
@@ -117,13 +123,24 @@ export function createRuntime({ settings, cfg = {}, hub = {}, memoryOf = null, p
     const materials = collect()
     const tasks = bk.list()
     const recentTitles = tasks.slice(-12).map((t) => t.title)
+    // 同源冷却（2026-11-05 修「重复立项饿死引擎」）：做完/放弃的同源素材 7 天内不再立项，
+    // blocked/failed 的 24 小时——「拆解刷B站原理」立 3 次、活跃坑被占满就是这么来的
+    const at = now()
+    const coolSourceIds = tasks
+      .filter((t) => t.sourceId && t.status !== 'active')
+      .filter((t) => {
+        const age = at - (t.updatedAt || 0)
+        return age < ((t.status === 'blocked' || t.status === 'failed') ? 24 : 168) * 3600_000
+      })
+      .map((t) => t.sourceId)
     const r = proposeTasks({
       materials,
       activeTasks: tasks.filter((t) => t.status === 'active'),
       recentTitles,
+      coolSourceIds,
       minCuriosity: s.minCuriosity,
       maxCandidates: Number(s.maxCandidates) || 3,
-      now: now(),
+      now: at,
     })
     return { materials, ...r, book: bk }
   }
@@ -216,6 +233,14 @@ export function createRuntime({ settings, cfg = {}, hub = {}, memoryOf = null, p
     currentTaskId = task.id // 这期间她的工具调用能对上「现在是在给哪条任务做事」（notes 前缀等）
     try {
     const r = await act.runStep(task, stepDesc)
+    // 瞬态退避（2026-11-05 修「冷却中冤死」）：后台会话冷却/超时这类瞬态失败不算步失败——
+    // 不计 attempts、不进熔断指纹，退回 pending 下个心跳自然重试。
+    // （真机账本：4 个 blocked 里 3 个是「后台会话冷却中/等太久了」，全属冤死。）
+    if (!r.ok && TRANSIENT_RE.test(String(r.observation || '') + String(r.error || ''))) {
+      bk.releaseStep(task.id, `瞬态退避：${String(r.observation || '').slice(0, 80)}`)
+      log?.info?.(`自驱：「${task.title}」撞上后台瞬态，这步退回待办，下轮再试`)
+      return { outcome: 'act-backoff', taskId: task.id, hadTools: r.hadTools }
+    }
     if (r.hadTools) bk.recordAction() // L1 记账：带工具的做事回合才占动作预算（L0 只想不算）
     // 死循环熔断（场景 6）：同任务同「步骤+观察」第 2 次 → abandoned
     const loop = bk.guardLoop(task.id, `${stepDesc.desc}|${r.observation}`)
@@ -225,7 +250,7 @@ export function createRuntime({ settings, cfg = {}, hub = {}, memoryOf = null, p
     const nowTask = bk.list().find((t) => t.id === task.id)
     let reflected = false
     if (nowTask && ['done', 'failed', 'blocked', 'abandoned'].includes(nowTask.status)) {
-      const w = writeReflection(memoryOf(), nowTask, r.memo || r, log)
+      const w = writeReflection(memoryOf?.(), nowTask, r.memo || r, log)
       reflected = w.ok
     }
     if (manual || !r.ok) log?.info?.(`自驱：「${task.title}」这步${r.ok ? '办完了' : '没办成'}${r.hadTools ? '（带工具）' : '（只想）'}`)
