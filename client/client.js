@@ -2227,10 +2227,14 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
               '审计 ' + (dayM.data.audit || []).length + ' 条 · 任务 ' + (dayM.data.tasks || []).length + ' 个'),
             (dayM.data.tasks || []).length ? h('div', { className: 'ab-list', style: { marginBottom: '10px' } },
               (dayM.data.tasks || []).map((t) => h('div', { key: t.id, className: 'ab-li' },
-                h('div', { className: 'meta' }, h('b', null, t.title), ' ', h('span', { className: 'ab-badge' }, TASK_BADGE[t.status] || t.status), ' · 好奇 ' + (t.score != null ? t.score.toFixed(2) : '?')),
-                h('div', { className: 'body ab-small' }, t.reason),
-                (t.steps || []).map((st2, i) => h('div', { key: i, className: 'ab-small ab-muted' }, '· 步 ' + (i + 1) + ' ' + st2.desc + ' → ' + st2.status + (st2.attempts ? '（试 ' + st2.attempts + ' 次）' : '') + (st2.why ? '：' + st2.why : ''))),
-                t.why ? h('div', { className: 'ab-small', style: { color: '#c62828' } }, '→ ' + t.why) : null))) : null,
+                h('div', { className: 'meta' },
+                  h('b', null, t.title), ' ', h('span', { className: 'ab-badge' }, TASK_BADGE[t.status] || t.status),
+                  h('div', null, '好奇 ' + (t.score != null ? t.score.toFixed(2) : '?'))),
+                // .ab-li 是横排 flex：meta 之外必须包进单个 .body，否则会被挤成竖排
+                h('div', { className: 'body ab-small' },
+                  h('div', null, t.reason),
+                  (t.steps || []).map((st2, i) => h('div', { key: i, className: 'ab-muted' }, '· 步 ' + (i + 1) + ' ' + st2.desc + ' → ' + st2.status + (st2.attempts ? '（试 ' + st2.attempts + ' 次）' : '') + (st2.why ? '：' + st2.why : ''))),
+                  t.why ? h('div', { style: { color: '#c62828' } }, '→ ' + t.why) : null)))) : null,
             dayM.data.daily ? h('div', { style: { marginBottom: '10px' } },
               h('div', { className: 'ab-small ab-muted', style: { marginBottom: '4px' } }, '当日每日一页：'),
               h('div', { className: 'ab-small', style: { whiteSpace: 'pre-wrap', background: 'var(--ab-bg, #f6fafb)', padding: '10px', borderRadius: '8px' } }, dayM.data.daily)) : null,
@@ -2255,9 +2259,13 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         h('div', { className: 'meta' },
           h('b', null, t.title), ' ',
           h('span', { className: 'ab-badge' }, TASK_BADGE[t.status] || t.status),
-          ' · 好奇 ' + (t.score != null ? t.score.toFixed(2) : '?') + ' · ' + timeAgo(t.updatedAt || t.createdAt)),
-        h('div', { className: 'body ab-small' }, t.reason),
-        t.why ? h('div', { className: 'ab-small', style: { color: '#c62828' } }, '→ ' + t.why) : null)
+          h('div', null, '好奇 ' + (t.score != null ? t.score.toFixed(2) : '?')),
+          h('div', null, timeAgo(t.updatedAt || t.createdAt))),
+        // 注意：.ab-li 是横排 flex，meta 之外的所有内容必须包进单个 .body（flex:1），
+        // 多塞一个直接子项就会被挤成零宽、文字一字一行竖排（少爷真机抓到的就是这个）
+        h('div', { className: 'body ab-small' },
+          h('div', null, t.reason),
+          t.why ? h('div', { style: { color: '#c62828' } }, '→ ' + t.why) : null))
       // 复盘刊物：默认只露标题，点开才看全文（页面不都被长文淹没）
       const jLine = (kind, d) => {
         const open = openDay === kind + d.day
