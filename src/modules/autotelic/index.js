@@ -13,7 +13,7 @@ import { createExec } from '../../autotelic/exec.js'
 import { createJournal } from '../../autotelic/reflect.js'
 import { probePython, loadEnvCache, saveEnvCache, envUsable, runPython } from '../../autotelic/python.js'
 import { createSkills, writeUserModule } from '../../autotelic/skills.js'
-import { readFileSync, readdirSync } from 'node:fs'
+import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
 export default {
@@ -341,23 +341,46 @@ export default {
     })
     // 复盘刊物：每日一页 + 做梦记录（P2.5/P2.7 的面板口）。
     api.route('/autotelic/journal', async () => ({ ok: true, daily: journal.list('daily'), dreams: journal.list('dreams') }))
-    // 某一天的记录（面板点任务行弹窗用）：当天审计流水 + 当天立/动过的任务 + 当天的复盘刊物。
+    // 某一天的记录（面板点任务行弹窗用）：带 taskId 时只给这一条任务 + 它生命周期内的流水账。
     api.route('/autotelic/day', async (req) => {
-      const date = String(api.core.http.query(req).date || '').trim()
+      const q = api.core.http.query(req)
+      const date = String(q.date || '').trim()
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, message: '日期格式要 YYYY-MM-DD' }
       const audit = await readAuditDay(auditDir(), date)
       const dayTs = new Date(`${date}T00:00:00`).getTime()
       const dayEnd = dayTs + 24 * 3600_000
       const inDay = (ts) => ts >= dayTs && ts < dayEnd
-      const tasks = runtime.book().list().filter((t) => inDay(t.createdAt) || inDay(t.updatedAt))
-      return {
-        ok: true,
-        date,
-        audit,
-        tasks,
-        daily: journal.read('daily', date),
-        dream: journal.read('dreams', date),
+      const taskId = String(q.taskId || '').trim()
+      if (taskId) {
+        const task = runtime.book().list().find((t) => t.id === taskId)
+        if (!task) return { ok: false, message: '账本里没有这条任务了（可能被修剪掉）' }
+        // 这条任务的流水账 = 它立项后、最后一次活动前落账的条目（在办则算到现在）
+        const from = task.createdAt
+        const to = task.status === 'active' ? Date.now() : (task.updatedAt || task.createdAt)
+        // 她写的笔记（notes/）：按文件修改时间落在任务生命周期内的都算这条任务的产出
+        const notes = []
+        try {
+          const nDir = api.dataDir('notes')
+          for (const f of readdirSync(nDir).filter((f) => f.endsWith('.md'))) {
+            const full = join(nDir, f)
+            const st = statSync(full)
+            if (st.mtimeMs >= from && st.mtimeMs <= to + 60_000) {
+              notes.push({ file: f, at: st.mtimeMs, text: readFileSync(full, 'utf8').slice(0, 6000) })
+            }
+          }
+        } catch { /* notes 目录还没有，正常 */ }
+        notes.sort((a, b) => a.at - b.at)
+        return {
+          ok: true,
+          date,
+          taskId,
+          task,
+          notes,
+          audit: audit.filter((a) => { const at = Date.parse(a.at || ''); return Number.isFinite(at) && at >= from && at <= to + 60_000 }),
+        }
       }
+      const tasks = runtime.book().list().filter((t) => inDay(t.createdAt) || inDay(t.updatedAt))
+      return { ok: true, date, audit, tasks, daily: journal.read('daily', date), dream: journal.read('dreams', date) }
     })
 
     return { auditDir, runtime }
