@@ -60,6 +60,26 @@ test('任务书回归单步：一轮清单式，不再拆多步（修「一个�
   }
 })
 
+test('任务书：查资料要克制——不许再「翻全部历史笔记」（少爷真机反馈）', () => {
+  const s = buildTodos('学算命的流派', 'learn')[0].desc
+  assert.match(s, /最多读 2~3 个/, '明确限制读取数量')
+  assert.match(s, /别翻全部历史笔记/, '明确禁止全量翻阅')
+  assert.ok(s.length <= 200, `任务书 200 字内（addTask 会截），实得 ${s.length}`)
+})
+
+// —— 最小实义门槛（「汪汪」不许立项，少爷真机反馈）——
+
+test('最小实义门槛：纯语气词/超短素材不立项（修「汪汪也立项」）', () => {
+  const r = proposeTasks({ materials: [mat('m1', '汪汪', { need: 'play', affinity: 1 })], ...BASE })
+  assert.equal(r.candidates.length, 0, '「汪汪」两个字不许立项')
+  assert.ok(r.rejected.some((x) => /没有实义内容/.test(x.why)), `落选原因要写明：${JSON.stringify(r.rejected)}`)
+})
+
+test('最小实义门槛：正常长度的素材不受影响', () => {
+  const r = proposeTasks({ materials: [mat('m2', '爸爸说想看看大肥鱼自主刷B站的实现原理', { need: 'identity', affinity: 0.9 })], ...BASE })
+  assert.equal(r.candidates.length, 1, '正常素材照常立项')
+})
+
 // —— 病三：瞬态退避 ——
 
 function tmpLedger(t, tasks) {

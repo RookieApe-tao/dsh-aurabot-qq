@@ -241,7 +241,10 @@ export function createRuntime({ settings, cfg = {}, hub = {}, memoryOf = null, p
       log?.info?.(`自驱：「${task.title}」撞上后台瞬态，这步退回待办，下轮再试`)
       return { outcome: 'act-backoff', taskId: task.id, hadTools: r.hadTools }
     }
-    if (r.hadTools) bk.recordAction() // L1 记账：带工具的做事回合才占动作预算（L0 只想不算）
+    // 2026-11-05 修「一小时动二十多次」（少爷真机反馈）：做事回合一律记账——
+    // 原口径 L0 回合不占预算，等于「想」不要钱，心跳每分钟推一步就免费无限跑。
+    // 现在每个做事回合都占预算，预算到顶自然停，等下一小时。
+    bk.recordAction() // 做事回合（含 L0）都占动作预算：预算是「她这一小时动了几次」，不是「她花了多少工具调用」
     // 死循环熔断（场景 6）：同任务同「步骤+观察」第 2 次 → abandoned
     const loop = bk.guardLoop(task.id, `${stepDesc.desc}|${r.observation}`)
     if (loop.abandoned) { log?.info?.(`自驱：「${task.title}」死循环熔断`); return { outcome: 'loop-broken', taskId: task.id } }

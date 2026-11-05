@@ -79,6 +79,10 @@ export function proposeTasks({ materials = [], activeTasks = [], recentTitles = 
   for (const { m, c } of scored) {
     const title = c.topic || String(m.text || '').slice(0, 40)
     if (!title || title.length < 2) { rejected.push({ title, score: c.score, why: '素材太短，立不出方向' }); continue }
+    // 最小实义门槛（2026-11-05 修「『汪汪』也立项」，少爷真机反馈）：少于 6 字或纯标点/语气词的
+    // 素材没有可挖的内容——关键词命中再高也只是「她冲你叫了一声」，不是一件事。
+    const plain = String(m.text || '').replace(/[，。！？、~～！？.,!??\s汪汪嗯嗯哦噢诶啊呀哈哈嘻嘻]/g, '')
+    if (plain.length < 6) { rejected.push({ title, score: c.score, why: `素材太短没有实义内容（去掉标点语气词只剩 ${plain.length} 字）` }); continue }
     // 和进行中的任务撞了 = 已经在办，不再立项（同方向只开一个坑；同源素材标题截断后会绕过相似度，这里按 sourceId 精确挡）
     if (activeTitles.some((t) => textSimilarity(t, title) > 0.6)) { rejected.push({ title, score: c.score, why: '已有进行中的任务在同方向' }); continue }
     const sid = String(m.id || '')
@@ -107,15 +111,15 @@ export function proposeTasks({ materials = [], activeTasks = [], recentTitles = 
  */
 export function buildTodos(title, need = '') {
   const tail = ['learn', 'create', 'identity', 'install'].includes(need)
-    ? '③ 最后用 autotelic_note 把最值得留的一条写进记忆（工具不可用就写进 notes/ 并注明）。'
-    : '③ 有值得留的结论也可以顺手用 autotelic_note 记一条。'
+    ? '③ 用 autotelic_note 把结论写进记忆（不可用则写 notes/）。'
+    : '③ 可顺手用 autotelic_note 记结论。'
   return [{
     desc: [
-      `弄明白「${title}」：查已有记忆与素材，形成你自己的判断。一轮内办完：`,
-      `① 对照已有记忆，判断站不站得住；`,
-      `② 值得跟爸爸说一句就调 autotelic_propose_say（不硬凑，碎碎念不说）；`,
+      `弄明白「${title}」：一轮内办完。`,
+      `查资料要克制：只检索**与本话题相关**的记忆，最多读 2~3 个相关文件，别翻全部历史笔记；`,
+      `查不齐就按已有判断下结论。① 对照记忆判断站不站得住；② 值得说就调 autotelic_propose_say（别硬凑）；`,
       tail,
-      `你手里有工具，一轮就是一次完整的事，别拆成多轮。`,
+      `有工具，一轮办完，别拆多轮。`,
     ].join('\n'),
     level: 'L0',
   }]
