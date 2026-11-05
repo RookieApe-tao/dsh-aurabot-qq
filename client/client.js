@@ -2207,8 +2207,8 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       const dkey = (ts) => { const d = new Date(ts); const p = (n) => String(n).padStart(2, '0'); return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) }
       const openTaskDay = (t) => {
         const date = dkey(t.updatedAt || t.createdAt)
-        setDayM({ date, data: null })
-        get('/autotelic/day?date=' + date).then((r) => { if (r.ok) setDayM({ date, data: r }); else { toast(r.message || '没读到', 'err'); setDayM(null) } }).catch((e) => { toast(e.message, 'err'); setDayM(null) })
+        setDayM({ date, taskId: t.id, data: null })
+        get('/autotelic/day?date=' + date + '&taskId=' + encodeURIComponent(t.id)).then((r) => { if (r.ok) setDayM({ date, taskId: t.id, data: r }); else { toast(r.message || '没读到', 'err'); setDayM(null) } }).catch((e) => { toast(e.message, 'err'); setDayM(null) })
       }
       const clipText = (v, n) => { const t = String(v || ''); return t.length > n ? t.slice(0, n) + '…' : t }
       // 审计行用纯文本堆叠（不玩 flex 固定宽），样式全部沿用页面既有类
@@ -2219,31 +2219,10 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       const dayModal = dayM ? h('div', { style: { position: 'fixed', top: '0px', left: '0px', right: '0px', bottom: '0px', background: 'rgba(12,28,38,.45)', zIndex: '80', overflowY: 'auto', padding: '24px' }, onClick: () => setDayM(null) },
         h('div', { className: 'ab-card', style: { maxWidth: '760px', margin: '0px auto' }, onClick: (e) => e.stopPropagation() },
           h('div', { className: 'ab-flex', style: { alignItems: 'center', marginBottom: '8px' } },
-            h('b', null, '这一天的记录 · ' + dayM.date),
+            h('b', null, '这条任务的流水账'),
             h('span', { style: { flex: '1 1 auto', display: 'inline-block' } }),
             h(Btn, { small: true, onClick: () => setDayM(null) }, '关闭')),
-          !dayM.data ? h(Empty, { icon: '⏳', text: '读账本中…' }) : h('div', null,
-            h('div', { className: 'ab-small ab-muted', style: { marginBottom: '6px' } },
-              '审计 ' + (dayM.data.audit || []).length + ' 条 · 任务 ' + (dayM.data.tasks || []).length + ' 个'),
-            (dayM.data.tasks || []).length ? h('div', { className: 'ab-list', style: { marginBottom: '10px' } },
-              (dayM.data.tasks || []).map((t) => h('div', { key: t.id, className: 'ab-li' },
-                h('div', { className: 'meta' },
-                  h('b', null, t.title), ' ', h('span', { className: 'ab-badge' }, TASK_BADGE[t.status] || t.status),
-                  h('div', null, '好奇 ' + (t.score != null ? t.score.toFixed(2) : '?'))),
-                // .ab-li 是横排 flex：meta 之外必须包进单个 .body，否则会被挤成竖排
-                h('div', { className: 'body ab-small' },
-                  h('div', null, t.reason),
-                  (t.steps || []).map((st2, i) => h('div', { key: i, className: 'ab-muted' }, '· 步 ' + (i + 1) + ' ' + st2.desc + ' → ' + st2.status + (st2.attempts ? '（试 ' + st2.attempts + ' 次）' : '') + (st2.why ? '：' + st2.why : ''))),
-                  t.why ? h('div', { style: { color: '#c62828' } }, '→ ' + t.why) : null)))) : null,
-            dayM.data.daily ? h('div', { style: { marginBottom: '10px' } },
-              h('div', { className: 'ab-small ab-muted', style: { marginBottom: '4px' } }, '当日每日一页：'),
-              h('div', { className: 'ab-small', style: { whiteSpace: 'pre-wrap', background: 'var(--ab-bg, #f6fafb)', padding: '10px', borderRadius: '8px' } }, dayM.data.daily)) : null,
-            dayM.data.dream ? h('div', { style: { marginBottom: '10px' } },
-              h('div', { className: 'ab-small ab-muted', style: { marginBottom: '4px' } }, '当日做梦：'),
-              h('div', { className: 'ab-small', style: { whiteSpace: 'pre-wrap', background: 'var(--ab-bg, #f6fafb)', padding: '10px', borderRadius: '8px' } }, dayM.data.dream)) : null,
-            h('div', { className: 'ab-small ab-muted', style: { margin: '6px 0px 4px 2px' } }, '审计流水（机械记录，按序）：'),
-            (dayM.data.audit || []).length ? h('div', null, (dayM.data.audit || []).map(auditLine))
-              : h('div', { className: 'ab-small ab-muted' }, '这一天账本上没有工具调用。')),
+          !dayM.data ? h(Empty, { icon: '⏳', text: '读账本中…' }) : h(TaskDayBody, { data: dayM.data, clipText, TASK_BADGE, auditLine }),
         )) : null
       const chain = s && s.audit && s.audit.chain
       const lastBeat = s && s.heartbeats && s.heartbeats.length ? s.heartbeats[s.heartbeats.length - 1] : null
@@ -2255,7 +2234,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         pill(s.audit && s.audit.wired ? 'ok' : '', s.audit && s.audit.wired ? '审计已接线' : '审计未接线'),
         s.enabled ? pill('', lastBeat ? '上次心跳 ' + timeAgo(lastBeat.at) : '还没心跳') : null,
       ].filter(Boolean)
-      const taskLine = (t) => h('div', { key: t.id, className: 'ab-li', style: { cursor: 'pointer' }, title: '点开看这一天的记录', onClick: () => openTaskDay(t) },
+      const taskLine = (t) => h('div', { key: t.id, className: 'ab-li', style: { cursor: 'pointer' }, title: '点开看这条任务的流水账', onClick: () => openTaskDay(t) },
         h('div', { className: 'meta' },
           h('b', null, t.title), ' ',
           h('span', { className: 'ab-badge' }, TASK_BADGE[t.status] || t.status),
@@ -2351,7 +2330,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         // ---------- 卡 4：她的手 ----------
         h(Card, { title: '她的手', desc: '框架代码（src/）对她锁死；Python 和用户模块是她攒本事的两条路。' },
           h(Row, { label: 'Python', hint: '留空自动探测（滤商店假货）；探测不到时手填全路径（会先验真再存）' },
-            s && s.env && s.env.pythonBin ? h('span', { className: 'ab-small', style: { color: 'var(--ab-ok)' } }, '✓ ' + s.env.bin + '（' + s.env.version + '）' + (s.env.source === 'configured' ? ' · 手填' : ' · 自动探测，已持久化')) : h('span', { className: 'ab-muted ab-small' }, '没探测到'),
+            s && s.env && (s.env.pythonBin || s.env.bin) ? h('span', { className: 'ab-small', style: { color: 'var(--ab-ok)' } }, '✓ ' + (s.env.pythonBin || s.env.bin) + '（' + s.env.version + '）' + (s.env.source === 'configured' ? ' · 手填' : ' · 自动探测，已持久化')) : h('span', { className: 'ab-muted ab-small' }, '没探测到'),
             f.text('ext.autotelic.pythonBin', { placeholder: '留空自动探测' }),
             h(Btn, { small: true, disabled: busy === 'env', onClick: async () => {
               setBusy('env')
@@ -2375,6 +2354,35 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
               : h(Empty, { icon: '🌙', text: '还没有复盘。攒够几件完结、或到了每日一页的点儿，她会自己写。' })),
         dayModal,
       )
+    }
+
+    // 「这条任务的流水账」弹窗正文：单任务详情 + 它生命周期内的审计流水。
+    // 拆成独立组件，避免在 Autotelic 里写深嵌套的三元 + IIFE（括号数容易错，少爷真机抓过两次）。
+    function TaskDayBody({ data, clipText, TASK_BADGE, auditLine }) {
+      const t = data.task
+      if (!t) return h(Empty, { icon: '🕳️', text: data.message || '账本里没有这条任务了（可能被修剪掉）' })
+      const from = t.createdAt ? new Date(t.createdAt).toLocaleString() : '?'
+      const to = t.updatedAt ? new Date(t.updatedAt).toLocaleString() : '?'
+      const n = (v) => (v == null ? '?' : Number(v).toFixed(2))
+      const stepLine = (st2, i) => h('div', { key: i, className: 'ab-muted' },
+        '· 步 ' + (i + 1) + ' ' + st2.desc + ' → ' + st2.status
+        + (st2.attempts ? '（试 ' + st2.attempts + ' 次）' : '')
+        + (st2.observation ? '：' + clipText(st2.observation, 80) : '')
+        + (st2.why ? '：' + st2.why : ''))
+      return h('div', null,
+        h('div', { className: 'ab-small ab-muted', style: { marginBottom: '8px' } },
+          '立项于 ' + from + ' · 最近活动 ' + to + ' · 流水 ' + (data.audit || []).length + ' 条'),
+        h('div', { className: 'ab-li' },
+          h('div', { className: 'meta' },
+            h('b', null, t.title), ' ', h('span', { className: 'ab-badge' }, TASK_BADGE[t.status] || t.status),
+            h('div', null, '好奇 ' + n(t.score))),
+          h('div', { className: 'body ab-small' },
+            h('div', null, t.reason),
+            (t.steps || []).map(stepLine),
+            t.why ? h('div', { style: { color: '#c62828' } }, '→ ' + t.why) : null)),
+        h('div', { className: 'ab-small ab-muted', style: { margin: '10px 0px 4px 2px' } }, '这条任务的流水账（机械记录，从立项到最近一次活动）：'),
+        (data.audit || []).length ? h('div', null, (data.audit || []).map(auditLine))
+          : h('div', { className: 'ab-small ab-muted' }, '这条任务期间账本上没有工具调用（她只是想了想，或做事回合还没落账）。'))
     }
 
     // 「主动发言出站策略」卡片：档位、引擎状态、拦截统计。数据走 /panel/outbound-policy，
