@@ -2201,6 +2201,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       }
       const tasks = (s && s.tasks) || []
       const sm = (s && s.summary) || {}
+      const TASK_BADGE = { active: '在办', done: '办成', failed: '失败', blocked: '卡住', abandoned: '放弃' }
       // 点任务行 → 打开「这一天的记录」弹窗（当天审计流水 + 任务 + 复盘刊物）
       const [dayM, setDayM] = useState(null) // { date, data }
       const dkey = (ts) => { const d = new Date(ts); const p = (n) => String(n).padStart(2, '0'); return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) }
@@ -2249,7 +2250,6 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         pill(s.audit && s.audit.wired ? 'ok' : '', s.audit && s.audit.wired ? '审计已接线' : '审计未接线'),
         s.enabled ? pill('', lastBeat ? '上次心跳 ' + timeAgo(lastBeat.at) : '还没心跳') : null,
       ].filter(Boolean)
-      const TASK_BADGE = { active: '在办', done: '办成', failed: '失败', blocked: '卡住', abandoned: '放弃' }
       const taskLine = (t) => h('div', { key: t.id, className: 'ab-li', style: { cursor: 'pointer' }, title: '点开看这一天的记录', onClick: () => openTaskDay(t) },
         h('div', { className: 'meta' },
           h('b', null, t.title), ' ',
