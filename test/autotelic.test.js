@@ -116,18 +116,29 @@ test('账本被删 / 被改会露：断链能被校验出来并报出位置（�
   assert.match(broken.brokenAt.reason, /断链|对不上/)
 })
 
-test('结果补记：session/event 的 tool/* 事件进账本，非 tool 事件不进', async (t) => {
+test('结果回填：结果不另起一行，回填到她这次动作的那行（2026-11-05 修 3 连冗余）', async (t) => {
   const { dir, auditor } = mkAuditor(t, 'result', { chatMap: { her: 'system:autotelic' } })
   const session = { id: 'her' }
+  await auditor.preExecute({ name: 'fs', arguments: { path: 'x' }, agent: { session: { id: session.id } } }, async () => ({ kind: 'allow' }))
   auditor.onSessionEvent(session, { type: 'tool/result', data: { toolName: 'fs', result: 'ok' } })
   auditor.onSessionEvent(session, { type: 'assistant/message', data: { message: {} } })
   auditor.onSessionEvent(session, { type: 'turn/end', data: { turn: 1 } })
   await auditor.flush()
   const chain = await verifyAuditChain(dir)
-  assert.equal(chain.total, 1)
+  assert.equal(chain.total, 1, '同一动作只落一行（意图 + 结果回填，不再是 3 行）')
   const text = readFileSync(join(dir, chainFile(dir)), 'utf8')
-  assert.match(text, /tool\/result/)
+  assert.match(text, /tool\/call/)
   assert.match(text, /"tool":"fs"/)
+  assert.match(text, /outcome.*ok/, '结果回填到同一行的 outcome')
+})
+
+test('孤儿结果：没有对应意图的结果事件不落行（非她会话的结果被前置过滤挡住）', async (t) => {
+  const { dir, auditor } = mkAuditor(t, 'orphan', { chatMap: { her: 'system:autotelic' } })
+  const session = { id: 'her' }
+  auditor.onSessionEvent(session, { type: 'tool/result', data: { toolName: 'fs', result: 'ok' } })
+  await auditor.flush()
+  const chain = await verifyAuditChain(dir)
+  assert.equal(chain.total, 0, '没有意图的结果事件没有行可回填，直接丢')
 })
 
 test('参数截断：超长参数只留头部，落盘不炸', async (t) => {

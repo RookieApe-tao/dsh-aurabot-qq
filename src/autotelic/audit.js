@@ -107,11 +107,13 @@ export async function verifyAuditChain(dir) {
  * @param {number} [o.maxChars] 参数截断长度
  * @param {number} [o.flushMs] 批量落盘间隔
  */
-export function createAuditor({ dir, chatOfSession, isOwnedSession, log, now = () => new Date(), maxChars = 600, flushMs = 2000 } = {}) {
+export function createAuditor({ dir, chatOfSession, isOwnedSession, log, now = () => new Date(), maxChars = 240, flushMs = 2000 } = {}) {
   const queue = []
   let timer = null
   let writing = false
   let prevHash = null // 惰性恢复：第一次落盘前从今天文件尾读链头
+  /** 未结算的意图（sessionId+tool → 入队时的引用）：结果事件到达时回填 outcome，避免同一动作落 3 行。 */
+  const pending = new Map()
 
   async function recoverChainHead(file) {
     try {
@@ -126,6 +128,22 @@ export function createAuditor({ dir, chatOfSession, isOwnedSession, log, now = (
     if (timer) return
     timer = setTimeout(() => { timer = null; flush().catch(() => {}) }, flushMs)
     if (timer.unref) timer.unref()
+  }
+
+  /** args 摘要：对象不整包落盘——记「键名 + 每个值的短摘要」，代码/长文本截到 120 字。
+   *  （2026-11-05 修「审计超长」：原实现 clip(JSON 全文, 600)，整段 Python 代码都进账本，
+   *   一天 227KB，翻账时信息密度极低——「翻一翻没计全、都超长」的根源。） */
+  function argsSummary(args) {
+    if (args == null) return ''
+    if (typeof args === 'string') return clip(args, maxChars)
+    if (typeof args !== 'object') return clip(String(args), maxChars)
+    try {
+      const parts = Object.entries(args).map(([k, v]) => {
+        const s = typeof v === 'string' ? v : JSON.stringify(v)
+        return `${k}=${clip(s ?? '', 120)}`
+      })
+      return clip(parts.join(' '), maxChars)
+    } catch { return clip(String(args), maxChars) }
   }
 
   /** 入队一条（key：kind / sessionId / tool / args 等）。过滤不通过的静默丢弃。 */
@@ -157,7 +175,7 @@ export function createAuditor({ dir, chatOfSession, isOwnedSession, log, now = (
           sessionId: clip(e.sessionId, 64),
           chatId: e.chatId,
           tool: e.tool || '',
-          args: e.args == null ? '' : clip(e.args, maxChars),
+          args: argsSummary(e.args),
           outcome: e.outcome == null ? '' : clip(e.outcome, maxChars),
         }
         if (prevHash == null) await recoverChainHead(file)
@@ -190,31 +208,33 @@ export function createAuditor({ dir, chatOfSession, isOwnedSession, log, now = (
       try {
         const sessionId = exec?.agent?.session?.id || ''
         chatId = isOwnedSession?.(sessionId) === false ? '' : String((typeof chatOfSession === 'function' && chatOfSession(sessionId)) || '')
-        if (isAutotelicChat(chatId) && DENY_TOOLS.has(String(exec?.name || ''))) {
-          record({ kind: 'tool/denied', sessionId, tool: String(exec?.name || ''), args: exec?.arguments, outcome: '第二道门：她的会话不许碰 shell / 进程级动作' })
+        const tool = String(exec?.name || '')
+        if (isAutotelicChat(chatId) && DENY_TOOLS.has(tool)) {
+          record({ kind: 'tool/denied', sessionId, tool, args: exec?.arguments, outcome: '第二道门：她的会话不许碰 shell / 进程级动作' })
           return { kind: 'deny', reason: '这个动作不在你的动作菜单里（只读 + 写自己目录为止）。要更多能力走提案（proposals/），别绕。' }
         }
-        record({
-          kind: 'tool/intent',
-          sessionId,
-          tool: String(exec?.name || ''),
-          args: exec?.arguments,
-        })
+        // 2026-11-05 修「同一动作落 3 行」（一天 537 条，翻账翻不全）：
+        // 意图只入一条，登记到 pending；结果事件到达时回填 outcome 再落盘。
+        // 若 flush 先走（结果没来），行内 outcome 为空 = 「意图了但结果未记录」，对账会提示。
+        const entry = { kind: 'tool/call', sessionId, tool, args: exec?.arguments }
+        record(entry)
+        const last = queue.at(-1)
+        if (last) pending.set(`${sessionId}|${tool}`, last)
       } catch { /* 失败静默 */ }
       return next()
     },
-    /** 挂在 session/event 上：补记「结果」。tool/* 事件来了就记一条 outcome。 */
+    /** 挂在 session/event 上：把「结果」回填到她这次动作的那一行（不再另开一行）。 */
     onSessionEvent(session, event) {
       try {
         const type = String(event?.type || '')
         if (!type.startsWith('tool/')) return
         const d = event?.data || {}
-        record({
-          kind: type,
-          sessionId: session?.id || '',
-          tool: String(d.toolName || d.tool || d.name || ''),
-          outcome: d.error ? `error: ${d.error}` : (d.result != null ? d.result : ''),
-        })
+        const sessionId = session?.id || ''
+        const tool = String(d.toolName || d.tool || d.name || '')
+        const target = pending.get(`${sessionId}|${tool}`)
+        if (!target) return // 不是她会话的（record 已过滤，进不了 pending），或结果晚于落盘——按原样丢
+        target.outcome = d.error ? `error: ${clip(String(d.error), maxChars)}` : (d.result != null ? clip(String(d.result), maxChars) : '')
+        pending.delete(`${sessionId}|${tool}`)
       } catch { /* 失败静默 */ }
     },
     /** 模块侧显式记账（§4.1 ③ 非工具路径）：tune / 做梦 / L1 做事回合等，由可信模块代码调用。

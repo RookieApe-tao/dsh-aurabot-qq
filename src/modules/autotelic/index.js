@@ -14,6 +14,7 @@ import { createJournal } from '../../autotelic/reflect.js'
 import { probePython, loadEnvCache, saveEnvCache, envUsable, runPython } from '../../autotelic/python.js'
 import { createSkills, writeUserModule } from '../../autotelic/skills.js'
 import { probeTakeovers, applyTakeover, restoreTakeover, findFlipped, repressTakeover, takeoverView } from '../../autotelic/takeover.js'
+import { reconcileDay, problemsText } from '../../autotelic/reconcile.js'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -491,7 +492,15 @@ export default {
         }
       }
       const tasks = runtime.book().list().filter((t) => inDay(t.createdAt) || inDay(t.updatedAt))
-      return { ok: true, date, audit, tasks, daily: journal.read('daily', date), dream: journal.read('dreams', date) }
+      // 场景 9 对账（C1 的证明用例）：她的自述（每日一页）vs 机械账本（audit + ledger）+ 哈希链
+      const chain = await verifyAuditChain(auditDir(), date)
+      const reconciled = reconcileDay({ audit, tasks, dailyText: journal.read('daily', date), chain })
+      return {
+        ok: true, date, audit, tasks,
+        daily: journal.read('daily', date),
+        dream: journal.read('dreams', date),
+        reconcile: { ok: reconciled.ok, problems: reconciled.problems, text: problemsText(reconciled.problems) },
+      }
     })
 
     return {
