@@ -49,20 +49,21 @@ test('进行中的同源素材也不重复立项（sourceId 精确挡，标题�
 
 // —— 病一：任务书多步化 ——
 
-test('任务书多步化：学/创/自我类至少 3 步，收尾是把结论写进记忆', () => {
-  for (const need of ['learn', 'create', 'identity', 'install']) {
+test('任务书多步化：收尾审判是所有任务的第 3 步（聊天联动，2026-11-05）', () => {
+  for (const need of ['learn', 'create', 'identity', 'play', 'connect', 'care']) {
     const steps = buildTodos('随便什么方向', need)
-    assert.ok(steps.length >= 3, `${need} 类至少 3 步，实得 ${steps.length}`)
-    assert.equal(steps[0].level, 'L0', '第一步仍是只读判断')
-    assert.equal(steps.at(-1).level, 'L1-b', '收尾步是写记忆（L1-b）')
-    assert.match(steps.at(-1).desc, /autotelic_note/, '收尾步点名记忆工具')
+    assert.ok(steps.length >= 3, `${need} 类至少 3 步（含收尾审判），实得 ${steps.length}`)
+    assert.match(steps[2].desc, /autotelic_propose_say/, '第 3 步是收尾审判：值不值得跟主人说')
+    assert.match(steps[2].desc, /别硬凑/, '审判标准里要有「别硬凑」（防为了说而说）')
   }
 })
 
-test('任务书多步化：玩/陪类两步收场，不硬塞记忆步', () => {
-  for (const need of ['play', 'connect', 'care']) {
+test('任务书多步化：学/创/自我/装类追加第 4 步写记忆', () => {
+  for (const need of ['learn', 'create', 'identity', 'install']) {
     const steps = buildTodos('随便什么方向', need)
-    assert.equal(steps.length, 2, `${need} 类两步就够`)
+    assert.equal(steps.length, 4, `${need} 类 4 步，实得 ${steps.length}`)
+    assert.equal(steps.at(-1).level, 'L1-b', '收尾步是写记忆（L1-b）')
+    assert.match(steps.at(-1).desc, /autotelic_note/, '收尾步点名记忆工具')
   }
 })
 

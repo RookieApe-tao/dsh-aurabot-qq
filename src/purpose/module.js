@@ -125,16 +125,22 @@ export function createPurpose({ getConfig, setConfig, hub, log, isMuted, mood, m
       const items = memoryOf()?.list?.('') || []
       return items
         .filter((m) => m && !m.invalidAt && m.text && !['hearsay', 'guess'].includes(m.status) && (!friend || (m.scope !== 'group' && String(m.about) === friend)))
-        .map((m) => ({
-          id: m.id,
-          title: '',
-          text: String(m.text),
-          importance: Math.round((Number(m.importance) || 0) * 100),
-          emotional: 0, // aurabot 记忆没有情绪分字段，留 0
-          lastSeenAt: m.lastHit || m.at,
-          createdAt: m.at,
-          pinned: false, anchor: false, isInitial: false,
-        }))
+        .map((m) => {
+          // 自驱引擎的沉淀（反思/做梦，带「自驱」标签）加权：那是她自己想明白的事，
+          // 比聊天流水里的一句闲话更值得成为搭话话题（autotelic 联动，2026-11-05）
+          const isSelfDriven = Array.isArray(m.tags) && m.tags.includes('自驱')
+          const importance = Math.min(100, Math.round((Number(m.importance) || 0) * 100) + (isSelfDriven ? 15 : 0))
+          return {
+            id: m.id,
+            title: '',
+            text: String(m.text),
+            importance,
+            emotional: 0, // aurabot 记忆没有情绪分字段，留 0
+            lastSeenAt: m.lastHit || m.at,
+            createdAt: m.at,
+            pinned: false, anchor: false, isInitial: false,
+          }
+        })
     } catch {
       return []
     }

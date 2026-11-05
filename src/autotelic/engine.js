@@ -101,13 +101,15 @@ export function proposeTasks({ materials = [], activeTasks = [], recentTitles = 
 
 /**
  * 任务书生成（2026-11-05 修「只会写判断笔记」）：不再单一模板——
- * 第一、二步固定是「判断 → 对照已有记忆沉淀结论」，学/创/自我/装类追加第三步
- * 「用 autotelic_note 把结论写进记忆」（工具不可用就如实写 notes/，模型自己报告）。
+ * 第一、二步固定是「判断 → 对照已有记忆沉淀结论」；第三步「收尾审判」：
+ * 这个结论值不值得跟主人说一句（聊天联动的正向用法：值得说才调 propose_say，攒着评）。
+ * 学/创/自我/装类追加第四步「用 autotelic_note 把结论写进记忆」（工具不可用就如实写 notes/）。
  */
 export function buildTodos(title, need = '') {
   const steps = [
     { desc: `只读了解「${title}」：查已有记忆与素材，写下一段判断`, level: 'L0' },
     { desc: `对比与沉淀：把上面的判断跟已有记忆对照一遍——站得住就提炼成一条 40 字内的结论，站不住就写清是哪条证据推翻的`, level: 'L0' },
+    { desc: `收尾审判：这个结论值不值得跟主人说一句？主人知道了会更有意思（新知识 / 反常识 / 与他有关 / 关系层的话）就说；只是自己的碎碎念就不说。值得说就用 autotelic_propose_say（带一句 reason），不值得就不调——别硬凑`, level: 'L0' },
   ]
   if (['learn', 'create', 'identity', 'install'].includes(need)) {
     steps.push({ desc: `收尾：把结论里最值得留的一条用 autotelic_note 写进记忆（工具不可用就写进 notes/ 并注明工具不可用）`, level: 'L1-b' })
