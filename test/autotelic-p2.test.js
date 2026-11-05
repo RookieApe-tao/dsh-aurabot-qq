@@ -223,8 +223,14 @@ test('tick 全链：立项 → 推进一步 → 任务办完写反思 → 每日
   const r = await rt.tick()
   assert.equal(r.outcome, 'proposed')
   assert.equal(r.acted.outcome, 'step-done', '立项后立刻推进一步')
+  // 2026-11-05 多步化：任务书现在是「判断 → 对照沉淀」两步起（学/创类再加写记忆步），
+  // 第一步办完任务还在办——这是修「只会写判断笔记」的直接后果，不是回归
+  assert.equal(rt.book().list()[0].status, 'active', '多步任务书：判断步办完任务还在办')
+  const r2 = await rt.step()
+  assert.equal(r2.outcome, 'step-done', '第二步：对照与沉淀')
   const tasks = rt.book().list()
-  assert.equal(tasks[0].status, 'done', '一步的 todo 办完任务就 done')
+  assert.equal(tasks[0].status, 'done', '全部步办完任务才 done')
+  await rt.tick() // 任务在两拍之间完结，复盘挂在 tick 尾部——再走一拍让每日一页看见它
   assert.equal(saved.length >= 1, true, '任务到终态写了反思进记忆')
   assert.match(saved[0].text, /【自驱·反思】/)
   assert.match(saved[0].text, /教训——l/)

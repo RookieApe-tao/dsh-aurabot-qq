@@ -90,6 +90,11 @@ export function distillDream({ tasks = [], auditToday = 0, modelText = '' } = {}
   const fromModel = String(modelText || '').split('\n').map((l) => l.trim().replace(/^[-*\d.、\s]+/, '')).filter((l) => l.length >= 2).slice(0, 5)
   if (fromModel.length >= 3) return fromModel
   const fallback = []
+  // 进行中的任务也进梦（2026-11-05 多步化后首跑常有 active 任务——只数完结会漏掉「还在办的事」）
+  for (const t of tasks.filter((x) => x.status === 'active').slice(0, 1)) {
+    const doneN = (t.steps || []).filter((s) => s.status === 'done').length
+    fallback.push(`「${t.title}」还在办（${doneN}/${(t.steps || []).length} 步）——下次接着它的下一步推进`)
+  }
   for (const t of tasks.filter((x) => x.status === 'blocked' || x.status === 'abandoned').slice(0, 2)) {
     fallback.push(`「${t.title}」没办成（${t.why || '原因不明'}）——下次遇到同类任务先想清楚这一步缺什么`)
   }
