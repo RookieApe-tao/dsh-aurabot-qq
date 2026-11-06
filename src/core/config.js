@@ -188,6 +188,9 @@ export const DEFAULTS = {
     ownerDm: true, // 主人在抖音上私信她时回（只认核对过的主人抖音号）
     dmPollMinutes: 3, // 隔几分钟看一次主人的抖音私信
     shareTo: 'douyin', // douyin = 在抖音里私信分享给主人（要先核对主人抖音号，没核对 / 发不出去就改发 QQ）| qq = QQ 私聊发链接 | both = 两边都发
+    like: { enabled: true }, // 能力开关：点赞（权限档在 profilePerms.douyinLike）
+    comment: { enabled: true }, // 能力开关：评论，用她的人格现想现发（权限档在 profilePerms.douyinComment）
+    atOwner: { enabled: true }, // 能力开关：评论里真·@主人（只认核对过的 owner.secUid，不许绕过；权限档沿用 douyinComment）
     owner: { input: '', secUid: '', uid: '', nickname: '', confirmedInput: '' }, // 主人的抖音号：面板填抖音号 / 主页链接，「核对」后才写入 secUid（真·@主人只认它）
     caps: { like: 30, comment: 3, share: 5, atOwner: 3 }, // 每天上限（登录后前 newAccountDays 天减半）；atOwner = 评论里真·@主人
     gate: {
@@ -557,6 +560,11 @@ export function normalize(raw) {
   d.dwellMax = Math.max(d.dwellMin, num(d.dwellMax, 40, 1, BIG))
   d.browserPath = String(d.browserPath || '').trim()
   d.shareTo = ['douyin', 'qq', 'both'].includes(d.shareTo) ? d.shareTo : 'douyin'
+  // v3.0.0 起五大能力各有独立开关：点赞 / 评论 / @主人（关了就完全不动手，权限档照旧另外管一层）
+  for (const k of ['like', 'comment', 'atOwner']) {
+    if (!isObj(d[k])) d[k] = {}
+    d[k].enabled = bool(d[k].enabled, true)
+  }
   d.ownerDm = bool(d.ownerDm, true)
   d.dmPollMinutes = num(d.dmPollMinutes, 3, 1, BIG)
   d.shareBias = ['stingy', 'normal', 'proactive'].includes(d.shareBias) ? d.shareBias : d.shareBias === 'off' ? 'stingy' : 'proactive'
