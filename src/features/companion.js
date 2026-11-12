@@ -259,7 +259,7 @@ export function createSpeakUp({ getConfig, hub, log, isMuted, memory, identity, 
     }
     saveReminders([...live, reminder])
     log.info(`小闹钟：${reminder.atText} ${note}`)
-    return { ok: true, id: reminder.id, at: reminder.atText, message: `已记下，${reminder.atText} 叫醒你` }
+    return { ok: true, id: reminder.id, at: reminder.atText, message: `记下了，我会在 ${reminder.atText} 提醒你` }
   }
   function closeReminder(id) {
     const key = String(id || '').trim()

@@ -52,6 +52,7 @@ function makeDue(s, note = '问主人晚饭吃了没') {
   const at = Date.now() + 3600_000
   const r = s.addReminder(textOf(at), note)
   assert.equal(r.ok, true)
+  assert.equal(r.message, `记下了，我会在 ${textOf(at)} 提醒你`)
   const file = join(process.env.AURABOT_DATA_DIR, 'speakup-reminders.json')
   const list = JSON.parse(readFileSync(file, 'utf8'))
   const item = list.find((x) => x.id === r.id)
