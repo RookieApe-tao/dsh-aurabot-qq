@@ -83,13 +83,14 @@ test('慢工具 slow=true 时优先发她自己写的话', async (t) => {
     brain: async ({ callTool }) => {
       const agent = [...fake.agents.values()][0]
       fake.emit('session/event', agent.session, { type: 'assistant/message', data: { turn: 1, message: { content: [
-        { type: 'text', text: '等我一下，我去画' },
+        { type: 'text', text: '等我一下，我去画 <sticker:开心>' },
         { type: 'tool-call', id: 'slow-auto-1', name: 'slow-auto', arguments: '{}' },
       ] } } })
       await callTool('slow-auto', {})
       return ''
     },
     hooks: { send: async (segments, info) => { sent.push(info.note); return segments } },
+    stickers: { match: () => ({ name: '开心', md5: 'stub' }), segmentFor: () => ({ type: 'text', data: { text: '[表情] 开心' } }), markUsed() {} },
     buildTools: () => [{ name: 'slow-auto', slow: true, execute: () => work.promise }],
   })
   fake = s.fake
@@ -98,6 +99,8 @@ test('慢工具 slow=true 时优先发她自己写的话', async (t) => {
   t.mock.timers.tick(1501)
   await settle()
   assert.equal(sent.some((x) => x.includes('等我一下，我去画')), true)
+  assert.equal(sent.some((x) => x.includes('[表情] 开心')), true)
+  assert.equal(sent.some((x) => x.includes('sticker:开心')), false)
 })
 
 test('慢工具提示等待发送挂钩时轮次结束，不再投递到 QQ', async (t) => {
@@ -133,7 +136,7 @@ function config(patch = {}) {
     snowluma: { autoStart: false, autoAttach: false, dir: join(root, 'no-snowluma') }, ...patch })
 }
 
-function setup(t, { cfg = config(), brain = async () => '', hooks, buildTools, onebot, outbox, onCommand, onActivity } = {}) {
+function setup(t, { cfg = config(), brain = async () => '', hooks, buildTools, stickers, onebot, outbox, onCommand, onActivity } = {}) {
   process.env.AURABOT_DATA_DIR = mkdtempSync(join(root, 'data-'))
   const fake = createFakeDsh({ brain })
   const identity = makeTestIdentity(cfg.ownerQQ || OWNER)
@@ -141,7 +144,7 @@ function setup(t, { cfg = config(), brain = async () => '', hooks, buildTools, o
   const hub = createHub({ dsh: fake.ctx, getConfig: () => cfg, outbox, identity, routeOwner: identity.routeOwner, defaultPlatform: 'qq',
     log: Object.fromEntries(['info', 'warn', 'error', 'debug'].map((k) => [k, (...v) => fake.logs.push(v.join(' '))])),
     onebot: onebot || { connected: true, async call(action, params) { calls.push({ action, params }); return { message_id: calls.length } } },
-    hooks, buildTools, onCommand, onActivity })
+    stickers, hooks, buildTools, onCommand, onActivity })
   fake.ctx.effect(() => fake.ctx.on('session/event', hub.onSessionEvent))
   t.after(() => { try { hub.dispose?.() } finally { fake.dispose() } })
   return { hub, fake, calls, identity }
