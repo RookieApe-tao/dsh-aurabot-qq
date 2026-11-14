@@ -8875,8 +8875,10 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       const refreshPeople = () => get('/platforms/people').then(setPeopleData).catch(() => {})
       useEffect(() => { refreshPlatforms(); refreshPeople() }, [])
       const entry = (pdata?.catalog || []).find((x) => x.id === mode)
-      const platformInst = (pdata?.instances || []).find((x) => x.platform === mode && !x.legacy)
+      const platformInst = (pdata?.instances || []).find((x) => !x.legacy && (x.platform === mode ||
+        (mode === 'bridge' && (pdata?.configs?.[x.instance]?.adapter === 'bridge' || pdata?.configs?.[x.instance]?.platform === 'bridge'))))
       const platformConfig = platformInst ? ((pdata?.configs || {})[platformInst.instance] || {}) : {}
+      const candidatePlatform = platformInst?.platform || mode
       const platformReady = Boolean(entry)
       const valueOf = (s) => {
         const raw = platformValues[s.key]
@@ -9007,11 +9009,11 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
 
       const qqCanNext = [true, qqOk, external ? Boolean(draft.snowluma.wsUrl || st.config.snowluma.wsUrl) : sl.installed, external || (sl.running && sl.consented), verified, true]
       const selectedCandidate = (pdata?.candidates || [])
-        .filter((c) => c.platform === mode)
+        .filter((c) => c.platform === candidatePlatform)
         .sort((a, b) => Number(b.at || 0) - Number(a.at || 0))[0] || null
       const ownerPerson = (peopleData?.list || []).find((p) => p.owner)
       const ownerAccounts = ownerPerson?.accounts || []
-      const ownerAccountOnMode = ownerAccounts.find((a) => a.platform === mode)
+      const ownerAccountOnMode = ownerAccounts.find((a) => a.platform === candidatePlatform)
       const candidateBound = Boolean(selectedCandidate && ownerAccounts.some((a) => a.platform === selectedCandidate.platform && a.account === selectedCandidate.account))
       const canFinishExternal = Boolean(pdata?.owner && (ownerAccountOnMode || candidateBound))
       const externalCanNext = [platformReady, platformReady, platformInst?.state === 'connected', canFinishExternal]
@@ -9230,7 +9232,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       )
 
       const candidateRows = (pdata?.candidates || [])
-        .filter((c) => c.platform === mode)
+        .filter((c) => c.platform === candidatePlatform)
         .sort((a, b) => Number(b.at || 0) - Number(a.at || 0))
       const bindStep = h('div', null,
         h('p', { className: 'ab-desc' }, '用要当主人的账号，给机器人发一条私聊。'),
