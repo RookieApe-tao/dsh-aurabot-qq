@@ -413,6 +413,29 @@ export function apply(ctx) {
         identity,
         log: logger.child('gateway'),
       })
+      // 网关自己维护回调表；再用一个匿名 prefix 兜底，避免宿主精确路由与
+      // DSH 自身 /platform 路由冲突时整个回调表都接不到。
+      try {
+        ctx.effect(() => ctx.webServer.register({
+          kind: 'prefix',
+          path: '/platform',
+          auth: 'anonymous',
+          handler: async (req, res) => {
+            try {
+              if (req.rawBody == null && req.method !== 'GET' && req.method !== 'HEAD') {
+                try { req.rawBody = await readRaw(req, 10 * 1024 * 1024) } catch (error) {}
+              }
+              await platformGateway.handleHttp(req, res)
+            } catch (error) {
+              logger.child('gateway').warn('平台回调分发失败：', error?.message || error)
+              if (!res.headersSent) res.statusCode = 500
+              if (!res.writableEnded) res.end('callback error')
+            }
+          },
+        }), 'aurabot: 平台回调兜底')
+      } catch (error) {
+        logger.child('gateway').warn('注册平台回调兜底路由失败：', error?.message || error)
+      }
       for (const [factory, id] of [[createQqAdapter, 'qq'], [createFeishuAdapter, 'feishu'], [createQqbotAdapter, 'qqbot'], [createBridgeAdapter, 'bridge']]) {
         try { platformGateway.register(() => factory()) } catch (error) { logger.child('gateway').warn(`注册平台端 ${id} 失败：`, error?.message || error) }
       }
