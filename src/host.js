@@ -390,6 +390,7 @@ export function apply(ctx) {
           const off = ctx.effect(() => ctx.webServer.register({
             kind: 'exact',
             path: String(path),
+            auth: 'anonymous',
             handler: async (req, res) => {
               try {
                 if (req.rawBody == null && req.method !== 'GET' && req.method !== 'HEAD') {
