@@ -116,25 +116,31 @@ test('custom 没有有效 {image} 占位时拒绝请求，服务拒绝参考图�
   assert.equal(calls, 1)
 })
 
-test('Codex 现有 JSON 文生图保持原形；参考图明确拒绝，连认证也不调用', async () => {
+test('Codex 订阅：文生图走 generations，参考图走 edits', async () => {
   let access = 0, requests = 0
   const cfg = config({ provider: 'codex' })
   const gen = createImageGen({ getConfig: () => cfg, log,
     codexAuth: { status: () => ({ loggedIn: true }), ensureAccess: async () => { access++; return { access: 'token', accountId: 'account' } } },
     fetchImpl: async (url, init) => {
       requests++
-      assert.equal(url, 'https://chatgpt.com/backend-api/codex/images/generations')
-      assert.equal(init.headers['content-type'], 'application/json')
-      assert.equal(JSON.parse(init.body).prompt, '水彩，猫')
-      assert.equal(JSON.parse(init.body).image, undefined)
+      const body = JSON.parse(init.body)
+      if (body.images) {
+        assert.equal(url, 'https://chatgpt.com/backend-api/codex/images/edits')
+        assert.equal(body.images.length, 1)
+        assert.match(body.images[0].image_url, /^data:image\/png;base64,/)
+      } else {
+        assert.equal(url, 'https://chatgpt.com/backend-api/codex/images/generations')
+        assert.equal(body.image, undefined)
+      }
+      assert.equal(body.prompt, '水彩，猫')
       return result()
     },
   })
-  await assert.rejects(gen.generate('猫', { image: PNG }), unsupported)
-  assert.equal(access, 0)
-  assert.equal(requests, 0)
-  assert.deepEqual(await gen.generate('猫'), PNG)
+  assert.deepEqual(await gen.generate('猫', { image: PNG }), PNG)
+  assert.equal(access, 1)
   assert.equal(requests, 1)
+  assert.deepEqual(await gen.generate('猫'), PNG)
+  assert.equal(requests, 2)
 })
 
 test('本地 call(image) 收到纯 base64 image 和原有 prompt / size；无图时不增加字段', async () => {

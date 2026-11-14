@@ -113,6 +113,8 @@ export default {
         size: { type: 'string', enum: SIZE_OPTIONS, description: '可选尺寸，例如 2048x2048（2K）、4096x4096（4K）；优先于 shape / 面板默认，不填沿用原逻辑' },
       },
       required: ['prompt', 'notice'],
+      // 慢工具：如果这次没有带 notice，由中枢用她这一轮自己写的正文补一条提示，不再发固定模板。
+      slow: true,
       // 能看图时把原图放进工具结果（image 块），她当轮就能看见自己画了什么
       render: drawResultBlocks,
       execute: async ({ prompt, shape, image, size, notice }) => {
@@ -126,9 +128,16 @@ export default {
         const reference = await resolveDrawImage(image, { hub, chat })
         const text = typeof notice === 'string' ? notice.trim().slice(0, 200) : ''
         let acknowledged = text ? await hub.sendText(chat.chatId, text) : null
+        if (acknowledged) hub.markSlowNotice?.(sessionId)
         const simulatedNotice = () => acknowledged === null && Boolean(cfg.debug || cfg.dryRun)
-        if (!acknowledged && !simulatedNotice()) acknowledged = await hub.sendText(chat.chatId, '好，我来画。')
-        if (!acknowledged && !simulatedNotice()) return { ok: false, message: '没能发送画图回复，请检查 QQ 网关' }
+        if (!acknowledged && !simulatedNotice() && !text) {
+          // 模板提示是她自己写的正文；没有 notice 时优先用它，绝不发「好，我来画」固定句。
+          const own = String(hub.toolTextOf?.(sessionId) || '').trim().slice(0, 200)
+          if (own) {
+            acknowledged = await hub.sendText(chat.chatId, own)
+            if (acknowledged) hub.markSlowNotice?.(sessionId)
+          }
+        }
         const progress = async (error, retrying) => {
           const issue = reason(error); const facts = retrying ? '刚才失败，正在尝试下一个备用模型，结果尚未确定' : '生图最终失败，没有图片'
           const fallback = retrying ? '刚才没画出来，我换个模型再试试。' : '这次没画出来，我先停下了。'
