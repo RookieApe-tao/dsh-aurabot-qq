@@ -544,33 +544,48 @@ export function createGateway({ config, dataDir, http, identity, log, now = Date
     const key = message.inResponseTo && !proactive ? `${addr.instance}\u0000${message.inResponseTo}` : null
 
     // repliesPerMessage 合并：最后一条允许的文字先挂起，后续同 key 的文字并进来
+    let effectiveInResponseTo = message.inResponseTo
+    let effectiveProactive = proactive
+    const extraDegraded = []
     if (key && limit > 0) {
-      const pending = pendingReplies.get(key)
-      if (pending && pending.chatId === chatId) {
-        // 超出条数的文字并进最后一条允许的消息里，不丢内容
-        if (renderedText) pending.parts.push({ type: 'text', text: `\n${renderedText}` })
-        return { messageId: '', degraded: [...d.degraded, 'replies merged into previous'], queued: false, pending: true }
-      }
       const count = replyCounts.get(key) || 0
-      const textSafe = d.parts.every((p) => ['text', 'mention', 'face'].includes(p.type))
-      if (count + 1 >= limit && textSafe) {
-        // 换了聊天对象时清掉旧挂起，避免旧 timer 冲掉新挂起
-        const stale = pendingReplies.get(key)
-        if (stale) { clearTimeout(stale.timer); pendingReplies.delete(key) }
-        const pendingItem = {
-          instance: addr.instance,
-          chatId,
-          parts: d.parts,
-          replyTo: d.replyTo,
-          inResponseTo: message.inResponseTo,
-          timeoutMs: message.timeoutMs,
-          note: message.note,
-          timer: null,
+      if (count >= limit) {
+        // 被动回复额度已经用完。QQ 官方等平台仍允许主动消息；优先把余下内容
+        // 作为一条主动消息发出，避免合并定时器到点后被平台端拒绝、整段丢失。
+        if (capsNow.proactive === 'none') {
+          logger.warn(`被动回复额度已用完（${limit} 次），丢弃：${message.note || chatId}`)
+          return { messageId: '', degraded: [...d.degraded, 'reply limit reached'], queued: false }
         }
-        pendingItem.timer = setTimeout(() => flushPendingReply(key), Math.max(1, replyHoldMs))
-        pendingItem.timer.unref?.()
-        pendingReplies.set(key, pendingItem)
-        return { messageId: '', degraded: [...d.degraded, 'reply held for merging'], queued: false, pending: true }
+        effectiveInResponseTo = undefined
+        effectiveProactive = true
+        extraDegraded.push('reply limit reached: sent as proactive')
+      } else {
+        const pending = pendingReplies.get(key)
+        if (pending && pending.chatId === chatId) {
+          // 超出条数的文字并进最后一条允许的消息里，不丢内容
+          if (renderedText) pending.parts.push({ type: 'text', text: `\n${renderedText}` })
+          return { messageId: '', degraded: [...d.degraded, 'replies merged into previous'], queued: false, pending: true }
+        }
+        const textSafe = d.parts.every((p) => ['text', 'mention', 'face'].includes(p.type))
+        if (count + 1 >= limit && textSafe) {
+          // 换了聊天对象时清掉旧挂起，避免旧 timer 冲掉新挂起
+          const stale = pendingReplies.get(key)
+          if (stale) { clearTimeout(stale.timer); pendingReplies.delete(key) }
+          const pendingItem = {
+            instance: addr.instance,
+            chatId,
+            parts: d.parts,
+            replyTo: d.replyTo,
+            inResponseTo: message.inResponseTo,
+            timeoutMs: message.timeoutMs,
+            note: message.note,
+            timer: null,
+          }
+          pendingItem.timer = setTimeout(() => flushPendingReply(key), Math.max(1, replyHoldMs))
+          pendingItem.timer.unref?.()
+          pendingReplies.set(key, pendingItem)
+          return { messageId: '', degraded: [...d.degraded, 'reply held for merging'], queued: false, pending: true }
+        }
       }
     }
 
@@ -579,13 +594,13 @@ export function createGateway({ config, dataDir, http, identity, log, now = Date
       const result = await run.adapter.send({
         chat: { kind: addr.kind, id: addr.id },
         parts: d.parts,
-        replyTo: d.replyTo,
-        inResponseTo: proactive ? undefined : message.inResponseTo,
+        replyTo: effectiveProactive ? undefined : d.replyTo,
+        inResponseTo: effectiveProactive ? undefined : effectiveInResponseTo,
         timeoutMs: message.timeoutMs,
         ext: message.ext,
       })
-      bumpReplyCount(addr.instance, proactive ? null : message.inResponseTo)
-      return { messageId: result.messageId, degraded: d.degraded }
+      bumpReplyCount(addr.instance, effectiveProactive ? null : effectiveInResponseTo)
+      return { messageId: result.messageId, degraded: [...d.degraded, ...extraDegraded] }
     } catch (error) {
       const sendError = toSendError(error, addr.instance)
       if (isNotSent(sendError)) {

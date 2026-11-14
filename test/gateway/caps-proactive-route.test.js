@@ -207,3 +207,20 @@ function adapterEmit(adapter, account, messageId) {
     parts: [{ type: 'text', text: 'hi' }],
   })
 }
+
+test('repliesPerMessage 用完后，余下文字转主动消息而不是丢弃', async () => {
+  const a = fakeFactory({ id: 'fake', caps: { repliesPerMessage: 2, replyWindowMs: 60_000 } })
+  const { gateway } = makeGateway({ platforms: { fake: { enabled: true } }, adapters: [a], replyHoldMs: 20 })
+  await gateway.sync()
+  const adapter = a.get(1)
+  adapter.pushInbound({ messageId: 'in-limit', parts: [{ type: 'text', text: '问一句' }] })
+  const respond = (text) => gateway.send({ chatId: 'fake:private:10001', parts: [{ type: 'text', text }], kind: 'reply', note: text, inResponseTo: 'in-limit' })
+
+  await respond('第一段')
+  await respond('第二段') // 挂起等待合并
+  await delay(50)         // 挂起发完，计数到 2
+  const out = await respond('第三段') // 被动额度已满 → 主动消息
+  assert.ok(out.messageId, '第三段不应被丢掉')
+  assert.equal(adapter.sent.at(-1).payload.inResponseTo, undefined, '主动消息不带 msg_id')
+  assert.ok(out.degraded.includes('reply limit reached: sent as proactive'))
+})
