@@ -8828,10 +8828,30 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
     }
 
     // ---------------- 首次使用向导 ----------------
-    const WIZ_STEPS = ['你们的 QQ 号', '接 QQ 网关', '启动并同意协议', '连上机器人号', '完成']
+    const WIZ_QQ_STEPS = ['选择接入方式', '你们的 QQ 号', '接 QQ 网关', '启动并同意协议', '连上机器人号', '完成']
+    const WIZ_PLATFORM_STEPS = ['选择接入方式', '填写平台配置', '连接确认', '认主并完成']
+    const WIZ_PLATFORM_MODES = [
+      { id: 'qq', label: 'QQ', desc: 'SnowLuma 或已有 OneBot，适合已经有机器人 QQ 号' },
+      { id: 'feishu', label: '飞书', desc: '企业自建应用，默认 WebSocket，不需要公网回调' },
+      { id: 'qqbot', label: 'QQ 官方机器人', desc: 'AppID + AppSecret，默认 WebSocket' },
+      { id: 'bridge', label: '通用接入端', desc: '外部程序按 HTTP 长轮询接入，自建平台/脚本用' },
+    ]
 
     function Wizard({ st, draft, setDraft, save, toast, reload, onClose }) {
-      const [step, setStep] = useState(() => { try { return Number(localStorage.getItem('aurabot.wiz') || 0) } catch (e) { return 0 } })
+      const [mode, setMode] = useState(() => {
+        try { return localStorage.getItem('aurabot.wiz.mode') || 'qq' } catch (e) { return 'qq' }
+      })
+      const [step, setStep] = useState(() => {
+        try {
+          if (!localStorage.getItem('aurabot.wiz.v2')) {
+            localStorage.setItem('aurabot.wiz.v2', '1')
+            localStorage.setItem('aurabot.wiz', '0')
+            return 0
+          }
+          return Math.max(0, Number(localStorage.getItem('aurabot.wiz') || 0))
+        } catch (e) { return 0 }
+      })
+      const steps = mode === 'qq' ? WIZ_QQ_STEPS : WIZ_PLATFORM_STEPS
       const go = (i) => { setStep(i); try { localStorage.setItem('aurabot.wiz', String(i)) } catch (e) {} }
       const f = useField(draft, setDraft)
       const sl = st.snowluma
@@ -8846,30 +8866,188 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       const [diag, setDiag] = useState(null)
       const [diagBusy, setDiagBusy] = useState(false)
       const [pdata, setPdata] = useState(null)
-      useEffect(() => { get('/platforms').then(setPdata).catch(() => {}) }, [])
+      const [peopleData, setPeopleData] = useState(null)
+      const [platformValues, setPlatformValues] = useState({})
+      const [platformBusy, setPlatformBusy] = useState(false)
+      const [platformError, setPlatformError] = useState('')
+      const seededMode = useRef('')
+      const refreshPlatforms = () => get('/platforms').then(setPdata).catch(() => {})
+      const refreshPeople = () => get('/platforms/people').then(setPeopleData).catch(() => {})
+      useEffect(() => { refreshPlatforms(); refreshPeople() }, [])
+      const entry = (pdata?.catalog || []).find((x) => x.id === mode)
+      const platformInst = (pdata?.instances || []).find((x) => x.platform === mode && !x.legacy)
+      const platformConfig = platformInst ? ((pdata?.configs || {})[platformInst.instance] || {}) : {}
+      const platformReady = Boolean(entry)
+      const valueOf = (s) => {
+        const raw = platformValues[s.key]
+        return raw === undefined ? (s.default !== undefined ? s.default : (s.type === 'boolean' ? false : '')) : raw
+      }
+      const setPlatformValue = (key, value) => setPlatformValues((prev) => ({ ...prev, [key]: value }))
+      const chooseMode = (nextMode) => {
+        setMode(nextMode)
+        try { localStorage.setItem('aurabot.wiz.mode', nextMode) } catch (e) {}
+        setPlatformError('')
+        setPlatformValues({})
+        seededMode.current = ''
+        go(0)
+      }
+      const loadOwner = async () => {
+        const [pd, people] = await Promise.all([get('/platforms').catch(() => null), get('/platforms/people').catch(() => null)])
+        if (pd) setPdata(pd)
+        if (people) setPeopleData(people)
+      }
       const claimPlatform = async (c) => {
         const r = await post('/platforms/claim', { platform: c.platform, account: c.account })
         toast(r.message || (r.ok ? '好了' : '没成功'), r.ok === false ? 'err' : 'ok')
-        if (r.ok) { setPdata(r); reload() }
+        if (r.ok) { setPdata(r); await loadOwner(); reload() }
       }
       const finishPlatform = async () => {
         const r = await post('/setup/done', { platformOnly: true })
         toast(r.message || (r.ok ? '完成' : '没成功'), r.ok === false ? 'err' : 'ok')
-        if (r.ok) { reload(); onClose && onClose() }
+        if (r.ok) {
+          try {
+            localStorage.removeItem('aurabot.wiz')
+            localStorage.removeItem('aurabot.wiz.mode')
+            localStorage.removeItem('aurabot.wiz.v2')
+          } catch (e) {}
+          reload(); onClose && onClose()
+        }
       }
       const qqOk = /^\d{5,11}$/.test(draft.botQQ || '') && /^\d{5,11}$/.test(draft.ownerQQ || '') && draft.botQQ !== draft.ownerQQ
       const external = draft.gateway === 'onebot'
       const verified = conn && login && String(login.uin) === String(st.config.botQQ) && !st.onebot.problem
-      const canNext = [qqOk, external ? Boolean(draft.snowluma.wsUrl || st.config.snowluma.wsUrl) : sl.installed, external || (sl.running && sl.consented), verified, true][step]
+
+      useEffect(() => {
+        if (step >= steps.length) go(steps.length - 1)
+      }, [step, mode])
+
+      // 非 QQ 模式：第一次拿到平台配置时，把已保存的值灌进表单；
+      // 后续轮询 pdata 不覆盖用户正在输入的内容。
+      useEffect(() => {
+        if (mode === 'qq' || !pdata) return
+        const key = mode + ':' + (platformInst?.instance || '')
+        if (seededMode.current === key) return
+        seededMode.current = key
+        const seeded = {}
+        for (const setting of entry?.settings || []) {
+          const saved = platformConfig[setting.key]
+          seeded[setting.key] = setting.type === 'password'
+            ? ''
+            : (saved !== undefined ? saved : (setting.default !== undefined ? setting.default : (setting.type === 'boolean' ? false : '')))
+        }
+        setPlatformValues(seeded)
+      }, [mode, pdata])
+
+      // 连接/认主阶段轮询；只在非 QQ 模式启动。
+      useEffect(() => {
+        if (mode === 'qq') return undefined
+        const timer = setInterval(() => {
+          refreshPlatforms()
+          if (step >= 2) refreshPeople()
+        }, 2000)
+        return () => clearInterval(timer)
+      }, [mode, step])
+
+      const savePlatformConfig = async () => {
+        if (!platformReady) return toast('这个平台端没有注册', 'err')
+        setPlatformBusy(true)
+        setPlatformError('')
+        try {
+          let inst = platformInst
+          let data = pdata
+          if (!inst) {
+            const added = await post('/platforms/add', { platform: mode, enabled: false })
+            if (added.ok === false) {
+              setPlatformError(added.message || '添加平台失败')
+              toast(added.message || '添加平台失败', 'err')
+              return false
+            }
+            data = added
+            setPdata(added)
+            inst = (added.instances || []).find((x) => x.platform === mode && !x.legacy)
+            if (!inst) {
+              setPlatformError('平台添加后没有找到实例')
+              return false
+            }
+          }
+          const patch = {}
+          for (const setting of entry?.settings || []) {
+            const value = platformValues[setting.key]
+            if (setting.type === 'password' && (value == null || value === '')) continue
+            if (value === undefined) continue
+            patch[setting.key] = setting.type === 'number' ? Number(value) : value
+          }
+          const saved = await post('/platforms/settings', { instance: inst.instance, patch })
+          if (saved.ok === false) {
+            setPlatformError(saved.message || '保存平台配置失败')
+            toast(saved.message || '保存平台配置失败', 'err')
+            return false
+          }
+          setPdata(saved)
+          if (inst.enabled === false) {
+            const enabled = await post('/platforms/toggle', { instance: inst.instance, enabled: true })
+            if (enabled.ok === false) {
+              setPlatformError(enabled.message || '启用平台失败')
+              toast(enabled.message || '启用平台失败', 'err')
+              return false
+            }
+            setPdata(enabled)
+          }
+          setPlatformError('')
+          await refreshPlatforms()
+          return true
+        } catch (error) {
+          setPlatformError(error?.message || '保存平台配置失败')
+          toast(error?.message || '保存平台配置失败', 'err')
+          return false
+        } finally {
+          setPlatformBusy(false)
+        }
+      }
+
+      const qqCanNext = [true, qqOk, external ? Boolean(draft.snowluma.wsUrl || st.config.snowluma.wsUrl) : sl.installed, external || (sl.running && sl.consented), verified, true]
+      const selectedCandidate = (pdata?.candidates || [])
+        .filter((c) => c.platform === mode)
+        .sort((a, b) => Number(b.at || 0) - Number(a.at || 0))[0] || null
+      const ownerPerson = (peopleData?.list || []).find((p) => p.owner)
+      const ownerAccounts = ownerPerson?.accounts || []
+      const ownerAccountOnMode = ownerAccounts.find((a) => a.platform === mode)
+      const candidateBound = Boolean(selectedCandidate && ownerAccounts.some((a) => a.platform === selectedCandidate.platform && a.account === selectedCandidate.account))
+      const canFinishExternal = Boolean(pdata?.owner && (ownerAccountOnMode || candidateBound))
+      const externalCanNext = [platformReady, true, platformInst?.state === 'connected', canFinishExternal]
+      const canNext = mode === 'qq' ? qqCanNext[step] : externalCanNext[step]
       const next = async () => {
-        if ((step === 0 || step === 1) && !(await save({ ...draft, enabled: true }))) return
-        go(Math.min(step + 1, WIZ_STEPS.length - 1))
-        reload()
+        if (mode === 'qq') {
+          if ((step === 1 || step === 2) && !(await save({ ...draft, enabled: true }))) return
+          go(Math.min(step + 1, steps.length - 1))
+          reload()
+          return
+        }
+        if (step === 0) {
+          if (!platformReady) return toast('这个平台端没有注册', 'err')
+          go(1)
+          return
+        }
+        if (step === 1) {
+          if (await savePlatformConfig()) go(2)
+          return
+        }
+        if (step === 2) {
+          if (platformInst?.state === 'connected') go(3)
+          else toast('平台还没有连接成功，先看上面的状态和原因', 'err')
+        }
       }
       const useExisting = async () => {
         const r = await post('/setup/done', { existingConnection: true })
         toast(r.message, r.ok ? 'ok' : 'err')
-        if (r.ok) { try { localStorage.removeItem('aurabot.wiz') } catch (e) {} reload(); onClose && onClose() }
+        if (r.ok) {
+          try {
+            localStorage.removeItem('aurabot.wiz')
+            localStorage.removeItem('aurabot.wiz.mode')
+            localStorage.removeItem('aurabot.wiz.v2')
+          } catch (e) {}
+          reload(); onClose && onClose()
+        }
       }
       // 点了接入之后每 2 秒刷新一次状态；45 秒还没好就提示去看诊断
       useEffect(() => {
@@ -8899,7 +9077,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         setDiagBusy(false)
         setDiag(r)
       }
-      const body = [
+      const qqBody = [
         // 0. QQ 号
         h('div', null,
           h('p', { className: 'ab-desc' }, '大肥鱼需要一个自己的 QQ 号（机器人号），还要知道谁是ta的主人。'),
@@ -8908,16 +9086,6 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
           h(Row, { label: 'ta怎么称呼你' }, f.text('ownerName', { placeholder: '主人' })),
           h(Row, { label: '工作区文件夹', hint: 'ta在 QQ 会话里读写文件的地方，C 盘空间紧就放到别的盘，比如 D:\\Aurabot\\qq-chats。填完整路径，留空用默认位置。以后想换，在「连接」页能搬。聊天记录和记忆在用户目录的 .dsh 里，不在这个文件夹' }, f.text('workspaceDir', { size: 'wide', placeholder: st.workspaceDir || '' })),
           draft.botQQ && draft.ownerQQ && draft.botQQ === draft.ownerQQ ? h('div', { className: 'ab-note err' }, '机器人号和主人号不能是同一个。') : null),
-        h(Card, { title: '不用 QQ？也可以先接其他平台', desc: '接飞书、QQ 官方机器人或通用桥时，不需要填机器人 QQ。让要当主人的账号给机器人发一条私聊，在下面确认，然后直接进入面板。' },
-          pdata?.owner
-            ? h('div', null, h('div', { className: 'ab-small ab-muted' }, '当前主人：' + pdata.owner),
-              h('div', { style: { marginTop: 8 } }, h(Btn, { small: true, kind: 'primary', onClick: finishPlatform }, '用这个平台进入面板')))
-            : (pdata?.candidates || []).length
-              ? (pdata.candidates).map((c) => h('div', { key: c.platform + ':' + c.account, className: 'ab-flex', style: { alignItems: 'center', gap: 8, padding: '6px 0', borderBottom: '1px solid var(--ab-line)' } },
-                h('span', null, platformLabel(c.platform) + ' · ' + (c.name || c.account) + '（' + c.account + '）'),
-                h('div', { className: 'ab-spacer' }),
-                h(Btn, { small: true, kind: 'primary', onClick: () => claimPlatform(c) }, '确认这是我')))
-              : h('div', { className: 'ab-small ab-muted' }, '还没有收到私聊。先让账号给机器人发一句话，再刷新面板。')),
         // 1. SnowLuma，或接已有的 OneBot 机器人
         external ? h('div', null,
           h(GatewayChoice, { draft, setDraft }),
@@ -8976,24 +9144,146 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
           ] }),
           h('div', { className: 'ab-flex', style: { marginTop: 12 } },
             h(Btn, { small: true, onClick: async () => { await save({ ...draft, enabled: true, dryRun: false }); const r = await post('/test-send'); toast(r.message); await save({ ...draft, enabled: true, dryRun: live === 'dry' }) } }, '给我发一条自测消息'))),
-      ][step]
+      ]
+
+      const platformField = (s) => {
+        const p = s.key
+        const value = valueOf(s)
+        if (s.type === 'boolean' || s.type === 'switch') return h(Switch, { on: Boolean(value), onChange: (v) => setPlatformValue(p, v) })
+        if (s.type === 'select') return h('select', {
+          className: 'ab-select',
+          value: value ?? '',
+          onChange: (e) => setPlatformValue(p, e.target.value),
+        }, (s.options || []).map((o) => {
+          const item = typeof o === 'string' ? { value: o, label: o } : o
+          return h('option', { key: String(item.value), value: item.value }, item.label || String(item.value))
+        }))
+        if (s.type === 'textarea') return h('textarea', {
+          className: 'ab-textarea',
+          value: value ?? '',
+          placeholder: s.placeholder,
+          onChange: (e) => setPlatformValue(p, e.target.value),
+        })
+        if (s.type === 'number') return h('input', {
+          className: 'ab-input',
+          type: 'number',
+          value: value ?? '',
+          min: s.min,
+          max: s.max,
+          step: s.step,
+          onChange: (e) => setPlatformValue(p, e.target.value),
+        })
+        if (s.type === 'password') return h('input', {
+          className: 'ab-input',
+          type: 'password',
+          value: platformValues[p] ?? '',
+          placeholder: platformInst ? '已保存（不改就留空）' : (s.placeholder || ''),
+          onChange: (e) => setPlatformValue(p, e.target.value),
+        })
+        return h('input', {
+          className: 'ab-input',
+          value: platformValues[p] ?? '',
+          placeholder: s.placeholder,
+          onChange: (e) => setPlatformValue(p, e.target.value),
+        })
+      }
+
+      const selectionStep = h('div', null,
+        h('p', { className: 'ab-desc' }, '先选一种接入方式。选 QQ 会继续走 SnowLuma / OneBot；选其他平台可以在这里直接填凭证并连接。'),
+        h(Choices, {
+          value: mode,
+          onChange: chooseMode,
+          options: WIZ_PLATFORM_MODES.map((m) => ({ value: m.id, label: m.label, desc: m.desc })),
+        }),
+        h('div', { className: 'ab-small ab-muted', style: { marginTop: 10 } },
+          '已配置：',
+          (pdata?.instances || []).filter((x) => !x.legacy).map((x) => platformLabel(x.platform)).join('、') || '暂无'),
+      )
+
+      const configStep = h('div', null,
+        h('p', { className: 'ab-desc' }, '填这个平台的配置。密码字段保存后不会回显；留空表示沿用已保存的值。'),
+        !entry
+          ? h('div', { className: 'ab-note warn' }, '这个平台端没有注册，先重启 DSH 或检查平台目录。')
+          : h('div', null,
+            (entry.settings || []).map((s) => h(Row, { key: s.key, label: s.label || s.key, hint: s.hint }, platformField(s))),
+            !(entry.settings || []).length ? h('div', { className: 'ab-small ab-muted' }, '这个平台端没有可填的设置。') : null,
+            platformError ? h('div', { className: 'ab-note err', style: { marginTop: 8 } }, platformError) : null,
+            h('div', { className: 'ab-small ab-muted', style: { marginTop: 8 } },
+              platformInst ? '保存后会重新加载这个实例。' : '保存后会创建实例并启用。'),
+          ),
+      )
+
+      const connectStep = h('div', null,
+        h('p', { className: 'ab-desc' }, '正在等待平台连接。连接成功后，下一步用你的账号给机器人发一条私聊。'),
+        platformInst
+          ? h('div', null,
+            h('div', { className: 'ab-flex', style: { alignItems: 'center', gap: 8, marginBottom: 8 } },
+              h('i', { className: cx('ab-dot', platformInst.state === 'connected' ? 'ok' : platformInst.state === 'connecting' ? 'warn' : 'err') }),
+              h('b', null, platformInst.state === 'connected' ? '已连接' : platformInst.state === 'connecting' ? '连接中…' : '未连接'),
+              platformInst.self?.account ? h('span', { className: 'ab-small ab-muted' }, platformInst.self.account) : null),
+            platformInst.detail ? h('div', { className: 'ab-note warn' }, platformInst.detail) : null,
+            h('div', { className: 'ab-flex', style: { marginTop: 10 } },
+              h(Btn, { small: true, onClick: async () => { await refreshPlatforms(); await refreshPeople() } }, '重新检测')),
+          )
+          : h('div', { className: 'ab-note warn' }, '还没有创建平台实例，请返回上一步保存配置。'),
+        mode === 'bridge' ? h('div', { className: 'ab-note', style: { marginTop: 10 } }, '通用桥需要外部程序先调用 /hello 和 /inbound，候选账号才会出现。') : null,
+      )
+
+      const candidateRows = (pdata?.candidates || [])
+        .filter((c) => c.platform === mode)
+        .sort((a, b) => Number(b.at || 0) - Number(a.at || 0))
+      const bindStep = h('div', null,
+        h('p', { className: 'ab-desc' }, '用要当主人的账号，给机器人发一条私聊。'),
+        pdata?.owner
+          ? h('div', null,
+            ownerAccountOnMode || candidateBound
+              ? h('div', { className: 'ab-note', style: { marginBottom: 10 } }, '当前平台账号已经绑定到主人，可以完成向导。')
+              : h('div', { className: 'ab-note warn' },
+                '当前平台账号还没有绑定到主人。先让主人账号发 /bind，再用这个账号发 /bind-code <口令>；绑定完成后这里会自动更新。'),
+            h('div', { className: 'ab-flex', style: { marginTop: 8 } },
+              h(Btn, { small: true, onClick: async () => { await refreshPeople(); await refreshPlatforms() } }, '刷新绑定状态')),
+          )
+          : h('div', null,
+            candidateRows.length
+              ? candidateRows.map((c) => h('div', { key: c.platform + ':' + c.account, className: 'ab-flex', style: { alignItems: 'center', gap: 8, padding: '8px 0', borderBottom: '1px solid var(--ab-line)' } },
+                h('span', null, platformLabel(c.platform) + ' · ' + (c.name || c.account) + '（' + c.account + '）'),
+                h('div', { className: 'ab-spacer' }),
+                h(Btn, { small: true, kind: 'primary', disabled: platformBusy, onClick: () => claimPlatform(c) }, '确认这是我')))
+              : h('div', { className: 'ab-small ab-muted' }, '还没有收到私聊。先让账号给机器人发一句话，再等这里自动刷新。'),
+            mode === 'bridge' ? h('div', { className: 'ab-small ab-muted', style: { marginTop: 8 } }, '外部程序需要先 POST /platform/<实例>/hello，再 POST /platform/<实例>/inbound。') : null,
+            h('div', { className: 'ab-flex', style: { marginTop: 8 } },
+              h(Btn, { small: true, onClick: async () => { await refreshPlatforms(); await refreshPeople() } }, '刷新候选'))),
+        mode === 'bridge' && pdata?.owner ? h('div', { className: 'ab-small ab-muted', style: { marginTop: 8 } }, '通用桥候选账号来自外部程序的 /inbound；如果还没出现，先检查外部程序是否已经调用 /hello 和 /inbound。') : null,
+      )
+
+      const externalSteps = [selectionStep, configStep, connectStep, bindStep]
+      const body = mode === 'qq' ? [selectionStep, ...qqBody][step] : externalSteps[step]
       return h('div', { className: 'ab-card', style: { padding: '20px 22px' } },
-        h('div', { className: 'ab-flex', style: { marginBottom: 6 } }, h('h3', { style: { margin: 0, fontSize: 16 } }, '设置向导'), h('span', { className: 'ab-muted ab-small' }, '第 ' + (step + 1) + ' / ' + WIZ_STEPS.length + ' 步 · ' + WIZ_STEPS[step]), h('div', { className: 'ab-spacer' }),
+        h('div', { className: 'ab-flex', style: { marginBottom: 6 } }, h('h3', { style: { margin: 0, fontSize: 16 } }, '设置向导'), h('span', { className: 'ab-muted ab-small' }, '第 ' + (step + 1) + ' / ' + steps.length + ' 步 · ' + steps[step]), h('div', { className: 'ab-spacer' }),
           st.config.setupDone && onClose ? h(Btn, { small: true, kind: 'ghost', onClick: onClose }, '关闭向导') : null),
         !st.config.setupDone ? h('details', { style: { marginTop: 10 } }, h('summary', { className: 'ab-small' }, '换电脑了？从备份恢复'), h('div', { style: { marginTop: 10 } }, h(Backup, { toast, st }))) : null,
-        h('div', { className: 'ab-wiz-bar' }, WIZ_STEPS.map((s, i) => h('button', { key: s, type: 'button', className: cx('seg', i < step && 'done', i === step && 'on'), onClick: () => i <= step && go(i), title: s }, h('span', null, s)))),
-        verified && !st.config.setupDone ? h('div', { className: 'ab-note', style: { marginTop: 12 } }, '机器人号已经连接并核对通过。', ' ', h(Btn, { small: true, onClick: useExisting }, '使用现有连接，进入面板')) : null,
+        h('div', { className: 'ab-wiz-bar' }, steps.map((s, i) => h('button', { key: s, type: 'button', className: cx('seg', i < step && 'done', i === step && 'on'), onClick: () => i <= step && go(i), title: s }, h('span', null, s)))),
+        mode === 'qq' && verified && !st.config.setupDone ? h('div', { className: 'ab-note', style: { marginTop: 12 } }, '机器人号已经连接并核对通过。', ' ', h(Btn, { small: true, onClick: useExisting }, '使用现有连接，进入面板')) : null,
         h('div', { style: { minHeight: 220, marginTop: 14 } }, body),
         h('div', { className: 'ab-flex', style: { marginTop: 16, borderTop: '1px solid var(--ab-line)', paddingTop: 12 } },
           step > 0 ? h(Btn, { kind: 'ghost', onClick: () => go(step - 1) }, '上一步') : null,
           h('div', { className: 'ab-spacer' }),
-          step < WIZ_STEPS.length - 1
-            ? h(Btn, { kind: 'primary', disabled: !canNext, onClick: next }, '下一步')
-            : h(Btn, { kind: 'primary', onClick: async () => {
-              if (!(await save({ ...draft, enabled: true, dryRun: live === 'dry' }))) return
-              const r = await post('/setup/done'); toast(r.message, r.ok ? 'ok' : 'err')
-              if (r.ok) { try { localStorage.removeItem('aurabot.wiz') } catch (e) {} reload(); onClose && onClose() }
-            } }, '完成，让大肥鱼上线')))
+          step < steps.length - 1
+            ? h(Btn, { kind: 'primary', disabled: !canNext, onClick: next }, mode !== 'qq' && step === 1 ? '保存并连接' : '下一步')
+            : mode === 'qq'
+              ? h(Btn, { kind: 'primary', onClick: async () => {
+                if (!(await save({ ...draft, enabled: true, dryRun: live === 'dry' }))) return
+                const r = await post('/setup/done'); toast(r.message, r.ok ? 'ok' : 'err')
+                if (r.ok) {
+                  try {
+                    localStorage.removeItem('aurabot.wiz')
+                    localStorage.removeItem('aurabot.wiz.mode')
+                    localStorage.removeItem('aurabot.wiz.v2')
+                  } catch (e) {}
+                  reload(); onClose && onClose()
+                }
+              } }, '完成，让大肥鱼上线')
+              : h(Btn, { kind: 'primary', disabled: !canNext, onClick: finishPlatform }, '完成并进入面板')))
     }
 
     // ---------------- 面板主体 ----------------

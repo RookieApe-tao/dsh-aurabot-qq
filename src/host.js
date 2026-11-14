@@ -2693,7 +2693,7 @@ export function apply(ctx) {
     if (!entry) return { ok: false, message: '这个平台端没有注册' }
     const current = getConfig().platforms || {}
     if (current[platform]) return { ...platformView(), ok: true, message: '这个平台已经添加过了' }
-    const defaults = { enabled: true }
+    const defaults = { enabled: b.enabled !== false }
     for (const setting of entry.settings || []) {
       if (setting.default !== undefined) defaults[setting.key] = setting.default
     }
