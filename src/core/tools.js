@@ -22,6 +22,11 @@ function onPath(name) {
 export function normalizeToolPath(raw, name) {
   let value = String(raw || '').trim().replace(/^"(.*)"$/, '$1').trim()
   if (!value) return ''
+  // 只写命令名（ffmpeg / git）时也接受，等价于从 PATH 找。
+  if (!/[\\/]/.test(value)) {
+    const hit = onPath(value.replace(/\.exe$/i, ''))
+    if (hit) value = hit
+  }
   try {
     if (existsSync(value) && statSync(value).isDirectory()) value = join(value, exe(name))
   } catch (error) {}
