@@ -149,8 +149,14 @@ export default {
         try { buf = await gen.generate(String(prompt || ''), { shape, image: reference, size, onRetry: ({ error }) => progress(error, true) }) }
         catch (error) { await progress(error, false); return { ok: false, message: `生图失败：${reason(error)}。已尝试告知对方，请结合情况回应，不要说画好了。` } }
         const note = `[生图] ${String(prompt).slice(0, 30)}`
+        const imagePart = {
+          type: 'image',
+          // 默认平台走旧 segments 兜底时需要 base64；网关平台（飞书等）需要 media.bytes。
+          base64: buf.toString('base64'),
+          media: { bytes: buf, mime: mimeOf(buf), name: 'image.' + String(mimeOf(buf)).split('/')[1] },
+        }
         const sent = typeof api.sendParts === 'function'
-          ? await api.sendParts(chat.chatId, [{ type: 'image', base64: buf.toString('base64') }], { note })
+          ? await api.sendParts(chat.chatId, [imagePart], { note })
           : await hub.sendSegments(chat.chatId, [{ type: 'image', data: { file: 'base64://' + buf.toString('base64') } }], note)
         // 调试 / 试运行下本来就不真发（只记日志、返回 null）：
         // 这一轮仍算画好了 —— 存盘、给编号、能看图，只是聊天里收不到；不能当失败。
