@@ -9014,7 +9014,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       const ownerAccountOnMode = ownerAccounts.find((a) => a.platform === mode)
       const candidateBound = Boolean(selectedCandidate && ownerAccounts.some((a) => a.platform === selectedCandidate.platform && a.account === selectedCandidate.account))
       const canFinishExternal = Boolean(pdata?.owner && (ownerAccountOnMode || candidateBound))
-      const externalCanNext = [platformReady, true, platformInst?.state === 'connected', canFinishExternal]
+      const externalCanNext = [platformReady, platformReady, platformInst?.state === 'connected', canFinishExternal]
       const canNext = mode === 'qq' ? qqCanNext[step] : externalCanNext[step]
       const next = async () => {
         if (mode === 'qq') {
