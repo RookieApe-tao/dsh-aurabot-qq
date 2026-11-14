@@ -27,6 +27,7 @@
 // 与 _template、fake-adapter 同名同语义，供 test/contract/adapter-kit.js 的 harness 使用。
 
 import { createPrivateKey, createPublicKey, sign as ed25519Sign, verify as ed25519Verify } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 
 // ───────────────────────── 平台常量（均来自官方文档，见 ADAPTER-QQBOT.md） ─────────────────────────
 
@@ -566,20 +567,39 @@ export function createQqbotAdapter(options = {}) {
   /** 媒体先上传拿 file_info（单聊/群聊上传接口不互通，必须按场景选） */
   async function uploadMedia(kind, chatId, item, timeoutMs) {
     const media = item.media || {}
-    if (!media.url) {
-      // 平台只支持「URL 上传」和「分片上传」。分片上传本包未实现，
-      // 而 path/bytes 没有公网 URL 可用 → 明确告诉上层没发出去。
-      throw sendError('not-sent', 'media-url-required', instance, '该平台只支持以公网 URL 上传富媒体')
-    }
     if (Number(media.size) > MAX_FILE_BYTES) {
       throw sendError('not-sent', 'too-large', instance, `文件超过 ${MAX_FILE_BYTES} 字节`)
     }
     const path = kind === 'group'
       ? `/v2/groups/${encodeURIComponent(chatId)}/files`
       : `/v2/users/${encodeURIComponent(chatId)}/files`
-    // 群聊上传接口的 body 字段官方写作 file_type + url（与单聊一致）；srv_send_msg 关掉，
+    let body
+    if (media.url) {
+      // 公网 URL：平台自己去下。
+      body = { file_type: item.file_type, url: String(media.url), srv_send_msg: false }
+    } else {
+      // 本地 bytes/path：官方支持 file_data 内联上传（上限约 10MB）。
+      // 更大的文件需要分片上传，本端暂不支持，明确报 not-sent。
+      let bytes = null
+      if (Buffer.isBuffer(media.bytes)) bytes = media.bytes
+      else if (media.bytes) bytes = Buffer.from(media.bytes)
+      else if (media.path) {
+        try { bytes = readFileSync(String(media.path)) } catch (error) {
+          throw sendError('not-sent', 'media-read-failed', instance, `读不到本地媒体：${error.message}`)
+        }
+      }
+      if (!bytes?.length) {
+        throw sendError('not-sent', 'media-url-required', instance, '媒体既没有公网 URL，也没有可上传的 bytes/path')
+      }
+      if (bytes.length > 10 * 1024 * 1024) {
+        throw sendError('not-sent', 'media-too-large-inline', instance, '大于 10MB 的富媒体需要分片上传，本端暂不支持')
+      }
+      body = { file_type: item.file_type, file_data: bytes.toString('base64'), srv_send_msg: false }
+      if (item.file_type === FILE_TYPE.file && media.name) body.file_name = String(media.name)
+    }
+    // 群聊上传接口的 body 字段官方写作 file_type + url/file_data（与单聊一致）；srv_send_msg 关掉，
     // 否则会「上传即发送」并额外吃掉一次主动消息额度。
-    const res = await authedRequest({ path, body: { file_type: item.file_type, url: String(media.url), srv_send_msg: false }, timeoutMs })
+    const res = await authedRequest({ path, body, timeoutMs })
     const data = res?.data || {}
     // 上传响应字段官方文档示例未给全，这里宽容取（见 ADAPTER-QQBOT.md「未确认点」）
     const fileInfo = data.file_info || data.fileInfo || data.file_uuid || (data.data && (data.data.file_info || data.data.file_uuid))

@@ -218,10 +218,13 @@
 `file_info` 有时效性（`ttl`），过期要重传。`srv_send_msg=true` 可「上传即发送」，
 但**会占用主动消息频次**。
 
-**实现**：只做了 **URL 上传**（`/v2/users|groups/{openid}/files`，`srv_send_msg: false`），
-拿到 `file_info` 后再发 `msg_type=7`。
-`path` / `bytes` 形态的媒体**会上抛 `SendError('not-sent','media-url-required')`**，
-不做「假装发了」——分片上传（`upload_prepare` 三步）**未实现**，这是本包的已知缺口。
+**实现**：支持两种上传：
+
+- **URL 上传**：`url` 给公网地址，`srv_send_msg: false`；
+- **内联上传**：`bytes` / `path` 转 Base64 走 `file_data`（官方内联上限约 10MB）。
+
+拿到 `file_info` 后再发 `msg_type=7`。超过 10MB 的本地文件需要 `upload_prepare` 分片上传，
+本端暂未实现，会明确抛 `SendError('not-sent','media-too-large-inline')`，不做「假装发了」。
 
 > **未确认点**：
 > 1. 群聊 URL 上传接口的请求体字段，官方页面只给了路径，字段推测与单聊一致（`file_type` + `url`）。
@@ -424,8 +427,8 @@
 
 ## 五、已知缺口（本包未做，后续可补）
 
-1. **WebSocket 事件订阅未内置**：不加依赖的前提下做不了，需宿主注入 `connectEvents`。
-2. **富媒体分片上传未实现**：只能用公网 URL；本地文件（`path` / `bytes`）发不出去。
+1. **WebSocket 会话恢复未实现**：已内置连接、Identify、心跳和断线重连；`op=6 Resume` 尚未使用。
+2. **富媒体分片上传未实现**：URL 和内联 Base64（≤10MB）可用；更大的本地文件需要 `upload_prepare` 三步分片。
 3. **语音条（silk）未实现**：`voice: 'file'`，只有音频文件形态。
 4. **群管理接口未接**：成员列表、黑名单、禁言、入群审批（官方已有接口）。
 5. **ark / markdown / keyboard 出站未实现**：`card: false`。

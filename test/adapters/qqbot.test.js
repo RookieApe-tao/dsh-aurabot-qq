@@ -731,12 +731,25 @@ test('富媒体：图片先上传拿 file_info，再用 msg_type=7 发送；单�
   assert.equal(client.sent[0].body.msg_seq, 1)
 })
 
-test('富媒体：没有公网 URL 时明确抛 not-sent/media-url-required（不静默丢内容）', async () => {
+test('富媒体：本地 bytes 走 file_data 内联上传，不要求公网 URL', async () => {
   const { adapter, client } = await boot()
+  await adapter.send({
+    chat: { kind: 'private', id: 'U1' },
+    parts: [{ type: 'image', media: { bytes: Buffer.from('fake-png'), mime: 'image/png', name: 'a.png' } }],
+    inResponseTo: 'M2',
+  })
+  assert.equal(client.uploads.length, 1)
+  assert.equal(client.uploads[0].body.file_data, Buffer.from('fake-png').toString('base64'))
+  assert.equal(client.uploads[0].body.url, undefined)
+  assert.equal(client.sent.length, 1)
+})
+
+test('富媒体：既没有 URL 也没有 bytes/path 时明确抛 not-sent/media-url-required', async () => {
+  const { adapter } = await boot()
   await assert.rejects(
     () => adapter.send({
       chat: { kind: 'private', id: 'U1' },
-      parts: [{ type: 'image', media: { path: 'C:/tmp/a.png' } }],
+      parts: [{ type: 'image', media: {} }],
       inResponseTo: 'M2',
     }),
     (error) => {
@@ -745,7 +758,6 @@ test('富媒体：没有公网 URL 时明确抛 not-sent/media-url-required（�
       return true
     },
   )
-  assert.equal(client.sent.length, 0)
 })
 
 test('富媒体：文件超过 200MB 上限抛 too-large', async () => {
