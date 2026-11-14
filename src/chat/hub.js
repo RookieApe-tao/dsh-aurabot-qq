@@ -757,17 +757,29 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
   }
 
   /** 启动时把 sessions.json 里遗留的重复/错误平台前缀批量修正（含 DSH 侧栏标题）。 */
+  const titleForMode = (chat, mode) => titleFor(chat) + (mode === 'debug' ? '（调试）' : '')
+
+  /** 启动时把 sessions.json 里遗留的重复/错误平台前缀批量修正（含 DSH 侧栏标题）。 */
   async function migrateLegacyTitles() {
     const mm = map()
     const renames = new Map()
     let changed = false
     for (const [chatId, rec] of Object.entries(mm.chats || {})) {
       const platform = parseChatId(chatId)?.platform || defaultPlatform()
-      const next = cleanLegacyTitle(rec.title, platform)
-      if (!next || next === rec.title) continue
-      rec.title = next
-      changed = true
-      for (const sid of [rec.sessionId, ...Object.values(rec.sessions || {})].filter(Boolean)) renames.set(sid, next)
+      const base = cleanLegacyTitle(rec.title, platform)
+      const wasBad = Boolean(base && base !== rec.title)
+      if (wasBad) {
+        rec.title = base
+        changed = true
+      }
+      if (!base) continue
+      const sessions = rec.sessions && typeof rec.sessions === 'object' ? rec.sessions : {}
+      for (const [mode, sid] of Object.entries(sessions)) {
+        if (sid && (wasBad || mode === 'debug')) renames.set(sid, base + (mode === 'debug' ? '（调试）' : ''))
+      }
+      if (rec.sessionId && !Object.values(sessions).includes(rec.sessionId) && (wasBad || rec.mode === 'debug')) {
+        renames.set(rec.sessionId, base + (rec.mode === 'debug' ? '（调试）' : ''))
+      }
     }
     if (changed) saveMap(mm)
     for (const [sessionId, title] of renames) {
@@ -862,7 +874,7 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
     const preset = presetForChat(chat, level)
     const debug = getConfig().debug
     // 调试会话和正式会话分开，标题也标出来，免得在侧栏里点错
-    const title = titleFor(chat) + (debug ? '（调试）' : '')
+    const title = titleForMode(chat, debug ? 'debug' : 'live')
     const c = controller()
     let r
     try {
@@ -975,19 +987,21 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
     if (sid) {
       const mm = map()
       const rec = mm.chats[chat.chatId] || {}
-      const wantedTitle = titleFor(chat)
+      const baseTitle = titleFor(chat)
+      const wantedTitle = titleForMode(chat, mode)
       // 旧版本把 system 标题重复拼过平台前缀，或把非 QQ 会话标成「QQ · …」；
       // 只迁移这两种明显的旧形状，不动用户自己改过的正常标题。
       const plat = chatPlatform(chat.chatId)
-      const badTitle = rec.title && rec.title !== wantedTitle && (
+      const badTitle = rec.title && rec.title !== baseTitle && (
         /^(?:QQ\s*[·・]\s*){2,}/i.test(rec.title) ||
         (plat !== defaultPlatform() && /^QQ/i.test(rec.title))
       )
-      if (badTitle) {
+      if (badTitle || mode === 'debug') {
         try {
-          await controller().rename({ sessionId: sid, title: wantedTitle })
-          rec.title = wantedTitle
-          log.info(`会话 ${sid.slice(-8)} 的旧平台前缀已修正为 ${wantedTitle}`)
+          const target = mode === 'debug' ? wantedTitle : baseTitle
+          await controller().rename({ sessionId: sid, title: target })
+          if (mode !== 'debug') rec.title = target
+          log.info(`会话 ${sid.slice(-8)} 的旧平台前缀已修正为 ${target}`)
         } catch (error) {
           log.debug(`会话 ${sid.slice(-8)} 改标题失败：${error.message}`)
         }
