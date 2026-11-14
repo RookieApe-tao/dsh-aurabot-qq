@@ -720,6 +720,28 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
     return c
   }
 
+  const escapeRegExp = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  /**
+   * 旧版本给 system 标题重复拼过平台前缀，或者给非 QQ 会话套过 QQ 前缀。
+   * 这里只修这两种坏形状，不动用户自己改过的正常标题。
+   */
+  function cleanLegacyTitle(title, platform) {
+    let text = String(title || '').trim()
+    if (!text) return text
+    const label = platformLabelOf(platform) || platform || '平台'
+    if (platform === defaultPlatform()) {
+      if (!label) return text
+      const re = new RegExp(`^(?:${escapeRegExp(label)}\\s*[·・]\\s*)+`, 'i')
+      return text.replace(re, `${label} · `)
+    }
+    const qqRe = /^(?:QQ\s*[·・]\s*)+/i
+    if (qqRe.test(text)) {
+      text = text.replace(qqRe, '').trim()
+      return `${label} · ${text}`
+    }
+    return text
+  }
+
   function titleFor(chat) {
     const owner = getConfig().ownerName || '主人'
     const plat = chatPlatform(chat.chatId || chat) || defaultPlatform()
@@ -727,11 +749,33 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
     const systemPrefix = `${label} · `
     // 模块自带「QQ · 」前缀时不要再拼一层，否则工作区里会显示成「QQ · QQ · 主动搭话…」
     if (chat.kind === 'system') {
-      const t = String(chat.title || '后台')
+      const t = cleanLegacyTitle(String(chat.title || '后台'), plat)
       return t.startsWith(systemPrefix) ? t : systemPrefix + t
     }
     if (chat.kind === 'group') return `${label} 群 · ${groupNames.get(chat.groupId) || chat.groupId}`
     return isOwnerPrivateChat(ownerRef(), chat) ? `${label} · ${owner}私聊` : `${label} 私聊 · ${chat.nickname || chat.userId}`
+  }
+
+  /** 启动时把 sessions.json 里遗留的重复/错误平台前缀批量修正（含 DSH 侧栏标题）。 */
+  async function migrateLegacyTitles() {
+    const mm = map()
+    const renames = new Map()
+    let changed = false
+    for (const [chatId, rec] of Object.entries(mm.chats || {})) {
+      const platform = parseChatId(chatId)?.platform || defaultPlatform()
+      const next = cleanLegacyTitle(rec.title, platform)
+      if (!next || next === rec.title) continue
+      rec.title = next
+      changed = true
+      for (const sid of [rec.sessionId, ...Object.values(rec.sessions || {})].filter(Boolean)) renames.set(sid, next)
+    }
+    if (changed) saveMap(mm)
+    for (const [sessionId, title] of renames) {
+      try { await controller().rename({ sessionId, title }) } catch (error) {
+        log.debug(`迁移会话 ${String(sessionId).slice(-8)} 标题失败：${error.message}`)
+      }
+    }
+    return { changed, renamed: renames.size }
   }
 
   // 后台会话点名 preset（自驱引擎 P0.2，docs/AUTOTELIC-PLAN.md §3/§4.2）：
@@ -932,13 +976,18 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
       const mm = map()
       const rec = mm.chats[chat.chatId] || {}
       const wantedTitle = titleFor(chat)
-      // 旧版本把非 QQ 会话也标成「QQ · …」；不动用户自己改过的标题，
-      // 只迁移明显的旧前缀，迁移后下次启动也不会反复改名。
-      if (rec.title && rec.title !== wantedTitle && chatPlatform(chat.chatId) !== defaultPlatform() && /^QQ(?:\s|·)/.test(rec.title)) {
+      // 旧版本把 system 标题重复拼过平台前缀，或把非 QQ 会话标成「QQ · …」；
+      // 只迁移这两种明显的旧形状，不动用户自己改过的正常标题。
+      const plat = chatPlatform(chat.chatId)
+      const badTitle = rec.title && rec.title !== wantedTitle && (
+        /^(?:QQ\s*[·・]\s*){2,}/i.test(rec.title) ||
+        (plat !== defaultPlatform() && /^QQ/i.test(rec.title))
+      )
+      if (badTitle) {
         try {
           await controller().rename({ sessionId: sid, title: wantedTitle })
           rec.title = wantedTitle
-          log.info(`会话 ${sid.slice(-8)} 的标题从旧 QQ 前缀改为 ${wantedTitle}`)
+          log.info(`会话 ${sid.slice(-8)} 的旧平台前缀已修正为 ${wantedTitle}`)
         } catch (error) {
           log.debug(`会话 ${sid.slice(-8)} 改标题失败：${error.message}`)
         }
@@ -4390,6 +4439,7 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
     chatLogDays,
     deleteChatLog,
     sessions: () => map().chats,
+    migrateLegacyTitles,
     groupName,
     stats: () => ({ ...stats }),
     get lastChatAt() { return lastChatAt },

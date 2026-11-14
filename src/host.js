@@ -610,6 +610,9 @@ export function apply(ctx) {
     },
   })
 
+  // 启动时修正旧版本留下的重复平台前缀（QQ · QQ · …），失败不影响主流程。
+  Promise.resolve().then(() => hub.migrateLegacyTitles()).catch((error) => logger.child('chat').debug?.('迁移会话标题失败：', error?.message || error))
+
   // 网关建好之后再接线（惰性创建，见上面 ensureGateway 的说明）
   gatewayReady = (gw) => {
     const offMsg = gw.onMessage((m) => {
