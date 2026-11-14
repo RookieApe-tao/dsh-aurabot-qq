@@ -868,3 +868,8 @@ test('默认事件订阅方式是 WebSocket', () => {
   assert.equal(spec.default, 'websocket')
   assert.deepEqual(spec.options, ['websocket', 'webhook'])
 })
+
+test('每个 qqbot 配置项都有面板说明（hint）', () => {
+  const adapter = createQqbotAdapter({ client: makeFakeClient() })
+  for (const item of adapter.settings) assert.ok(item.hint && item.hint.length > 8, `${item.key} 缺说明`)
+})

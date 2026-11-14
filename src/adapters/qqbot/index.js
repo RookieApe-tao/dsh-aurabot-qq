@@ -852,16 +852,16 @@ export function createQqbotAdapter(options = {}) {
     caps,
 
     settings: [
-      { key: 'appId', label: 'AppID', type: 'text', default: '', description: 'QQ 开放平台 → 机器人管理端 → 开发设置' },
-      { key: 'clientSecret', label: 'AppSecret', type: 'password', default: '', description: '与 AppID 配对；只用来换 access_token，不要外泄' },
-      { key: 'botSecret', label: '回调 Bot Secret（验签用）', type: 'password', default: '', description: 'Webhook 模式的 Ed25519 验签密钥，一般与 AppSecret 相同' },
-      { key: 'transport', label: '事件订阅方式', type: 'select', options: ['websocket', 'webhook'], default: 'websocket', description: 'websocket 直接连官方网关，不需要公网回调；webhook 需要公网 HTTPS 地址' },
-      { key: 'proactive', label: '主动消息', type: 'select', options: ['limited', 'none'], default: 'limited', description: 'none = 只做被动回复（平台主动能力已收敛，建议 none）' },
-      { key: 'listenAllInGroup', label: '接收群内全部消息', type: 'boolean', default: false, description: '需要群主在手机 QQ 里给机器人打开「接收所有消息」，否则只能收到 @ 她的' },
-      { key: 'proactivePerDay', label: '主动消息每日上限（每聊天）', type: 'number', default: 4, description: '平台口径多变且已收敛，平台端自己按这个数记账' },
-      { key: 'replyAs', label: '被动回复凭证', type: 'select', options: ['msg_id', 'event_id'], default: 'msg_id', description: '回复用户消息用 msg_id；回复事件（如入群）用 event_id' },
-      { key: 'selfOpenid', label: '机器人自身 openid', type: 'text', default: '', description: '可选。用于全量模式判断「是不是 @ 了她」' },
-      { key: 'timeoutMs', label: '请求超时（毫秒）', type: 'number', default: DEFAULT_TIMEOUT_MS, description: '官方建议发消息接口不低于 5 秒' },
+      { key: 'appId', label: 'AppID', type: 'text', default: '', hint: 'QQ 开放平台 → 机器人管理端 → 开发设置 → AppID。就是机器人自己的数字账号，不是 QQ 号' },
+      { key: 'clientSecret', label: 'AppSecret', type: 'password', default: '', hint: '与 AppID 配对，只用来换 access_token。别发到群里，也别填成 Bot Secret' },
+      { key: 'botSecret', label: '回调 Bot Secret（验签用）', type: 'password', default: '', hint: '仅 Webhook 模式需要：开放平台 → 开发设置 → 回调配置里的 Bot Secret，用于 Ed25519 验签；WebSocket 模式可以留空' },
+      { key: 'transport', label: '事件订阅方式', type: 'select', options: ['websocket', 'webhook'], default: 'websocket', hint: 'WebSocket 直接连官方网关，不需要公网地址；Webhook 需要公网 HTTPS 回调，地址是 /platform/<实例>/callback' },
+      { key: 'proactive', label: '主动消息', type: 'select', options: ['limited', 'none'], default: 'limited', hint: 'limited = 被动回复之外允许主动消息，按下面每日额度记账；none = 只做被动回复（平台主动能力已收紧，推荐 none）' },
+      { key: 'listenAllInGroup', label: '接收群内全部消息', type: 'boolean', default: false, hint: '默认只收 @ 机器人的群消息。打开后能收群内全部消息，但需要群主在手机 QQ 机器人资料页打开「接收所有消息」' },
+      { key: 'proactivePerDay', label: '主动消息每日上限（每聊天）', type: 'number', default: 4, hint: '每个聊天每天最多发几条主动消息。平台口径会变，这里先自己卡住，避免被平台限流' },
+      { key: 'replyAs', label: '被动回复凭证', type: 'select', options: ['msg_id', 'event_id'], default: 'msg_id', hint: '回复普通用户消息用 msg_id；回复入群等事件用 event_id（需要平台事件支持）' },
+      { key: 'selfOpenid', label: '机器人自身 openid', type: 'text', default: '', hint: '可选。全量群消息模式用来判断「是不是 @ 了她」；留空会尝试从接口取' },
+      { key: 'timeoutMs', label: '请求超时（毫秒）', type: 'number', default: DEFAULT_TIMEOUT_MS, hint: '调 QQ 接口的超时。官方建议发消息接口不低于 5000ms' },
     ],
 
     /** 启动：读配置 → 取 token → 核对自己是谁 → 挂回调 / 注入事件源 → connected */
