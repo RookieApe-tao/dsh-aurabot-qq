@@ -2711,6 +2711,26 @@ export function apply(ctx) {
     try { await platformGateway?.sync?.() } catch (error) { log.warn('切换平台后同步失败：', error.message) }
     return { ...platformView(), message: enabled ? '平台已启用' : '平台已停用' }
   })
+  route('/platforms/remove', async (req) => {
+    const b = await readBody(req)
+    const instance = String(b.instance || '').trim()
+    const current = getConfig().platforms || {}
+    if (!instance || !current[instance]) return { ok: false, message: '没有这个平台实例' }
+    const view = await platformView()
+    const inst = (view.instances || []).find((x) => x.instance === instance)
+    if (!inst) return { ok: false, message: '没有这个平台实例' }
+    if (inst.legacy) return { ok: false, message: '旧版直连平台不能从这里移除' }
+    if (inst.enabled) return { ok: false, message: '先停用这个平台，再移除' }
+    if (inst.state === 'connected' || inst.state === 'connecting') {
+      return { ok: false, message: '平台仍然连接中，先停用并等待断开后再移除' }
+    }
+    const next = getConfig()
+    if (!next.platforms || typeof next.platforms !== 'object') return { ok: false, message: '平台配置不存在' }
+    delete next.platforms[instance]
+    setConfig(next)
+    try { await platformGateway?.sync?.() } catch (error) { log.warn('移除平台后同步失败：', error.message) }
+    return { ...(await platformView()), ok: true, message: '平台已移除' }
+  })
   route('/platforms/settings', async (req) => {
     const b = await readBody(req)
     const instance = String(b.instance || '').trim()

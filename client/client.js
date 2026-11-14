@@ -1600,6 +1600,19 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
           reload()
         } finally { setBusy('') }
       }
+      const remove = async (inst) => {
+        const locked = inst.enabled || inst.state === 'connected' || inst.state === 'connecting'
+        if (locked) return toast('先停用这个平台，等连接断开后再移除', 'err')
+        const label = platformLabel(inst.platform) + (inst.name && inst.name !== inst.platform ? ' · ' + inst.name : '')
+        if (!window.confirm(`确定移除平台「${label}」？\n\n这会删除它的配置和凭证，不会删除聊天记录和记忆。`)) return
+        setBusy(inst.instance)
+        try {
+          const r = await post('/platforms/remove', { instance: inst.instance })
+          toast(r.message || (r.ok ? '平台已移除' : '没成功'), r.ok === false ? 'err' : 'ok')
+          if (r.instances) setData(r)
+          reload()
+        } finally { setBusy('') }
+      }
       const field = (inst, s) => {
         const p = 'platforms.' + inst.instance + '.' + s.key
         if (s.type === 'switch') return f.sw(p)
@@ -1713,7 +1726,15 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
             h('div', { className: 'ab-flex', style: { marginTop: 8 } }, h(Btn, { small: true, kind: 'primary', disabled: busy === inst.instance, onClick: () => save(inst) }, '保存平台设置')),
           ) : h('div', { className: 'ab-small ab-muted' }, '这个平台端没有可填的设置。'),
           h('div', { className: 'ab-small ab-muted', style: { marginTop: 8 } }, '能力：' + (inst.legacy ? '旧版直连（由 QQ 网关页管理）' : capsText(inst.caps))),
-          h('div', { className: 'ab-flex', style: { marginTop: 8 } }, inst.platform === 'qq' && go ? h(Btn, { small: true, onClick: () => go('connect') }, '打开 QQ 详细设置') : null),
+          h('div', { className: 'ab-flex', style: { marginTop: 8, flexWrap: 'wrap', gap: 8 } },
+            inst.platform === 'qq' && go ? h(Btn, { small: true, onClick: () => go('connect') }, '打开 QQ 详细设置') : null,
+            !inst.legacy ? h(Btn, {
+              small: true,
+              kind: 'danger',
+              disabled: busy === inst.instance || inst.enabled || inst.state === 'connected' || inst.state === 'connecting',
+              title: inst.enabled || inst.state === 'connected' || inst.state === 'connecting' ? '先停用这个平台并等待连接断开，才能移除' : '移除这个平台实例',
+              onClick: () => remove(inst),
+            }, '移除平台') : null),
         )) : h(Card, { title: '还没有平台' }, h(Empty, { icon: '📡', text: '在「QQ 网关」里先接上一个平台；接好后这里会出现卡片。' })),
         h(Card, { title: '人', desc: '每个人可以挂多个平台账号。合并前先预览；解绑只解除这个平台账号，不删记忆。' },
           people.length ? people.map((p) => h('div', { key: p.person, style: { padding: '8px 0', borderBottom: '1px solid var(--ab-line)' } },
