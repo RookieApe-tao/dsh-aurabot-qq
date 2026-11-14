@@ -1399,6 +1399,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       const [drafts, setDrafts] = useState({})
       const [feedback, setFeedback] = useState({})
       const [acting, setActing] = useState('')
+      const [tunnelBusy, setTunnelBusy] = useState(false)
       const load = (manual = false) => {
         if (manual) setBusy(true)
         return get(manual ? '/tools/refresh' : '/tools').then((r) => setData(r)).catch((error) => {
@@ -1463,9 +1464,42 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         } finally { setActing('') }
       }
       const jobs = (data && data.jobs) || {}
+      const tunnel = (data && data.tunnel) || {}
+      const startTunnel = async () => {
+        setTunnelBusy(true)
+        try {
+          const r = await post('/tunnel/start', {})
+          if (r.ok) {
+            setData((prev) => ({ ...(prev || {}), tunnel: r }))
+            toast('Quick Tunnel 已启动', 'ok')
+          } else toast(r.message || 'Quick Tunnel 启动失败', 'err')
+        } finally { setTunnelBusy(false) }
+      }
+      const stopTunnel = async () => {
+        setTunnelBusy(true)
+        try {
+          const r = await post('/tunnel/stop', {})
+          if (r.ok) setData((prev) => ({ ...(prev || {}), tunnel: r }))
+          toast(r.ok ? 'Quick Tunnel 已停止' : (r.message || '停止失败'), r.ok ? 'ok' : 'err')
+        } finally { setTunnelBusy(false) }
+      }
+      const copyTunnel = async () => {
+        if (!tunnel.callback) return
+        try { await navigator.clipboard.writeText(tunnel.callback); toast('回调地址已复制', 'ok') } catch (error) { toast('复制失败，请手动复制', 'err') }
+      }
       return h('div', { className: 'ab-grid' },
         h(Card, { title: '外置工具', desc: '工具被多个功能共用。手动路径会先测试，通过后才保存；FFmpeg/Python/uv 可以后台下载或一键修复。', right: h(Btn, { small: true, disabled: busy, onClick: () => load(true) }, busy ? '检测中…' : '重新检测') },
           h('div', { className: 'ab-small ab-muted' }, '可以填 exe 完整路径，也可以填安装目录。工具缺失时对应功能会给出明确提示；不影响其他功能。')),
+        h(Card, { title: 'Cloudflare Quick Tunnel', desc: '给 QQ 官方机器人 Webhook 临时生成公网 HTTPS 地址。关闭窗口或停止后地址失效；只建议测试时使用。', right: h('span', { className: cx('ab-badge', tunnel.status === 'running' ? 'ok' : tunnel.status === 'error' ? 'err' : 'warn') }, tunnel.status === 'running' ? '运行中' : tunnel.status === 'starting' ? '启动中' : tunnel.status === 'error' ? '失败' : '未启动') },
+          h('div', { className: 'ab-flex', style: { gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
+            h(Btn, { small: true, kind: 'primary', disabled: tunnelBusy || tunnel.status === 'running', onClick: startTunnel }, tunnelBusy ? '处理中…' : '启动 Quick Tunnel'),
+            h(Btn, { small: true, kind: 'ghost', disabled: tunnelBusy || tunnel.status !== 'running', onClick: stopTunnel }, '停止'),
+            tunnel.callback ? h(Btn, { small: true, onClick: copyTunnel }, '复制回调地址') : null),
+          tunnel.callback ? h('div', { className: 'ab-small', style: { marginTop: 8, wordBreak: 'break-all' } }, h('code', null, tunnel.callback)) : null,
+          tunnel.callback ? h('div', { className: 'ab-small ab-muted', style: { marginTop: 4 } }, '把它填到 QQ 开放平台「开发设置 → 回调配置」。') : null,
+          tunnel.status === 'error' && tunnel.error ? h('div', { className: 'ab-small', style: { marginTop: 6, color: 'var(--ab-err)' } }, tunnel.error) : null,
+          h('div', { className: 'ab-small ab-muted', style: { marginTop: 6 } }, 'Quick Tunnel 会临时暴露整个 DSH 面板，测试完请停止。'),
+        ),
         tools.map((tool) => {
           const editable = tool.id !== 'edge-tts'
           const act = (kind) => acting === `${kind}:${tool.id}`

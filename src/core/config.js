@@ -198,6 +198,7 @@ export const DEFAULTS = {
     python: { path: '' },
     uv: { path: '' },
     git: { path: '' },
+    cloudflared: { path: '' },
   },
   bili: {
     enabled: false,
@@ -718,7 +719,7 @@ export function normalize(raw) {  const c = deepMerge(DEFAULTS, raw)
   for (const k of ['tts', 'image', 'song', 'asr', 'video']) c.local[k] = bool(c.local[k], false)
   c.local.videoTimeoutMin = num(c.local.videoTimeoutMin, 20, 1, BIG)
   if (!isObj(c.tools)) c.tools = {}
-  for (const id of ['ffmpeg', 'ffprobe', 'python', 'uv', 'git']) {
+  for (const id of ['ffmpeg', 'ffprobe', 'python', 'uv', 'git', 'cloudflared']) {
     if (!isObj(c.tools[id])) c.tools[id] = {}
     c.tools[id].path = String(c.tools[id].path || '').trim()
   }

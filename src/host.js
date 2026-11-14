@@ -64,6 +64,7 @@ import { createBridgeAdapter } from './adapters/bridge/index.js'
 import { ensureUpgradedStorage } from './features/import-qq.js'
 import { clearToolsCache, listTools, probeTool } from './core/tools.js'
 import { runToolInstall, toolJobs } from './core/tools-managed.js'
+import { startQuickTunnel, stopQuickTunnel, tunnelState } from './core/quick-tunnel.js'
 import { createHandover } from './features/handover.js'
 import { mergePerson } from './features/merge-person.js'
 import { importFromQQ } from './features/import-qq.js'
@@ -384,9 +385,28 @@ export function apply(ctx) {
         dataDir: (...p) => dataDir('gateway', ...p),
         isExternalInstance: (inst) => inst === defaultPlatform && legacyQqActive(),
         http: { route: (path, handler) => {
-          const off = route(path, async (req, res) => {
-            try { await handler(req, res) } catch (error) { logger.child('gateway').warn(`平台回调 ${path} 出错：`, error?.message || error) }
-          })
+          // 平台回调必须挂在 /platform/<实例>/callback，不能套 /aurabot/api 前缀，
+          // 也不能走面板的 Host/CSRF 鉴权；平台端自己用签名验来源。
+          const off = ctx.effect(() => ctx.webServer.register({
+            kind: 'exact',
+            path: String(path),
+            handler: async (req, res) => {
+              try {
+                if (req.rawBody == null && req.method !== 'GET' && req.method !== 'HEAD') {
+                  try { req.rawBody = await readRaw(req, 10 * 1024 * 1024) } catch (error) {
+                    logger.child('gateway').warn(`平台回调 ${path} 读原始 body 失败：`, error?.message || error)
+                  }
+                }
+                await handler(req, res)
+              } catch (error) {
+                logger.child('gateway').warn(`平台回调 ${path} 出错：`, error?.message || error)
+                try {
+                  if (!res.headersSent) res.statusCode = 500
+                  if (!res.writableEnded) res.end('callback error')
+                } catch (writeError) {}
+              }
+            },
+          }))
           return off || (() => {})
         } },
         identity,
@@ -2571,11 +2591,18 @@ export function apply(ctx) {
     }
   }
   route('/platforms', async () => platformView())
-  const toolsView = async () => ({ ...(await listTools(getConfig)), jobs: toolJobs() })
+  const toolsView = async () => ({ ...(await listTools(getConfig)), jobs: toolJobs(), tunnel: tunnelState() })
   // 外置工具页：检测、手动路径；FFmpeg/Python/uv 支持后台安装/修复。
   route('/tools', async () => toolsView())
-  route('/tools/refresh', async () => ({ ...(await listTools(getConfig, { fresh: true })), jobs: toolJobs() }))
-  const toolIds = new Set(['ffmpeg', 'ffprobe', 'python', 'uv', 'git'])
+  route('/tools/refresh', async () => ({ ...(await listTools(getConfig, { fresh: true })), jobs: toolJobs(), tunnel: tunnelState() }))
+  route('/tunnel/start', async () => {
+    const all = await listTools(getConfig, { fresh: true })
+    const exe = all.tools.find((t) => t.id === 'cloudflared')?.path || ''
+    return startQuickTunnel({ port: webPortOf(), exe })
+  })
+  route('/tunnel/stop', async () => stopQuickTunnel())
+  route('/tunnel/status', async () => ({ ok: true, ...tunnelState() }))
+  const toolIds = new Set(['ffmpeg', 'ffprobe', 'python', 'uv', 'git', 'cloudflared'])
   route('/tools/install', async (req) => {
     const body = await readBody(req)
     const id = String(body.id || '').trim()

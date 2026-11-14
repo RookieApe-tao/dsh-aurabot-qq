@@ -77,6 +77,7 @@ const PROBE_ARGS = {
   python: ['--version'],
   uv: ['--version'],
   git: ['--version'],
+  cloudflared: ['--version'],
 }
 
 function pythonCandidates() {
@@ -108,6 +109,9 @@ function autoExecutable(id) {
     return [process.env.AURABOT_UV, join(homedir(), 'Aurabot', 'bin', exe('uv')), join('C:\\Aurabot', 'bin', exe('uv')), onPath('uv')].filter(Boolean).find((p) => existsSync(p)) || ''
   }
   if (id === 'python') return pythonCandidates().find((p) => existsSync(p)) || ''
+  if (id === 'cloudflared') {
+    return [join(homedir(), 'Aurabot', 'bin', exe('cloudflared')), onPath('cloudflared')].filter(Boolean).find((p) => existsSync(p)) || ''
+  }
   return ''
 }
 
@@ -224,6 +228,16 @@ export async function listTools(getConfig, { fresh = false } = {}) {
     gitManual ? 'config' : 'auto',
     ['备份推送'],
     Boolean(gitManual),
+  ))
+
+  // Cloudflare Quick Tunnel：QQ 官方机器人 Webhook 回调
+  const cloudflaredManual = configuredPath(cfg, 'cloudflared')
+  const cloudflared = cloudflaredManual || autoExecutable('cloudflared')
+  tools.push(await describe(
+    'cloudflared', 'Cloudflare Tunnel', 'network', cloudflared,
+    cloudflaredManual ? 'config' : 'auto',
+    ['QQ 官方机器人 Webhook 回调'],
+    Boolean(cloudflaredManual),
   ))
 
   const edgeReady = edgeInstalled(python)
