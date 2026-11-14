@@ -869,7 +869,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
     // ---------------- 标签页 ----------------
     const TABS = [
       { id: 'overview', label: '概览' },
-      { id: 'platforms', label: '平台' },
+      { id: 'platforms', label: '通讯平台' },
       { id: 'tools', label: '外置工具' },
       { id: 'connect', label: '连接' },
       { id: 'character', label: '人格' },
@@ -1693,7 +1693,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         } finally { setImportBusy(false) }
       }
       return h('div', { className: 'ab-grid' },
-        h(Card, { title: '平台', desc: '这里列出所有已注册的平台实例。开关即时生效；填错凭证时看卡片上的状态和原因，密钥不会回显。' },
+        h(Card, { title: '通讯平台', desc: '这里列出所有已注册的平台实例。开关即时生效；填错凭证时看卡片上的状态和原因，密钥不会回显。' },
           !owner ? h('div', { className: 'ab-note warn', style: { marginBottom: 10 } }, '还没有主人。先连上一个平台，用那个账号给她发一句话，再点下面的「确认这是我」。') : null,
           h('div', { className: 'ab-small ab-muted' }, owner ? '当前主人：' + owner : '当前主人：未设置')),
         available.length ? h(Card, { title: '添加平台', desc: '还没有配置的平台可以在这里加。添加后再填 App ID / Secret 等凭证。' },
