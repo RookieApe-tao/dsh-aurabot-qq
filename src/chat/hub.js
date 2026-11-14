@@ -774,7 +774,10 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
   async function migrateLegacyTitles() {
     const mm = map()
     const renames = new Map()
-    let changed = false
+    // v1 一次性处理旧调试会话：它们可能在 DSH 里被归档，标题不会随普通会话一起迁移。
+    const forceDebug = mm.titleMigration !== 1
+    let changed = forceDebug
+    if (forceDebug) mm.titleMigration = 1
     for (const [chatId, rec] of Object.entries(mm.chats || {})) {
       const platform = parseChatId(chatId)?.platform || defaultPlatform()
       const base = cleanLegacyTitle(rec.title, platform)
@@ -786,9 +789,9 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
       if (!base) continue
       const sessions = rec.sessions && typeof rec.sessions === 'object' ? rec.sessions : {}
       for (const [mode, sid] of Object.entries(sessions)) {
-        if (sid && (wasBad || mode === 'debug')) renames.set(sid, base + (mode === 'debug' ? '（调试）' : ''))
+        if (sid && (wasBad || (mode === 'debug' && forceDebug))) renames.set(sid, base + (mode === 'debug' ? '（调试）' : ''))
       }
-      if (rec.sessionId && !Object.values(sessions).includes(rec.sessionId) && (wasBad || rec.mode === 'debug')) {
+      if (rec.sessionId && !Object.values(sessions).includes(rec.sessionId) && (wasBad || (rec.mode === 'debug' && forceDebug))) {
         renames.set(rec.sessionId, base + (rec.mode === 'debug' ? '（调试）' : ''))
       }
     }
