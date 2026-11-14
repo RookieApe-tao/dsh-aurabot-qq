@@ -295,8 +295,10 @@
    其次读 `req.body`（字符串），最后才对对象做 `JSON.stringify`（这条路径不可靠）。
    **接入时要确保 HTTP 层把原始 body 放到 `req.rawBody`。**
 
-**WebSocket 路线**（可选）：需要宿主注入 `connectEvents`（本包不引 ws 依赖），
-并在配置里写 `transport: 'websocket'`。
+**WebSocket 路线**：配置 `transport: 'websocket'` 即可，不需要公网回调。
+本端用 Node 22+ 内置 WebSocket：`GET /gateway` 拿地址 → `op=10 Hello` → `op=2 Identify`
+（默认 `GROUP_AND_C2C_EVENT` intents）→ 心跳 `op=1` / ACK `op=11`，断线指数退避重连。
+宿主仍可注入 `connectEvents` 替换默认事件源。
 
 ### 第 3 步：开群能力
 

@@ -57,6 +57,8 @@ function makeFakeClient(options = {}) {
       }
       // 4) 机器人自身信息
       if (path === '/users/@me') return { status: 200, data: { id: 'BOT-OPENID', username: '大齿轮鱼' } }
+      // 4.5) WebSocket 网关地址
+      if (path === '/gateway') return { status: 200, data: { url: 'wss://fake-gateway.example/websocket' } }
       // 5) 发消息
       if (path.endsWith('/messages')) {
         client.sent.push({ path, body: req.body })
@@ -817,3 +819,33 @@ function payloadSignature(keys, timestamp, body) {
   // 官方 DEMO 的 sig 是 ed25519.Sign(privateKey, timestamp+body) 的 hex
   return ed25519Sign(null, msg, keys.privateKey).toString('hex')
 }
+
+class FakeWebSocket {
+  static instances = []
+  constructor(url) {
+    this.url = url
+    this.readyState = 1
+    this.sent = []
+    FakeWebSocket.instances.push(this)
+  }
+  send(value) { this.sent.push(JSON.parse(String(value))) }
+  close() { this.readyState = 3; this.onclose?.({}) }
+}
+
+test('WebSocket transport：拿 gateway、Identify、心跳和 op=0 事件', async () => {
+  FakeWebSocket.instances = []
+  const client = makeFakeClient()
+  const adapter = createQqbotAdapter({ client, WebSocketImpl: FakeWebSocket })
+  const ctx = makeCtx(adapter, { ...BASE_CONFIG, transport: 'websocket' })
+  await adapter.start(ctx)
+  const ws = FakeWebSocket.instances.at(-1)
+  assert.equal(ws.url, 'wss://fake-gateway.example/websocket')
+  ws.onmessage({ data: JSON.stringify({ op: 10, s: 1, d: { heartbeat_interval: 60000 } }) })
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  const identify = ws.sent.find((x) => x.op === 2)
+  assert.equal(identify.d.token, 'QQBot token-1')
+  assert.equal(identify.d.intents, 1 << 25)
+  ws.onmessage({ data: JSON.stringify({ op: 0, s: 2, t: 'C2C_MESSAGE_CREATE', d: C2C_EVENT }) })
+  assert.equal(ctx.emitted.length, 1)
+  await adapter.stop()
+})

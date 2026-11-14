@@ -18,8 +18,8 @@
 // 设计约束（任务书）：不加 npm 依赖。因此
 //   - HTTP 用内置 fetch（Node >= 22）；
 //   - Ed25519 用 node:crypto；
-//   - WebSocket 事件订阅内置实现需要 ws 客户端，本包不引依赖，改为「宿主注入事件源」
-//     （见 start() 里的 transport='websocket' 分支），默认走 Webhook。
+//   - WebSocket 用 Node 22+ 内置 WebSocket（GET /gateway → op=10 → op=2 Identify → 心跳），
+//     不需要公网回调；宿主仍可注入 connectEvents 替换默认实现。
 //
 // ── 测试注入点 ──
 // createQqbotAdapter({ client, now })：client 是可注入的假客户端，形状见 createHttpClient。
@@ -46,6 +46,11 @@ export const TOKEN_REFRESH_AHEAD_MS = 60 * 1000
  * 因此取**较严**的群聊值，宁可早一点把超窗回复判成主动消息。
  */
 export const REPLY_WINDOW_MS = 5 * 60 * 1000
+
+/** WebSocket 事件订阅：群聊 + 单聊（官方 intents 位图 GROUP_AND_C2C_EVENT = 1<<25） */
+export const WS_INTENTS_GROUP_AND_C2C = 1 << 25
+/** 获取 WebSocket 网关地址 */
+export const PATH_GATEWAY = '/gateway'
 
 /**
  * 一条入站消息最多能回几条。
@@ -289,7 +294,8 @@ function eventToParts(d, { selfOpenid } = {}) {
  *   name          显示名
  *   client        注入的 HTTP 客户端（测试用假客户端）；缺省 createHttpClient()
  *   now           时钟（测试注入以验证 token 过期刷新）
- *   connectEvents 可选：(onEvent) => stopFn，宿主注入的 WebSocket 事件源（transport='websocket' 时必需）
+ *   connectEvents 可选：(onEvent) => stopFn，宿主注入的 WebSocket 事件源（transport='websocket' 时优先使用）
+ *   WebSocketImpl 可选：WebSocket 构造器（测试注入；缺省用运行时 globalThis.WebSocket）
  */
 export function createQqbotAdapter(options = {}) {
   const id = options.id || 'qqbot'
@@ -297,6 +303,7 @@ export function createQqbotAdapter(options = {}) {
   const now = typeof options.now === 'function' ? options.now : Date.now
   const client = options.client || createHttpClient()
   const connectEvents = typeof options.connectEvents === 'function' ? options.connectEvents : null
+  const WebSocketImpl = options.WebSocketImpl || globalThis.WebSocket
   // 适配实例自带一份默认配置（config(). 里没有的键用它兜底）。网关正常运行时配置来自
   // ctx.config()；这份兜底一是给通用契约测试包（它的 ctx.config() 返回 {}）用，
   // 二是给「面板还没填、先用环境里已有的值」这种场景用。
@@ -391,6 +398,111 @@ export function createQqbotAdapter(options = {}) {
       return authedRequest({ path, method, body, query, timeoutMs, retried: true })
     }
     return res
+  }
+
+  // ───── WebSocket 事件源（transport='websocket'） ─────
+  /**
+   * 官方 Bot Gateway：GET /gateway 拿 wss 地址 → op=10 Hello → op=2 Identify
+   * → op=1 心跳 / op=11 ACK → op=0 事件。断线后指数退避重连。
+   */
+  async function gatewayEvents(onEvent) {
+    if (typeof WebSocketImpl !== 'function') throw new Error('qqbot：当前运行时没有 WebSocket，无法使用 transport=websocket')
+    let stopped = false
+    let socket = null
+    let heartbeat = null
+    let retryTimer = null
+    let retry = 0
+    let seq = 0
+
+    const clearHeartbeat = () => { if (heartbeat) { clearInterval(heartbeat); heartbeat = null } }
+    const send = (payload) => {
+      try {
+        if (socket && socket.readyState === 1) socket.send(JSON.stringify(payload))
+      } catch (error) { /* socket 关闭时发送失败，由 onclose 重连 */ }
+    }
+    const close = () => {
+      clearHeartbeat()
+      if (retryTimer) { clearTimeout(retryTimer); retryTimer = null }
+      try { socket?.close() } catch (error) {}
+      socket = null
+    }
+    const scheduleReconnect = (reason) => {
+      if (stopped || retryTimer) return
+      const delay = Math.min(30000, 1000 * 2 ** Math.min(retry++, 5))
+      logWs('warn', `WebSocket 断开（${reason || 'unknown'}），${delay}ms 后重连`)
+      retryTimer = setTimeout(() => {
+        retryTimer = null
+        connectOnce().catch((error) => {
+          logWs('warn', `WebSocket 重连失败：${error.message}`)
+          scheduleReconnect(error.message)
+        })
+      }, delay)
+      retryTimer.unref?.()
+    }
+    const logWs = (level, message) => {
+      try {
+        const logger = ctx?.log
+        if (typeof logger === 'function') logger(level, message)
+        else logger?.[level]?.(message)
+      } catch (error) {}
+    }
+    const connectOnce = async () => {
+      if (stopped || !running) return
+      const res = await authedRequest({ path: PATH_GATEWAY, method: 'GET', timeoutMs: Math.max(1, Number(cfgOf().timeoutMs) || DEFAULT_TIMEOUT_MS) })
+      const data = res?.data || res?.json?.data || {}
+      const url = String(data.url || data.gateway || res?.url || res?.json?.url || '').trim()
+      if (!/^wss?:\/\//i.test(url)) throw new Error(`QQ 网关没有返回 wss 地址（HTTP ${res?.status ?? '?'}）`)
+      const ws = new WebSocketImpl(url)
+      socket = ws
+      ws.onmessage = (event) => {
+        let payload
+        try { payload = JSON.parse(String(event?.data ?? '')) } catch (error) { return }
+        const op = Number(payload?.op)
+        if (Number.isFinite(Number(payload?.s))) seq = Number(payload.s)
+        if (op === 10) {
+          const interval = Math.max(1000, Number(payload?.d?.heartbeat_interval) || 30000)
+          clearHeartbeat()
+          heartbeat = setInterval(() => send({ op: 1, d: seq || null }), interval)
+          heartbeat.unref?.()
+          const intents = Number(cfgOf().intents) || WS_INTENTS_GROUP_AND_C2C
+          authedToken().then((access) => {
+            if (stopped || socket !== ws) return
+            send({
+              op: 2,
+              d: {
+                token: `QQBot ${access}`,
+                intents,
+                shard: [0, 1],
+                properties: { os: process.platform, browser: 'aurabot', device: 'aurabot' },
+              },
+            })
+            retry = 0
+          }).catch((error) => {
+            logWs('warn', `WebSocket Identify 失败：${error.message}`)
+            try { ws.close() } catch (closeError) {}
+          })
+        } else if (op === 0) {
+          onEvent(payload)
+        } else if (op === 7) {
+          try { ws.close() } catch (error) {}
+        } else if (op === 9) {
+          seq = 0
+          try { ws.close() } catch (error) {}
+        }
+      }
+      ws.onerror = () => scheduleReconnect('error')
+      ws.onclose = () => {
+        socket = null
+        clearHeartbeat()
+        scheduleReconnect('closed')
+      }
+    }
+    const authedToken = async () => ensureToken()
+    await connectOnce()
+    return () => {
+      stopped = true
+      close()
+    }
   }
 
   // ───── 出站：parts → 平台消息 ─────
@@ -723,7 +835,7 @@ export function createQqbotAdapter(options = {}) {
       { key: 'appId', label: 'AppID', type: 'text', default: '', description: 'QQ 开放平台 → 机器人管理端 → 开发设置' },
       { key: 'clientSecret', label: 'AppSecret', type: 'password', default: '', description: '与 AppID 配对；只用来换 access_token，不要外泄' },
       { key: 'botSecret', label: '回调 Bot Secret（验签用）', type: 'password', default: '', description: 'Webhook 模式的 Ed25519 验签密钥，一般与 AppSecret 相同' },
-      { key: 'transport', label: '事件订阅方式', type: 'select', options: ['webhook', 'websocket'], default: 'webhook', description: 'webhook 需要公网 HTTPS 地址；websocket 需要宿主注入事件源' },
+      { key: 'transport', label: '事件订阅方式', type: 'select', options: ['webhook', 'websocket'], default: 'webhook', description: 'webhook 需要公网 HTTPS 地址；websocket 直接连官方网关，不需要公网回调' },
       { key: 'proactive', label: '主动消息', type: 'select', options: ['limited', 'none'], default: 'limited', description: 'none = 只做被动回复（平台主动能力已收敛，建议 none）' },
       { key: 'listenAllInGroup', label: '接收群内全部消息', type: 'boolean', default: false, description: '需要群主在手机 QQ 里给机器人打开「接收所有消息」，否则只能收到 @ 她的' },
       { key: 'proactivePerDay', label: '主动消息每日上限（每聊天）', type: 'number', default: 4, description: '平台口径多变且已收敛，平台端自己按这个数记账' },
@@ -764,12 +876,13 @@ export function createQqbotAdapter(options = {}) {
         const off = ctx.route('/callback', webhookHandler)
         offs.push(off)
       } else {
-        if (!connectEvents) {
+        const connector = connectEvents || ((onEvent) => gatewayEvents(onEvent))
+        if (!connector) {
           running = false
-          ctx.state('disconnected', 'transport=websocket 需要宿主注入事件源')
-          throw new Error('qqbot：transport=websocket 需要注入 connectEvents（本包不加依赖，未内置 WebSocket 客户端）')
+          ctx.state('disconnected', 'transport=websocket 需要 WebSocket 客户端')
+          throw new Error('qqbot：transport=websocket 需要 WebSocket 客户端')
         }
-        const stop = connectEvents((payload) => {
+        const stop = await connector((payload) => {
           if (!running) return
           if (Number(payload?.op) === 0) handleDispatch(payload.t, payload.d, payload)
           else if (Number(payload?.op) === 12) { /* READY / ACK，忽略 */ }
