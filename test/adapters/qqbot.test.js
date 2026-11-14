@@ -294,7 +294,7 @@ test('接口返回 401 时强制换 token 并重试一次（token 过期是最�
 test('token 接口失败时按响应体 code 判定（HTTP 仍是 200）', async () => {
   const client = makeFakeClient({ tokenFail: true })
   const adapter = createQqbotAdapter({ client })
-  const ctx = makeCtx(adapter, BASE_CONFIG)
+  const ctx = makeCtx(adapter, { ...BASE_CONFIG, transport: 'webhook' })
   // start 里的 /users/@me 会失败但不算致命
   await adapter.start(ctx)
   await assert.rejects(
@@ -644,7 +644,7 @@ test('验签：Ed25519 密钥派生与官方文档 DEMO 的公钥逐字节一致
 })
 
 test('验签：回调验证（op=13）返回 plain_token + 合法 signature，且不 emit', async () => {
-  const { adapter, ctx } = await boot()
+  const { adapter, ctx } = await boot({ config: { transport: 'webhook' } })
   const handler = ctx.routes.get('/callback')
   const payload = { d: { plain_token: 'Arq0D5A61EgUu4OxUvOp', event_ts: '1725442341' }, op: 13 }
   const raw = JSON.stringify(payload)
@@ -670,7 +670,7 @@ test('验签：回调验证（op=13）返回 plain_token + 合法 signature，�
 })
 
 test('验签：验不过一律 401 且不 emit；X-Bot-Appid 不匹配回 403', async () => {
-  const { adapter, ctx } = await boot()
+  const { adapter, ctx } = await boot({ config: { transport: 'webhook' } })
   const handler = ctx.routes.get('/callback')
   const raw = JSON.stringify({ op: 0, t: 'C2C_MESSAGE_CREATE', d: C2C_EVENT })
   const ts = '1725442341'
@@ -790,7 +790,7 @@ test('caps 可由配置改小（proactive / listenAllInGroup），但不会被�
 test('whoami 在拿不到 /users/@me 时用配置兜底，不抛错', async () => {
   const client = makeFakeClient()
   const adapter = createQqbotAdapter({ client })
-  const ctx = makeCtx(adapter, { ...BASE_CONFIG, selfOpenid: 'FALLBACK-BOT', selfName: '兜底名' })
+  const ctx = makeCtx(adapter, { ...BASE_CONFIG, transport: 'webhook', selfOpenid: 'FALLBACK-BOT', selfName: '兜底名' })
   client.faults.push(() => { throw new NetworkError(Object.assign(new Error('refused'), { code: 'ECONNREFUSED' })) })
   await adapter.start(ctx)
   const me = await adapter.whoami()
@@ -860,4 +860,11 @@ test('WebSocket transport：拿 gateway、Identify、心跳和 op=0 事件', asy
   ws.onmessage({ data: JSON.stringify({ op: 0, s: 2, t: 'C2C_MESSAGE_CREATE', d: C2C_EVENT }) })
   assert.equal(ctx.emitted.length, 1)
   await adapter.stop()
+})
+
+test('默认事件订阅方式是 WebSocket', () => {
+  const adapter = createQqbotAdapter({ client: makeFakeClient() })
+  const spec = adapter.settings.find((x) => x.key === 'transport')
+  assert.equal(spec.default, 'websocket')
+  assert.deepEqual(spec.options, ['websocket', 'webhook'])
 })

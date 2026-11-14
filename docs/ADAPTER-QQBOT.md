@@ -29,10 +29,9 @@
 | 心跳 | `op:1` / `op:11`，周期由 `op:10 Hello` 下发（示例 45000ms） | 无 |
 | 分片 | `shard: [i, n]`，最多受 `session_start_limit.remaining` 限制 | 无 |
 
-**本包的选择**：默认 **Webhook**（用 `ctx.route('/callback')` 挂，验签自己做），
-因为宿主已经有 HTTP 服务、Webhook 才有「回调地址验证」这套标准握手；
-`transport: 'websocket'` 也支持，但**本包不加 npm 依赖**，没有内置 WebSocket 客户端，
-需要宿主通过 `connectEvents` 注入事件源（见 `start()` 的 websocket 分支）。
+**本包的选择**：默认 **WebSocket**（`transport: 'websocket'`）。本端用 Node 22+ 内置 WebSocket：
+`GET /gateway` → `op=10 Hello` → `op=2 Identify` → 心跳，断线指数退避重连；不需要公网回调。
+**Webhook** 仍可选（`ctx.route('/callback')`，Ed25519 验签 + 回调地址验证），适合已有公网 HTTPS 的部署。
 
 > 未确认点：官方文档没有「哪种更推荐」的明确表述，也没有说明 Webhook 是否有事件量上限。
 > 官方 FAQ 里提到 Webhook 中断优先排查防火墙，说明 Webhook 在部分环境不稳。
@@ -281,7 +280,10 @@
 
 ### 第 2 步：配置事件订阅
 
-**Webhook 路线（本包默认）**：
+**WebSocket 路线（本包默认）**：配置里保持 `transport: 'websocket'` 即可，不需要公网地址。
+本端会直接连 QQ 官方网关并自动重连。
+
+**Webhook 路线（可选）**：
 
 1. 准备一个**公网 HTTPS** 地址，端口只能是 **80 / 443 / 8080 / 8443**。
    本插件的回调路径是 `/platform/<实例名>/callback`，例如
@@ -336,7 +338,7 @@
       "appId": "102xxxxxx",
       "clientSecret": "（AppSecret）",
       "botSecret": "（回调验签用的 Bot Secret，通常与 AppSecret 相同）",
-      "transport": "webhook",
+      "transport": "websocket",
       "proactive": "none",
       "listenAllInGroup": false,
       "replyAs": "msg_id",

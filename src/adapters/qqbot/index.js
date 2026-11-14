@@ -318,7 +318,7 @@ export function createQqbotAdapter(options = {}) {
   let token = { value: '', expiresAt: 0 } // token 缓存（自动刷新）
   let self = { account: '', name: '' } // whoami 结果（READY / GET /users/@me）
   let capsOverride = null // 用户配置或探测结果叠在默认 caps 上
-  let transport = 'webhook'
+  let transport = 'websocket'
 
   // 被动回复记账
   const seenAt = new Map() // inResponseTo(messageId) → 入站时间
@@ -855,7 +855,7 @@ export function createQqbotAdapter(options = {}) {
       { key: 'appId', label: 'AppID', type: 'text', default: '', description: 'QQ 开放平台 → 机器人管理端 → 开发设置' },
       { key: 'clientSecret', label: 'AppSecret', type: 'password', default: '', description: '与 AppID 配对；只用来换 access_token，不要外泄' },
       { key: 'botSecret', label: '回调 Bot Secret（验签用）', type: 'password', default: '', description: 'Webhook 模式的 Ed25519 验签密钥，一般与 AppSecret 相同' },
-      { key: 'transport', label: '事件订阅方式', type: 'select', options: ['webhook', 'websocket'], default: 'webhook', description: 'webhook 需要公网 HTTPS 地址；websocket 直接连官方网关，不需要公网回调' },
+      { key: 'transport', label: '事件订阅方式', type: 'select', options: ['websocket', 'webhook'], default: 'websocket', description: 'websocket 直接连官方网关，不需要公网回调；webhook 需要公网 HTTPS 地址' },
       { key: 'proactive', label: '主动消息', type: 'select', options: ['limited', 'none'], default: 'limited', description: 'none = 只做被动回复（平台主动能力已收敛，建议 none）' },
       { key: 'listenAllInGroup', label: '接收群内全部消息', type: 'boolean', default: false, description: '需要群主在手机 QQ 里给机器人打开「接收所有消息」，否则只能收到 @ 她的' },
       { key: 'proactivePerDay', label: '主动消息每日上限（每聊天）', type: 'number', default: 4, description: '平台口径多变且已收敛，平台端自己按这个数记账' },
@@ -870,7 +870,7 @@ export function createQqbotAdapter(options = {}) {
       ctx = context
       running = true
       const cfg = cfgOf()
-      transport = String(cfg.transport || 'webhook') === 'websocket' ? 'websocket' : 'webhook'
+      transport = String(cfg.transport || 'websocket') === 'webhook' ? 'webhook' : 'websocket'
 
       // 用户配置只能把能力改小：proactive / listenAllInGroup 取配置值，其余不支持手动放大
       capsOverride = { ...(capsOverride || {}) }
