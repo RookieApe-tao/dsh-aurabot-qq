@@ -9,8 +9,16 @@ const host = readFileSync(new URL('../src/host.js', import.meta.url), 'utf8')
 test('平台页接上了 TABS、组件表和系统分组', () => {
   assert.ok(client.includes("{ id: 'platforms', label: '通讯平台' }"), 'TABS 缺通讯平台页')
   assert.ok(client.includes('platforms: Platforms'), '组件表缺 platforms → Platforms')
-  assert.ok(client.includes("tabs: ['platforms', 'tools', 'connect'"), '系统分组缺 platforms')
-  assert.ok(client.includes('function Platforms({ st, draft, setDraft, toast, reload, go })'), '缺 Platforms 组件')
+  assert.ok(client.includes("tabs: ['platforms', 'connect'"), '系统分组缺 platforms')
+  assert.ok(client.includes('function Platforms({ st, draft, setDraft, toast, reload, go, openWizard })'), '缺 Platforms 组件')
+})
+
+test('连接页改名为连接QQ，外置工具排在安全防护前，向导按钮移到通讯平台', () => {
+  assert.ok(client.includes("{ id: 'connect', label: '连接QQ' }"), '连接页未改名')
+  const systemTabs = "tabs: ['platforms', 'connect', 'model', 'access', 'browser', 'tools', 'security'"
+  assert.ok(client.includes(systemTabs), '系统页签顺序不是 tools 在 security 前')
+  assert.ok(client.includes("right: openWizard ? h(Btn, { small: true, kind: 'ghost', onClick: openWizard }, '重新走一遍设置向导')"), '向导按钮未挂到通讯平台')
+  assert.ok(!client.includes("right: openWizard ? h(Btn, { small: true, kind: 'ghost', onClick: openWizard }, '重新走一遍设置向导') : null }, h(GatewayChoice"), '连接页仍挂着向导按钮')
 })
 
 test('平台页状态每 5 秒自动刷新，旧版能力提示明确', () => {

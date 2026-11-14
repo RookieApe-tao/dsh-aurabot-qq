@@ -870,8 +870,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
     const TABS = [
       { id: 'overview', label: '概览' },
       { id: 'platforms', label: '通讯平台' },
-      { id: 'tools', label: '外置工具' },
-      { id: 'connect', label: '连接' },
+      { id: 'connect', label: '连接QQ' },
       { id: 'character', label: '人格' },
       { id: 'access', label: '权限' },
       { id: 'group', label: '聊天', flag: 'group' },
@@ -893,6 +892,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       { id: 'heybox', label: '小黑盒', flag: 'heybox.enabled' },
       { id: 'local', label: '本地接口' },
       { id: 'browser', label: '浏览器' },
+      { id: 'tools', label: '外置工具' },
       { id: 'security', label: '安全防护' },
       { id: 'market', label: '模块市场' },
       { id: 'modules', label: '已安装' },
@@ -911,7 +911,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       { id: 'self', label: '人设', icon: 'M12 12.5a4.25 4.25 0 1 0 0-8.5 4.25 4.25 0 0 0 0 8.5zM4.5 20.5c.9-3.6 3.9-5.5 7.5-5.5s6.6 1.9 7.5 5.5', tabs: ['character', 'group', 'speakup', 'autotelic', 'mood', 'memory', 'persona'] },
       { id: 'express', label: '表达', icon: 'M20.5 11.5a8 8 0 0 1-11.7 7.1L4 20l1.4-4.4A8 8 0 1 1 20.5 11.5zM9 13.2s1.1 1.5 3 1.5 3-1.5 3-1.5M9.5 9.6h.01M14.5 9.6h.01', tabs: ['voice', 'asr', 'stickers', 'imagegen', 'song', 'pet'] },
       { id: 'platform', label: '平台', icon: 'M3.5 6.5h17v11h-17zM10.5 9.8v4.4l3.8-2.2z', tabs: ['diary', 'bili', 'douyin', 'heybox'] },
-      { id: 'system', label: '系统', icon: 'M4 7h9M17 7h3M4 12h3M11 12h9M4 17h11M19 17h1M15 5v4M9 10v4M17 15v4', tabs: ['platforms', 'tools', 'connect', 'model', 'access', 'browser', 'security', 'backup', 'about', 'logs'] },
+      { id: 'system', label: '系统', icon: 'M4 7h9M17 7h3M4 12h3M11 12h9M4 17h11M19 17h1M15 5v4M9 10v4M17 15v4', tabs: ['platforms', 'connect', 'model', 'access', 'browser', 'tools', 'security', 'backup', 'about', 'logs'] },
       { id: 'market', label: '模块', icon: 'M4 9.5 5.5 4h13L20 9.5M4 9.5a2.7 2.7 0 0 0 5.3 0 2.7 2.7 0 0 0 5.4 0 2.7 2.7 0 0 0 5.3 0M5.5 12.5V20h13v-7.5M10 20v-4.5h4V20', tabs: ['market', 'modules', 'local'] },
     ]
     // 自己写的模块：名字像逛平台的放「平台」，其余放「系统」（排在「日志」前面）
@@ -1549,7 +1549,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
     }
 
     /** U1：平台页。平台端声明的 settings 自动生成表单；开关即时生效，不需要重启。 */
-    function Platforms({ st, draft, setDraft, toast, reload, go }) {
+    function Platforms({ st, draft, setDraft, toast, reload, go, openWizard }) {
       const f = useField(draft, setDraft)
       const [data, setData] = useState(null)
       const [busy, setBusy] = useState('')
@@ -1693,7 +1693,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         } finally { setImportBusy(false) }
       }
       return h('div', { className: 'ab-grid' },
-        h(Card, { title: '通讯平台', desc: '这里列出所有已注册的平台实例。开关即时生效；填错凭证时看卡片上的状态和原因，密钥不会回显。' },
+        h(Card, { title: '通讯平台', desc: '这里列出所有已注册的平台实例。开关即时生效；填错凭证时看卡片上的状态和原因，密钥不会回显。', right: openWizard ? h(Btn, { small: true, kind: 'ghost', onClick: openWizard }, '重新走一遍设置向导') : null },
           !owner ? h('div', { className: 'ab-note warn', style: { marginBottom: 10 } }, '还没有主人。先连上一个平台，用那个账号给她发一句话，再点下面的「确认这是我」。') : null,
           h('div', { className: 'ab-small ab-muted' }, owner ? '当前主人：' + owner : '当前主人：未设置')),
         available.length ? h(Card, { title: '添加平台', desc: '还没有配置的平台可以在这里加。添加后再填 App ID / Secret 等凭证。' },
@@ -1777,7 +1777,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       )
     }
 
-    function Connect({ st, draft, setDraft, toast, reload, openWizard }) {
+    function Connect({ st, draft, setDraft, toast, reload }) {
       const f = useField(draft, setDraft)
       const sl = st.snowluma
       const [procs, setProcs] = useState(null)
@@ -1794,7 +1794,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         h(Btn, { small: true, onClick: async () => { const r = await get('/onebot/test'); toast(r.message) } }, '测试连接'),
         h(Btn, { small: true, onClick: async () => { const r = await post('/onebot/reconnect'); toast(r.message, r.ok ? 'ok' : 'err'); reload() } }, '重新连接'))
       return h('div', { className: 'ab-grid' },
-        h(Card, { title: '用什么接 QQ', right: openWizard ? h(Btn, { small: true, kind: 'ghost', onClick: openWizard }, '重新走一遍设置向导') : null }, h(GatewayChoice, { draft, setDraft })),
+        h(Card, { title: '用什么接 QQ' }, h(GatewayChoice, { draft, setDraft })),
         external ? h(Card, { title: '接上 QQ（已有的 OneBot 机器人）', desc: '让你的 OneBot 服务登录机器人号 ' + (draft.botQQ || '') + '，把它的正向 WebSocket 地址填在这里，保存后插件就会去连。插件只连接，不会启动或注入任何东西；连上后会先核对登录的是不是机器人号，不是就断开。' },
           h(OneBotFields, { draft, f }),
           h(Row, { label: '机器人 QQ 号' }, f.text('botQQ')),
