@@ -191,6 +191,14 @@ export const DEFAULTS = {
   },
   // 本地接口：数据目录 local/ 里的脚本接管这几项（文件要在、开关要开）
   local: { tts: false, image: false, song: false, asr: false, video: false, videoTimeoutMin: 20 },
+  // 外置工具：只存可执行文件路径；留空则自动查找（FFmpeg 还会兼容旧的 bili.ffmpegPath）
+  tools: {
+    ffmpeg: { path: '' },
+    ffprobe: { path: '' },
+    python: { path: '' },
+    uv: { path: '' },
+    git: { path: '' },
+  },
   bili: {
     enabled: false,
     sessdata: '', // B 站 Cookie 里的 SESSDATA（登录凭证）
@@ -703,6 +711,11 @@ export function normalize(raw) {  const c = deepMerge(DEFAULTS, raw)
   c.mood.judge = bool(c.mood.judge, false)
   for (const k of ['tts', 'image', 'song', 'asr', 'video']) c.local[k] = bool(c.local[k], false)
   c.local.videoTimeoutMin = num(c.local.videoTimeoutMin, 20, 1, BIG)
+  if (!isObj(c.tools)) c.tools = {}
+  for (const id of ['ffmpeg', 'ffprobe', 'python', 'uv', 'git']) {
+    if (!isObj(c.tools[id])) c.tools[id] = {}
+    c.tools[id].path = String(c.tools[id].path || '').trim()
+  }
   const b = c.bili
   Object.assign(b, splitBiliCookie(b))
   for (const k of ['enabled', 'autoBrowse', 'comment', 'reply', 'shareToOwner', 'like', 'vision', 'danmakuEnabled', 'autoDanmaku']) b[k] = bool(b[k], DEFAULTS.bili[k])

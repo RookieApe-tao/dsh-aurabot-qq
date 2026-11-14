@@ -62,7 +62,7 @@ import { createFeishuAdapter } from './adapters/feishu/index.js'
 import { createQqbotAdapter } from './adapters/qqbot/index.js'
 import { createBridgeAdapter } from './adapters/bridge/index.js'
 import { ensureUpgradedStorage } from './features/import-qq.js'
-import { listTools } from './core/tools.js'
+import { listTools, probeTool } from './core/tools.js'
 import { createHandover } from './features/handover.js'
 import { mergePerson } from './features/merge-person.js'
 import { importFromQQ } from './features/import-qq.js'
@@ -2570,6 +2570,36 @@ export function apply(ctx) {
   // 外置工具页：只读探测，不改配置、不下载；安装/修复留到下一阶段。
   route('/tools', async () => listTools(getConfig))
   route('/tools/refresh', async () => listTools(getConfig, { fresh: true }))
+  const toolIds = new Set(['ffmpeg', 'ffprobe', 'python', 'uv', 'git'])
+  route('/tools/test', async (req) => {
+    const body = await readBody(req)
+    const id = String(body.id || '').trim()
+    if (!toolIds.has(id)) return { ok: false, message: '这个工具不能手动指定路径' }
+    const result = await probeTool(id, body.path)
+    return { ...result, id }
+  })
+  route('/tools/path', async (req) => {
+    const body = await readBody(req)
+    const id = String(body.id || '').trim()
+    if (!toolIds.has(id)) return { ok: false, message: '这个工具不能手动指定路径' }
+    const result = await probeTool(id, body.path)
+    if (!result.ok) return { ok: false, message: result.message || '路径不可用', ...result, id }
+    const next = getConfig()
+    if (!next.tools || typeof next.tools !== 'object') next.tools = {}
+    next.tools[id] = { ...(next.tools[id] || {}), path: result.path }
+    setConfig(next)
+    return { ok: true, message: '路径已保存，测试通过', ...result, id, tools: (await listTools(getConfig, { fresh: true })).tools }
+  })
+  route('/tools/reset', async (req) => {
+    const body = await readBody(req)
+    const id = String(body.id || '').trim()
+    if (!toolIds.has(id)) return { ok: false, message: '这个工具不能恢复自动' }
+    const next = getConfig()
+    if (!next.tools || typeof next.tools !== 'object') next.tools = {}
+    next.tools[id] = { ...(next.tools[id] || {}), path: '' }
+    setConfig(next)
+    return { ok: true, message: '已恢复自动查找', tools: (await listTools(getConfig, { fresh: true })).tools }
+  })
   route('/platforms/add', async (req) => {
     const b = await readBody(req)
     const platform = String(b.platform || '').trim()

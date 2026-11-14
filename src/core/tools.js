@@ -1,6 +1,6 @@
-// 外置工具探测（只读阶段）：把 FFmpeg / Python / uv / Git / edge-tts 的位置和版本
-// 汇总给「系统 → 外置工具」页。这里只探测，不修改配置、不下载、不执行用户内容。
-import { existsSync } from 'node:fs'
+// 外置工具探测：把 FFmpeg / Python / uv / Git / edge-tts 的位置和版本
+// 汇总给「系统 → 外置工具」页。只读探测时不执行用户内容；手动路径会先测试再保存。
+import { existsSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { spawn } from 'node:child_process'
@@ -16,6 +16,16 @@ function onPath(name) {
     if (existsSync(p)) return p
   }
   return ''
+}
+
+/** 用户手动路径：去引号；如果给的是目录，自动补可执行文件名。 */
+export function normalizeToolPath(raw, name) {
+  let value = String(raw || '').trim().replace(/^"(.*)"$/, '$1').trim()
+  if (!value) return ''
+  try {
+    if (existsSync(value) && statSync(value).isDirectory()) value = join(value, exe(name))
+  } catch (error) {}
+  return value
 }
 
 function probe(cmd, args, timeoutMs = 4000) {
@@ -56,6 +66,14 @@ const versionMatch = (s) => {
   return text.match(/\bversion\s+([^\s]+)/i)?.[1] || ''
 }
 
+const PROBE_ARGS = {
+  ffmpeg: ['-version'],
+  ffprobe: ['-version'],
+  python: ['--version'],
+  uv: ['--version'],
+  git: ['--version'],
+}
+
 function pythonCandidates() {
   const dirs = [process.env.AURABOT_PYENV, join(homedir(), 'Aurabot', 'pyenv'), 'C:\\Aurabot\\pyenv'].filter(Boolean)
   const out = []
@@ -73,52 +91,98 @@ function edgeInstalled(pythonPath) {
   return candidates.some((p) => existsSync(p))
 }
 
+function configuredPath(cfg, id) {
+  return normalizeToolPath(cfg?.tools?.[id]?.path || '', id)
+}
+
+function autoExecutable(id) {
+  if (id === 'ffmpeg') return findFfmpeg('')
+  if (id === 'ffprobe') return onPath('ffprobe')
+  if (id === 'git') return onPath('git')
+  if (id === 'uv') {
+    return [process.env.AURABOT_UV, join(homedir(), 'Aurabot', 'bin', exe('uv')), join('C:\\Aurabot', 'bin', exe('uv')), onPath('uv')].filter(Boolean).find((p) => existsSync(p)) || ''
+  }
+  if (id === 'python') return pythonCandidates().find((p) => existsSync(p)) || ''
+  return ''
+}
+
+async function describe(id, label, kind, path, source, usedBy, explicit = false) {
+  const args = PROBE_ARGS[id] || ['--version']
+  const result = path ? await probe(path, args) : { ok: false, output: '' }
+  const invalidConfigured = explicit && path && !existsSync(path)
+  return {
+    id,
+    label,
+    kind,
+    status: result.ok ? 'ready' : (path || invalidConfigured) ? 'invalid' : 'missing',
+    path,
+    version: versionMatch(firstLine(result.output)),
+    detail: invalidConfigured ? '路径不存在或不可执行' : firstLine(result.output),
+    source: source || '',
+    usedBy,
+  }
+}
+
+/** 测试一个手动路径，不写配置。 */
+export async function probeTool(id, rawPath) {
+  const name = id === 'ffmpeg' ? 'ffmpeg' : id === 'ffprobe' ? 'ffprobe' : id
+  const path = normalizeToolPath(rawPath, name)
+  if (!path) return { ok: false, status: 'missing', path: '', message: '路径为空' }
+  if (!existsSync(path)) return { ok: false, status: 'invalid', path, message: '路径不存在' }
+  const args = PROBE_ARGS[id] || ['--version']
+  const result = await probe(path, args)
+  return {
+    ok: result.ok,
+    status: result.ok ? 'ready' : 'invalid',
+    path,
+    version: versionMatch(firstLine(result.output)),
+    message: result.ok ? '测试通过' : (firstLine(result.output) || '无法执行'),
+  }
+}
+
+let listCache = null
+
 /**
  * @param {() => object} getConfig
  * @param {{fresh?: boolean}} [opts]
  * @returns {Promise<{ok:true, tools:Array}>}
  */
-let listCache = null
 export async function listTools(getConfig, { fresh = false } = {}) {
   if (!fresh && listCache && Date.now() - listCache.at < 20_000) return listCache.value
   const cfg = getConfig?.() || {}
   const tools = []
 
-  const configuredFfmpeg = String(cfg.bili?.ffmpegPath || '').trim()
-  const ffmpeg = findFfmpeg(configuredFfmpeg)
-  const ffmpegProbe = ffmpeg ? await probe(ffmpeg, ['-version']) : { ok: false, output: '' }
-  tools.push({
-    id: 'ffmpeg',
-    label: 'FFmpeg',
-    kind: 'media',
-    status: ffmpeg && ffmpegProbe.ok ? 'ready' : ffmpeg ? 'invalid' : 'missing',
-    path: ffmpeg,
-    version: versionMatch(firstLine(ffmpegProbe.output)),
-    detail: firstLine(ffmpegProbe.output),
-    source: configuredFfmpeg && ffmpeg === configuredFfmpeg ? 'legacy' : ffmpeg ? 'auto' : '',
-    usedBy: ['B 站看画面', '聊天图片缩小', '生图', '头像', '翻唱'],
-  })
+  // FFmpeg：新 tools 配置 > 旧 bili.ffmpegPath > 自动查找
+  const ffmpegManual = configuredPath(cfg, 'ffmpeg')
+  const ffmpegLegacy = normalizeToolPath(cfg.bili?.ffmpegPath || '', 'ffmpeg')
+  const ffmpeg = ffmpegManual || ffmpegLegacy || autoExecutable('ffmpeg')
+  tools.push(await describe(
+    'ffmpeg', 'FFmpeg', 'media', ffmpeg,
+    ffmpegManual ? 'config' : ffmpegLegacy ? 'legacy' : 'auto',
+    ['B 站看画面', '聊天图片缩小', '生图', '头像', '翻唱'],
+    Boolean(ffmpegManual || ffmpegLegacy),
+  ))
 
-  const ffprobe = ffmpeg ? (WIN ? join(dirname(ffmpeg), 'ffprobe.exe') : join(dirname(ffmpeg), 'ffprobe')) : onPath('ffprobe')
-  const ffprobeProbe = ffprobe ? await probe(ffprobe, ['-version']) : { ok: false, output: '' }
-  tools.push({
-    id: 'ffprobe',
-    label: 'FFprobe',
-    kind: 'media',
-    status: ffprobe && ffprobeProbe.ok ? 'ready' : ffprobe ? 'invalid' : 'missing',
-    path: ffprobe,
-    version: versionMatch(firstLine(ffprobeProbe.output)),
-    detail: firstLine(ffprobeProbe.output),
-    source: ffprobe ? 'auto' : '',
-    usedBy: ['B 站视频信息', '翻唱时长检测'],
-  })
+  // FFprobe：配置 > FFmpeg 同目录 > PATH
+  const ffprobeManual = configuredPath(cfg, 'ffprobe')
+  const ffprobe = ffprobeManual
+    || (ffmpeg ? join(dirname(ffmpeg), exe('ffprobe')) : autoExecutable('ffprobe'))
+  tools.push(await describe(
+    'ffprobe', 'FFprobe', 'media', ffprobe,
+    ffprobeManual ? 'config' : 'auto',
+    ['B 站视频信息', '翻唱时长检测'],
+    Boolean(ffprobeManual),
+  ))
 
-  let python = ''
-  let pythonProbe = { ok: false, output: '' }
-  for (const candidate of pythonCandidates()) {
-    const p = await probe(candidate, ['--version'])
-    if (p.ok) { python = candidate; pythonProbe = p; break }
-    if (!python) { python = candidate; pythonProbe = p }
+  // Python
+  const pythonManual = configuredPath(cfg, 'python')
+  let python = pythonManual || autoExecutable('python')
+  let pythonProbe = python ? await probe(python, ['--version']) : { ok: false, output: '' }
+  if (!pythonManual && !pythonProbe.ok) {
+    for (const candidate of pythonCandidates()) {
+      const p = await probe(candidate, ['--version'])
+      if (p.ok) { python = candidate; pythonProbe = p; break }
+    }
   }
   tools.push({
     id: 'python',
@@ -127,53 +191,41 @@ export async function listTools(getConfig, { fresh = false } = {}) {
     status: python && pythonProbe.ok ? 'ready' : python ? 'invalid' : 'missing',
     path: python,
     version: versionMatch(firstLine(pythonProbe.output)),
-    detail: firstLine(pythonProbe.output),
-    source: python ? 'auto' : '',
+    detail: firstLine(pythonProbe.output) || (pythonManual && !existsSync(python) ? '路径不存在或不可执行' : ''),
+    source: pythonManual ? 'config' : python && python.includes('pyenv') ? 'managed' : python ? 'auto' : '',
     usedBy: ['翻唱 / RVC', '语音合成 edge-tts'],
   })
 
-  const uvCandidates = [process.env.AURABOT_UV, join(homedir(), 'Aurabot', 'bin', 'uv.exe'), join('C:\\Aurabot', 'bin', 'uv.exe'), onPath('uv')].filter(Boolean)
-  let uv = ''
-  let uvProbe = { ok: false, output: '' }
-  for (const candidate of uvCandidates) {
-    const p = await probe(candidate, ['--version'])
-    if (p.ok) { uv = candidate; uvProbe = p; break }
-  }
-  tools.push({
-    id: 'uv',
-    label: 'uv',
-    kind: 'runtime',
-    status: uv && uvProbe.ok ? 'ready' : uv ? 'invalid' : 'missing',
-    path: uv,
-    version: versionMatch(firstLine(uvProbe.output)),
-    detail: firstLine(uvProbe.output),
-    source: uv ? 'auto' : '',
-    usedBy: ['创建 Python 环境', '安装翻唱依赖'],
-  })
+  // uv
+  const uvManual = configuredPath(cfg, 'uv')
+  const uv = uvManual || autoExecutable('uv')
+  tools.push(await describe(
+    'uv', 'uv', 'runtime', uv,
+    uvManual ? 'config' : 'auto',
+    ['创建 Python 环境', '安装翻唱依赖'],
+    Boolean(uvManual),
+  ))
 
-  const git = onPath('git')
-  const gitProbe = git ? await probe(git, ['--version']) : { ok: false, output: '' }
-  tools.push({
-    id: 'git',
-    label: 'Git',
-    kind: 'tool',
-    status: git && gitProbe.ok ? 'ready' : git ? 'invalid' : 'missing',
-    path: git,
-    version: versionMatch(firstLine(gitProbe.output)),
-    detail: firstLine(gitProbe.output),
-    source: git ? 'auto' : '',
-    usedBy: ['备份推送'],
-  })
+  // Git
+  const gitManual = configuredPath(cfg, 'git')
+  const git = gitManual || autoExecutable('git')
+  tools.push(await describe(
+    'git', 'Git', 'tool', git,
+    gitManual ? 'config' : 'auto',
+    ['备份推送'],
+    Boolean(gitManual),
+  ))
 
+  const edgeReady = edgeInstalled(python)
   tools.push({
     id: 'edge-tts',
     label: 'edge-tts',
     kind: 'runtime',
-    status: edgeInstalled(python) ? 'ready' : 'missing',
-    path: edgeInstalled(python) ? dirname(python) : '',
+    status: edgeReady ? 'ready' : 'missing',
+    path: edgeReady ? dirname(python) : '',
     version: '',
-    detail: edgeInstalled(python) ? '已安装到 Python 环境' : '未安装到 Python 环境',
-    source: edgeInstalled(python) ? 'managed' : '',
+    detail: edgeReady ? '已安装到 Python 环境' : '未安装到 Python 环境',
+    source: edgeReady ? 'managed' : '',
     usedBy: ['语音合成'],
   })
 

@@ -1392,10 +1392,13 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
     const TOOL_STATUS = { ready: '已就绪', missing: '未找到', invalid: '不可用' }
     const TOOL_SOURCE = { auto: '自动检测', legacy: '旧 B 站设置', config: '手动指定', managed: '托管安装' }
 
-    /** U1：外置工具页。只读探测；安装/路径选择在下一阶段接。 */
+    /** U1：外置工具页。检测 + 手动路径 + 测试 + 恢复自动；下载/修复在下一阶段接。 */
     function Tools({ toast }) {
       const [data, setData] = useState(null)
       const [busy, setBusy] = useState(false)
+      const [drafts, setDrafts] = useState({})
+      const [feedback, setFeedback] = useState({})
+      const [acting, setActing] = useState('')
       const load = (manual = false) => {
         if (manual) setBusy(true)
         return get(manual ? '/tools/refresh' : '/tools').then((r) => setData(r)).catch((error) => {
@@ -1410,20 +1413,81 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         return () => { alive = false; clearInterval(timer) }
       }, [])
       const tools = (data && data.tools) || []
+      useEffect(() => {
+        setDrafts((prev) => {
+          const next = { ...prev }
+          for (const tool of tools) if (!(tool.id in next)) next[tool.id] = tool.path || ''
+          return next
+        })
+      }, [data])
+      const setDraft = (id, value) => setDrafts((prev) => ({ ...prev, [id]: value }))
+      const say = (id, message, ok) => {
+        setFeedback((prev) => ({ ...prev, [id]: { message, ok } }))
+        if (message) toast(message, ok === false ? 'err' : 'ok')
+      }
+      const test = async (tool) => {
+        setActing('test:' + tool.id)
+        try {
+          const r = await post('/tools/test', { id: tool.id, path: drafts[tool.id] || '' })
+          say(tool.id, r.message || (r.ok ? `测试通过${r.version ? ' · ' + r.version : ''}` : '测试失败'), r.ok)
+        } finally { setActing('') }
+      }
+      const save = async (tool) => {
+        setActing('save:' + tool.id)
+        try {
+          const r = await post('/tools/path', { id: tool.id, path: drafts[tool.id] || '' })
+          if (r.ok) {
+            if (r.tools) setData({ ...(data || {}), tools: r.tools })
+            setDraft(tool.id, r.path || drafts[tool.id] || '')
+          }
+          say(tool.id, r.message || (r.ok ? '路径已保存' : '保存失败'), r.ok)
+        } finally { setActing('') }
+      }
+      const reset = async (tool) => {
+        setActing('reset:' + tool.id)
+        try {
+          const r = await post('/tools/reset', { id: tool.id })
+          if (r.ok) {
+            setDraft(tool.id, '')
+            if (r.tools) setData({ ...(data || {}), tools: r.tools })
+          }
+          say(tool.id, r.message || (r.ok ? '已恢复自动查找' : '恢复失败'), r.ok)
+        } finally { setActing('') }
+      }
       return h('div', { className: 'ab-grid' },
-        h(Card, { title: '外置工具', desc: '这里只做检测，不会自动下载或修改配置。FFmpeg 等工具被多个功能共用，统一显示位置、版本和状态。', right: h(Btn, { small: true, disabled: busy, onClick: () => load(true) }, busy ? '检测中…' : '重新检测') },
-          h('div', { className: 'ab-small ab-muted' }, '工具缺失时对应功能会给出明确提示；不影响其他功能。')),
-        tools.map((tool) => h(Card, {
-          key: tool.id,
-          title: tool.label,
-          right: h('span', { className: cx('ab-badge', tool.status === 'ready' ? 'ok' : tool.status === 'missing' ? 'err' : 'warn') }, TOOL_STATUS[tool.status] || tool.status),
-        },
-          h(Row, { label: '版本' }, h('span', null, tool.version || '—')),
-          h(Row, { label: '路径' }, h('code', { className: 'ab-small', style: { wordBreak: 'break-all' } }, tool.path || '未找到')),
-          h(Row, { label: '来源' }, h('span', null, TOOL_SOURCE[tool.source] || tool.source || '—')),
-          h(Row, { label: '被这些功能使用' }, h('span', { className: 'ab-small' }, (tool.usedBy || []).join(' · ') || '—')),
-          tool.detail && tool.status !== 'ready' ? h('div', { className: 'ab-small ab-muted', style: { marginTop: 8, wordBreak: 'break-word' } }, tool.detail) : null,
-        )),
+        h(Card, { title: '外置工具', desc: '工具被多个功能共用。手动路径会先测试，通过后才保存；留空自动查找。下载和修复在下一阶段接。', right: h(Btn, { small: true, disabled: busy, onClick: () => load(true) }, busy ? '检测中…' : '重新检测') },
+          h('div', { className: 'ab-small ab-muted' }, '可以填 exe 完整路径，也可以填安装目录。工具缺失时对应功能会给出明确提示；不影响其他功能。')),
+        tools.map((tool) => {
+          const editable = tool.id !== 'edge-tts'
+          const act = (kind) => acting === `${kind}:${tool.id}`
+          const feedbackForTool = feedback[tool.id]
+          return h(Card, {
+            key: tool.id,
+            title: tool.label,
+            right: h('span', { className: cx('ab-badge', tool.status === 'ready' ? 'ok' : tool.status === 'missing' ? 'err' : 'warn') }, TOOL_STATUS[tool.status] || tool.status),
+          },
+            h(Row, { label: '版本' }, h('span', null, tool.version || '—')),
+            h(Row, { label: '当前路径' }, h('code', { className: 'ab-small', style: { wordBreak: 'break-all' } }, tool.path || '未找到')),
+            h(Row, { label: '来源' }, h('span', null, TOOL_SOURCE[tool.source] || tool.source || '—')),
+            h(Row, { label: '被这些功能使用' }, h('span', { className: 'ab-small' }, (tool.usedBy || []).join(' · ') || '—')),
+            editable ? h('div', { style: { marginTop: 10 } },
+              h('div', { className: 'ab-small ab-muted', style: { marginBottom: 4 } }, '手动指定路径（留空恢复自动）'),
+              h('div', { className: 'ab-flex', style: { gap: 6, flexWrap: 'wrap' } },
+                h('input', {
+                  className: 'ab-input', style: { flex: '1 1 320px', minWidth: 220 },
+                  value: drafts[tool.id] || '', placeholder: tool.path || '例如 C:\\ffmpeg\\bin\\ffmpeg.exe 或 C:\\ffmpeg',
+                  onChange: (e) => setDraft(tool.id, e.target.value),
+                  onKeyDown: (e) => { if (e.key === 'Enter') save(tool) },
+                }),
+                h(Btn, { small: true, disabled: Boolean(acting) || !(drafts[tool.id] || '').trim(), onClick: () => test(tool) }, act('test') ? '测试中…' : '测试'),
+                h(Btn, { small: true, kind: 'primary', disabled: Boolean(acting) || !(drafts[tool.id] || '').trim(), onClick: () => save(tool) }, act('save') ? '保存中…' : '使用此路径'),
+                h(Btn, { small: true, kind: 'ghost', disabled: Boolean(acting) || !String(tool.source === 'config' ? drafts[tool.id] : '').trim(), onClick: () => reset(tool) }, act('reset') ? '恢复中…' : '恢复自动'),
+              ),
+              feedbackForTool ? h('div', { className: 'ab-small', style: { marginTop: 6, color: feedbackForTool.ok === false ? 'var(--ab-err)' : 'var(--ab-sub)' } }, feedbackForTool.message) : null,
+            ) : null,
+            tool.detail && tool.status !== 'ready' ? h('div', { className: 'ab-small ab-muted', style: { marginTop: 8, wordBreak: 'break-word' } }, tool.detail) : null,
+          )
+        }),
         !tools.length ? h(Card, null, h(Empty, { icon: '🧰', text: '正在检测外置工具…' })) : null,
       )
     }
