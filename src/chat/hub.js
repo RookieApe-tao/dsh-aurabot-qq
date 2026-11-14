@@ -759,6 +759,17 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
   /** 启动时把 sessions.json 里遗留的重复/错误平台前缀批量修正（含 DSH 侧栏标题）。 */
   const titleForMode = (chat, mode) => titleFor(chat) + (mode === 'debug' ? '（调试）' : '')
 
+  /** DSH 对归档会话的 rename 可能不生效：先解归档，再改名。 */
+  async function renameSessionTitle(sessionId, title) {
+    const reg = dsh.workspaceRegistry || dsh.get('workspaceRegistry')
+    if (reg?.archivedSessionIds?.includes(sessionId) && typeof reg.unarchiveSession === 'function') {
+      try { await reg.unarchiveSession(sessionId) } catch (error) {
+        log.debug(`解归档 ${String(sessionId).slice(-8)} 失败：${error.message}`)
+      }
+    }
+    await controller().rename({ sessionId, title })
+  }
+
   /** 启动时把 sessions.json 里遗留的重复/错误平台前缀批量修正（含 DSH 侧栏标题）。 */
   async function migrateLegacyTitles() {
     const mm = map()
@@ -783,7 +794,7 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
     }
     if (changed) saveMap(mm)
     for (const [sessionId, title] of renames) {
-      try { await controller().rename({ sessionId, title }) } catch (error) {
+      try { await renameSessionTitle(sessionId, title) } catch (error) {
         log.debug(`迁移会话 ${String(sessionId).slice(-8)} 标题失败：${error.message}`)
       }
     }
@@ -999,7 +1010,7 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
       if (badTitle || mode === 'debug') {
         try {
           const target = mode === 'debug' ? wantedTitle : baseTitle
-          await controller().rename({ sessionId: sid, title: target })
+          await renameSessionTitle(sid, target)
           if (mode !== 'debug') rec.title = target
           log.info(`会话 ${sid.slice(-8)} 的旧平台前缀已修正为 ${target}`)
         } catch (error) {
