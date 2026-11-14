@@ -158,7 +158,8 @@ export const CAPS_CONSERVATIVE = {
 
 /**
  * 按官方能力填的表（逐项依据见 docs/ADAPTER-FEISHU.md §四）。
- *   · voice: 'file'  —— 语音条必须 opus（file_type=opus），其他格式要先转码，本端不转码
+ *   · voice: 'native' —— 语音条必须 opus（file_type=opus）；中枢会用共享 FFmpeg 先转码，
+ *     转码不可用时本端仍按文件发，绝不谎报成语音条
  *   · sticker: false —— 只能重发「机器人收到的那个 file_key」，通用表情包发不了 → 降级成图片
  *   · listenAllInGroup: false —— 旁听全群要敏感权限 im:message.group_msg，默认按收不到报
  *   · proactive: 'free' —— 飞书没有被动回复窗口，可用范围内可随时发；
@@ -167,7 +168,7 @@ export const CAPS_CONSERVATIVE = {
 export const CAPS_FEISHU = {
   image: true,
   sticker: false,
-  voice: 'file',
+  voice: 'native',
   video: true,
   file: true,
   maxFileBytes: MAX_FILE_BYTES,

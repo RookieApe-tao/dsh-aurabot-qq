@@ -5,9 +5,10 @@
 
 import { randomUUID } from 'node:crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync, renameSync, existsSync, readdirSync, statSync, unlinkSync } from 'node:fs'
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, renameSync, existsSync, readdirSync, rmSync, statSync, unlinkSync } from 'node:fs'
 import { basename, isAbsolute, join, relative, resolve } from 'node:path'
-import { homedir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
+import { spawn } from 'node:child_process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { ownerAuthorizationRevision } from '../core/config.js'
 import { dataDir, readJson, writeJson } from '../core/store.js'
@@ -1240,6 +1241,9 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
           parts = conv.parts
           replyTo = conv.replyTo
         }
+        if (caps?.voice === 'native' && addrSeg?.platform !== defaultPlatform()) {
+          parts = await nativeVoiceParts(parts)
+        }
         if (caps?.proactive === 'none' && !responseTo && !force) {
           const list = passivePending.get(chatId) || []
           list.push({ chatId: normSegId, parts, replyTo, note, timeoutMs })
@@ -1325,6 +1329,75 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
     if (d.name) media.name = String(d.name)
     if (d.mime || defaultMime) media.mime = String(d.mime || defaultMime)
     return media
+  }
+
+  const isOpusPart = (part) => {
+    const mime = String(part?.media?.mime || '').toLowerCase()
+    const name = String(part?.media?.name || '').toLowerCase()
+    return mime.includes('opus') || name.endsWith('.opus')
+  }
+
+  function runFfmpeg(bin, args, timeoutMs = 30000) {
+    return new Promise((resolve, reject) => {
+      let child
+      try { child = spawn(bin, args, { windowsHide: true }) } catch (error) { reject(error); return }
+      let err = ''
+      const timer = setTimeout(() => {
+        try { child.kill() } catch (error) {}
+        reject(new Error('ffmpeg 转码超时'))
+      }, timeoutMs)
+      child.stderr.on('data', (d) => { err += d; if (err.length > 4000) err = err.slice(-4000) })
+      child.on('error', reject)
+      child.on('close', (code) => {
+        clearTimeout(timer)
+        code === 0 ? resolve() : reject(new Error(err.slice(-300) || `ffmpeg 退出码 ${code}`))
+      })
+    })
+  }
+
+  /**
+   * 有些平台（飞书）只认 Opus 语音条。平台声明 voice='native' 时，
+   * 在出站前用共享 FFmpeg 把 MP3/AMR 等转成 Opus；没有 FFmpeg 或转码失败就保留原文件，
+   * 由平台端按文件发，不把语音丢掉。
+   */
+  async function nativeVoiceParts(parts) {
+    if (!Array.isArray(parts) || !parts.some((p) => p?.type === 'voice' && !isOpusPart(p))) return parts
+    const cfg = getConfig()
+    const configured = String(cfg.tools?.ffmpeg?.path || cfg.bili?.ffmpegPath || '')
+    const ffmpeg = findFfmpeg(configured)
+    if (!ffmpeg) {
+      log.debug('语音转 Opus 跳过：没找到 ffmpeg')
+      return parts
+    }
+    const out = []
+    for (const part of parts) {
+      if (part?.type !== 'voice' || isOpusPart(part)) { out.push(part); continue }
+      const media = part.media || {}
+      let input = null
+      try {
+        if (Buffer.isBuffer(media.bytes)) input = media.bytes
+        else if (media.bytes) input = Buffer.from(media.bytes)
+        else if (media.path) input = readFileSync(media.path)
+        if (!input?.length) { out.push(part); continue }
+        const dir = mkdtempSync(join(tmpdir(), 'aurabot-voice-'))
+        const src = join(dir, 'in.audio')
+        const dst = join(dir, 'out.opus')
+        try {
+          writeFileSync(src, input)
+          await runFfmpeg(ffmpeg, ['-y', '-hide_banner', '-loglevel', 'error', '-i', src, '-vn', '-c:a', 'libopus', '-b:a', '48k', '-ar', '48000', '-ac', '1', dst])
+          const bytes = readFileSync(dst)
+          if (!bytes.length) throw new Error('转码结果为空')
+          out.push({ ...part, media: { ...media, bytes, mime: 'audio/opus', name: 'voice.opus' } })
+          log.debug(`语音已转 Opus（${Math.round(input.length / 1024)}KB → ${Math.round(bytes.length / 1024)}KB）`)
+        } finally {
+          rmSync(dir, { recursive: true, force: true })
+        }
+      } catch (error) {
+        log.debug('语音转 Opus 失败，保留原文件：', error.message)
+        out.push(part)
+      }
+    }
+    return out
   }
 
   function segmentsToGatewayParts(segs = []) {

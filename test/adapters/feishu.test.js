@@ -833,13 +833,13 @@ test('错误分类表：几个关键错误码都在 NOT_SENT_CODES 里', () => {
 
 // ───────────────────────── 7. caps / 配置 / token ─────────────────────────
 
-test('caps：voice=file、sticker=false、listenAllInGroup=false、card=true、proactive=free', async () => {
+test('caps：voice=native、sticker=false、listenAllInGroup=false、card=true、proactive=free', async () => {
   const adapter = createFeishuAdapter({ client: makeFakeClient() })
   adapter.__feishu.setConfig(CFG)
   const ctx = makeCtx(adapter)
   await adapter.start(ctx)
   const caps = adapter.caps()
-  assert.equal(caps.voice, 'file', '语音条要 opus，只能按文件发')
+  assert.equal(caps.voice, 'native', '中枢转 Opus 后可发语音条；转码不可用时降级文件')
   assert.equal(caps.sticker, false, '通用表情包发不了 → 降级成图片')
   assert.equal(caps.listenAllInGroup, false, '旁听全群要敏感权限，默认按收不到报')
   assert.equal(caps.card, true)

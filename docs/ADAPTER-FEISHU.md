@@ -138,7 +138,7 @@
 
 | 字段 | 值 | 依据 |
 |---|---|---|
-| `voice` | `'file'` | 语音条必须 `file_type=opus`，其他格式要先转码；本端不转码，只保证「当音频文件发」。**媒体本来就是 opus 时才发成 `msg_type=audio`** |
+| `voice` | `'native'` | 语音条必须 `file_type=opus`；中枢会用共享 FFmpeg 先转码，转码不可用时本端仍按 `msg_type=file` 诚实降级 |
 | `sticker` | `false` | 官方：表情包只能「拿收到的那个 `file_key` 原样重发」，拿不到通用表情包 → 让网关降级成图片 |
 | `image` | `true` | `im/v1/images`，≤10MB |
 | `video` | `true` | `im/v1/files` + `file_type=mp4` → `msg_type=media` |
@@ -174,8 +174,8 @@
 1. **媒体必须先上传换 key。** 本端在 `send` 里支持：`media.id` 直接当 key 用（入站拿到的就是它）；
    否则用 `bytes` / `path` / `url` 自己取字节后上传（图片走 `im/v1/images`、其他走 `im/v1/files`）。
    都没有就抛 `not-sent / media-needs-upload`，让上层补。**不做分片上传**，超 30MB 直接 `too-large`。
-2. **语音不做转码。** 非 opus 的语音按 `msg_type=file` 发（诚实降级），不假装成语音条。
-   要真正的语音条，需要在上游用 ffmpeg 转 opus（官方给的命令见第一节第 27 条）。
+2. **语音转码在宿主完成。** 中枢在平台声明 `voice='native'` 时用共享 FFmpeg 把 MP3/AMR 转 Opus；转码失败才按 `msg_type=file` 发（诚实降级），不假装成语音条。
+   转码失败时才按文件发，不再需要调用方自己转码。
 3. **富文本（`post`）只做入站读取**，出站一律降级成文本 + 多条消息。
 4. **入站媒体没有 URL。** 飞书只给 `file_key` / `image_key`，所以 `media` 上是
    `{ id: '<key>', messageId: '<om_…>' }`，`fetch({kind:'media'})` 用官方
