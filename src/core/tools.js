@@ -147,6 +147,11 @@ export async function probeTool(id, rawPath) {
 
 let listCache = null
 
+/** 安装/改路径后让下一次 /tools 立即重新探测。 */
+export function clearToolsCache() {
+  listCache = null
+}
+
 /**
  * @param {() => object} getConfig
  * @param {{fresh?: boolean}} [opts]

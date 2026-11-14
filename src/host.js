@@ -62,7 +62,8 @@ import { createFeishuAdapter } from './adapters/feishu/index.js'
 import { createQqbotAdapter } from './adapters/qqbot/index.js'
 import { createBridgeAdapter } from './adapters/bridge/index.js'
 import { ensureUpgradedStorage } from './features/import-qq.js'
-import { listTools, probeTool } from './core/tools.js'
+import { clearToolsCache, listTools, probeTool } from './core/tools.js'
+import { runToolInstall, toolJobs } from './core/tools-managed.js'
 import { createHandover } from './features/handover.js'
 import { mergePerson } from './features/merge-person.js'
 import { importFromQQ } from './features/import-qq.js'
@@ -2567,10 +2568,39 @@ export function apply(ctx) {
     }
   }
   route('/platforms', async () => platformView())
-  // 外置工具页：只读探测，不改配置、不下载；安装/修复留到下一阶段。
-  route('/tools', async () => listTools(getConfig))
-  route('/tools/refresh', async () => listTools(getConfig, { fresh: true }))
+  const toolsView = async () => ({ ...(await listTools(getConfig)), jobs: toolJobs() })
+  // 外置工具页：检测、手动路径；FFmpeg/Python/uv 支持后台安装/修复。
+  route('/tools', async () => toolsView())
+  route('/tools/refresh', async () => ({ ...(await listTools(getConfig, { fresh: true })), jobs: toolJobs() }))
   const toolIds = new Set(['ffmpeg', 'ffprobe', 'python', 'uv', 'git'])
+  route('/tools/install', async (req) => {
+    const body = await readBody(req)
+    const id = String(body.id || '').trim()
+    if (!['ffmpeg', 'python', 'uv'].includes(id)) return { ok: false, message: '这个工具不支持自动安装' }
+    const before = toolJobs()[id]
+    if (before && ['starting', 'downloading', 'extracting', 'installing'].includes(before.state)) {
+      return { ok: false, message: '这个工具正在安装，请稍后刷新' }
+    }
+    const savePaths = (paths) => {
+      if (!paths) return
+      const next = getConfig()
+      if (!next.tools || typeof next.tools !== 'object') next.tools = {}
+      if (id === 'ffmpeg' && paths.ffmpeg) {
+        next.tools.ffmpeg = { ...(next.tools.ffmpeg || {}), path: paths.ffmpeg }
+        if (paths.ffprobe) next.tools.ffprobe = { ...(next.tools.ffprobe || {}), path: paths.ffprobe }
+      } else if (id === 'python' && paths.python) {
+        next.tools.python = { ...(next.tools.python || {}), path: paths.python }
+      } else if (id === 'uv' && paths.uv) {
+        next.tools.uv = { ...(next.tools.uv || {}), path: paths.uv }
+      }
+      setConfig(next)
+      clearToolsCache()
+    }
+    runToolInstall(id, { log: logger }).then((result) => {
+      if (result?.ok) savePaths(result)
+    }).catch((error) => logger.warn(`外置工具 ${id} 后台安装异常：${error.message}`))
+    return { ok: true, message: '安装任务已开始，页面会自动刷新状态', jobs: toolJobs() }
+  })
   route('/tools/test', async (req) => {
     const body = await readBody(req)
     const id = String(body.id || '').trim()

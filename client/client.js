@@ -1454,13 +1454,25 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
           say(tool.id, r.message || (r.ok ? '已恢复自动查找' : '恢复失败'), r.ok)
         } finally { setActing('') }
       }
+      const install = async (tool) => {
+        setActing('install:' + tool.id)
+        try {
+          const r = await post('/tools/install', { id: tool.id })
+          say(tool.id, r.message || (r.ok ? '安装任务已开始' : '安装失败'), r.ok)
+          if (r.ok) load(true)
+        } finally { setActing('') }
+      }
+      const jobs = (data && data.jobs) || {}
       return h('div', { className: 'ab-grid' },
-        h(Card, { title: '外置工具', desc: '工具被多个功能共用。手动路径会先测试，通过后才保存；留空自动查找。下载和修复在下一阶段接。', right: h(Btn, { small: true, disabled: busy, onClick: () => load(true) }, busy ? '检测中…' : '重新检测') },
+        h(Card, { title: '外置工具', desc: '工具被多个功能共用。手动路径会先测试，通过后才保存；FFmpeg/Python/uv 可以后台下载或一键修复。', right: h(Btn, { small: true, disabled: busy, onClick: () => load(true) }, busy ? '检测中…' : '重新检测') },
           h('div', { className: 'ab-small ab-muted' }, '可以填 exe 完整路径，也可以填安装目录。工具缺失时对应功能会给出明确提示；不影响其他功能。')),
         tools.map((tool) => {
           const editable = tool.id !== 'edge-tts'
           const act = (kind) => acting === `${kind}:${tool.id}`
           const feedbackForTool = feedback[tool.id]
+          const job = jobs[tool.id]
+          const jobBusy = job && ['starting', 'downloading', 'extracting', 'installing'].includes(job.state)
+          const canInstall = ['ffmpeg', 'python', 'uv'].includes(tool.id)
           return h(Card, {
             key: tool.id,
             title: tool.label,
@@ -1484,6 +1496,16 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
                 h(Btn, { small: true, kind: 'ghost', disabled: Boolean(acting) || !String(tool.source === 'config' ? drafts[tool.id] : '').trim(), onClick: () => reset(tool) }, act('reset') ? '恢复中…' : '恢复自动'),
               ),
               feedbackForTool ? h('div', { className: 'ab-small', style: { marginTop: 6, color: feedbackForTool.ok === false ? 'var(--ab-err)' : 'var(--ab-sub)' } }, feedbackForTool.message) : null,
+            ) : null,
+            canInstall ? h('div', { style: { marginTop: 10 } },
+              h('div', { className: 'ab-flex', style: { gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
+                h(Btn, {
+                  small: true, kind: tool.status === 'ready' ? 'ghost' : 'primary',
+                  disabled: Boolean(acting) || jobBusy,
+                  onClick: () => install(tool),
+                }, jobBusy ? '安装中…' : act('install') ? '启动中…' : tool.id === 'ffmpeg' ? (tool.status === 'ready' ? '重新安装 FFmpeg' : '下载安装 FFmpeg') : '一键修复'),
+                job?.message ? h('span', { className: 'ab-small', style: { color: job.state === 'error' ? 'var(--ab-err)' : 'var(--ab-sub)' } }, job.message + (job.progress ? ` · ${job.progress}%` : '')) : null,
+              ),
             ) : null,
             tool.detail && tool.status !== 'ready' ? h('div', { className: 'ab-small ab-muted', style: { marginTop: 8, wordBreak: 'break-word' } }, tool.detail) : null,
           )
