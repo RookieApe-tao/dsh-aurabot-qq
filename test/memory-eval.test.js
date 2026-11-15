@@ -1,7 +1,7 @@
 // 记忆回归集：中文场景下该想起什么、该不该合并、时间对不对。改检索或提炼前先看这里掉没掉。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildIndex, conflicting, memoryLine, parseFacts, parseSaidAt, sameFact, search } from '../src/features/memory.js'
+import { buildIndex, conflicting, memoryLine, parseExtraction, parseFacts, parseSaidAt, sameFact, search } from '../src/features/memory.js'
 
 const NOW = new Date(2026, 10, 1, 12, 0).getTime()
 const DAY = 86400_000
@@ -97,4 +97,10 @@ test('解析提炼结果：坏 JSON 能修的修，修不了返回 null', () => 
   assert.deepEqual(parseFacts('[{"text":"a"},{"text":"b'), [{ text: 'a' }])
   assert.equal(parseFacts('[{"text": a b}]'), null)
   assert.equal(parseFacts('没有值得记的'), null)
+})
+
+test('解析提炼对象：外层被截断但 facts 数组完整时仍能保住 facts', () => {
+  assert.deepEqual(parseExtraction('{"facts":[{"op":"add","text":"a"}]}'), { facts: [{ op: 'add', text: 'a' }] })
+  assert.deepEqual(parseExtraction('{"facts":[{"op":"add","text":"a"}]'), { facts: [{ op: 'add', text: 'a' }] })
+  assert.equal(parseExtraction('{"facts":[{"op":"add"'), null)
 })
