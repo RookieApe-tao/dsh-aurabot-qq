@@ -749,6 +749,14 @@ export function createQqbotAdapter(options = {}) {
   /** 收一条平台事件：消息走 emit，其余走 emitEvent（原生事件只转给绑定平台的模块） */
   function handleDispatch(t, d, raw) {
     if (!running || !connected || !ctx) return false // 停了就绝不再 emit
+    // 群事件排障：只记事件类型和 openid，不记消息内容。
+    if (t === 'GROUP_AT_MESSAGE_CREATE' || t === 'GROUP_MESSAGE_CREATE') {
+      const groupOpenid = String(d?.group_openid || '')
+      const senderOpenid = String(d?.author?.member_openid || d?.author?.id || '')
+      try {
+        ctx.log?.info?.(`qqbot 群事件：${t} group_openid=${groupOpenid || '(空)'} sender=${senderOpenid || '(空)'}`)
+      } catch (error) {}
+    }
     const message = translate(t, d)
     if (message) {
       ctx.emit(message)
