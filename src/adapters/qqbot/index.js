@@ -885,6 +885,8 @@ export function createQqbotAdapter(options = {}) {
       if (cfg.proactive === 'none' || cfg.proactive === 'limited') capsOverride.proactive = cfg.proactive
       if (cfg.listenAllInGroup != null) capsOverride.listenAllInGroup = Boolean(cfg.listenAllInGroup)
       if (cfg.proactivePerDay != null) capsOverride.proactivePerDay = Number(cfg.proactivePerDay)
+      // 网关在 start 前先取了一次 caps；配置里的 listenAllInGroup/proactive 必须在这里通知刷新。
+      try { ctx.capsChanged?.() } catch (error) {}
 
       ctx.state('connecting')
 

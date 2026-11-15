@@ -873,3 +873,9 @@ test('每个 qqbot 配置项都有面板说明（hint）', () => {
   const adapter = createQqbotAdapter({ client: makeFakeClient() })
   for (const item of adapter.settings) assert.ok(item.hint && item.hint.length > 8, `${item.key} 缺说明`)
 })
+
+test('配置里的 listenAllInGroup 会刷新网关 caps', async () => {
+  const { adapter, ctx } = await boot({ config: { transport: 'webhook', listenAllInGroup: true } })
+  assert.equal(adapter.caps().listenAllInGroup, true)
+  assert.ok(ctx.capsChanges > 0, 'adapter 启动后应通知网关重新读 caps')
+})
