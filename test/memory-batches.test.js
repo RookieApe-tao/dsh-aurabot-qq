@@ -17,14 +17,16 @@ function setup(t, lines, day = dateKey(new Date())) {
   process.env.AURABOT_DATA_DIR = dir
   const logs = new Map([[day, lines]])
   const calls = []
-  let failOnce = '', invalidOnce = ''
+  let failOnce = ''
+  let invalidOnce = ''
+  let invalidLeft = 0
   const dsh = { get: () => null, llm: { async *stream({ system, messages }) {
     const text = messages[0].content[0].text
     if (system.includes('整理长期记忆')) {
       const ids = [...text.matchAll(/消息-(\d+)-结束/g)].map((m) => Number(m[1]))
       calls.push(ids)
       if (failOnce && text.includes(failOnce)) { failOnce = ''; throw new Error('模型暂时失败') }
-      if (invalidOnce && text.includes(invalidOnce)) { invalidOnce = ''; yield { type: 'text-delta', text: '没有 JSON' } }
+      if (invalidOnce && invalidLeft > 0 && text.includes(invalidOnce)) { invalidLeft--; yield { type: 'text-delta', text: '没有 JSON' } }
       else yield { type: 'text-delta', text: '[]' }
     } else if (system.includes('整理自己的记忆')) yield { type: 'text-delta', text: '{"text":"我记得和对方聊过这些事情"}' }
     else yield { type: 'text-delta', text: '{"insights":[],"style":[]}' }
@@ -38,7 +40,7 @@ function setup(t, lines, day = dateKey(new Date())) {
     else process.env.AURABOT_DATA_DIR = old
     rmSync(dir, { recursive: true, force: true })
   })
-  return { make, logs, calls, day, fail: (s) => { failOnce = s }, invalid: (s) => { invalidOnce = s }, progress: () => readMemoryState(dir).processed[day] }
+  return { make, logs, calls, day, fail: (s) => { failOnce = s }, invalid: (s, times = 1) => { invalidOnce = s; invalidLeft = times }, progress: () => readMemoryState(dir).processed[day] }
 }
 const linesOf = (n) => Array.from({ length: n }, (_, i) => ({ chatId: `private:${10000001 + i % 3}`, who: '朋友', text: `消息-${i}-结束` }))
 const ids = (calls) => calls.flat().sort((a, b) => a - b)
@@ -104,15 +106,26 @@ test('旧版数字进度无法证明已完整提炼，升级后从头补提炼�
   assert.equal(s.calls.length, n)
 })
 
-test('模型输出不完整时不推进进度，修复后重新提炼', async (t) => {
+test('模型输出不完整时用更高预算重试，重试成功正常推进', async (t) => {
   const lines = linesOf(3)
   const s = setup(t, lines)
   s.invalid('消息-0-结束')
   const mem = s.make()
+  assert.equal((await mem.consolidate({ includeToday: true })).ok, true)
+  assert.ok(s.calls.length >= 2, '首次坏输出后应重试')
+  assert.deepEqual(s.calls[0], s.calls[1], '重试的应是同一批')
+  assert.deepEqual([...new Set(ids(s.calls))], [0, 1, 2])
+})
+
+test('两次输出都不完整时不推进，下一次重新提炼', async (t) => {
+  const lines = linesOf(3)
+  const s = setup(t, lines)
+  s.invalid('消息-0-结束', 2)
+  const mem = s.make()
   assert.equal((await mem.consolidate({ includeToday: true })).ok, false)
   assert.ok(s.logs.has(s.day))
   assert.equal((await mem.consolidate({ includeToday: true })).ok, true)
-  assert.deepEqual(ids(s.calls.slice(1)), [0, 1, 2])
+  assert.deepEqual(ids(s.calls.slice(2)), [0, 1, 2])
 })
 
 test('单条聊天和只含机器人的批次也送去提炼，新增流水不会被已完成的窗口跳过', async (t) => {

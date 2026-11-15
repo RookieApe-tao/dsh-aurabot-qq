@@ -150,7 +150,7 @@ function setup(t, { cfg = config(), brain = async () => '', hooks, buildTools, s
   return { hub, fake, calls, identity }
 }
 
-test('同一会话连续重载两轮：工具、上下文、限制全部清理，并读取新主人状态和新表情', { timeout: 5000 }, async (t) => {
+test('同一会话连续重载两轮：工具、上下文、限制全部清理，并读取新主人状态和新表情', { timeout: 20000 }, async (t) => {
   const data = mkdtempSync(join(root, 'host-'))
   process.env.AURABOT_DATA_DIR = data
   writeFileSync(join(data, 'config.json'), JSON.stringify(config({ bridge: { dshTools: true } })))

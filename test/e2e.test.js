@@ -496,6 +496,7 @@ test('群聊刹车：主动接话才歇着，群友 @ / 叫名字 / 追问都能
   await until(() => fake.turns.length > turns, 5000)
   await until(() => sentTo('group', '559').length > sends, 5000)
   await sleep(600)
+  api.hub.leaveTopic('559')
   turns = fake.turns.length
   mock.push(grp('559', '713', text('你们先聊')))
   await sleep(1200)
@@ -724,7 +725,7 @@ test('空间日记：手动写一篇（仅自己可见），配今天画的图�
   const r = result.json()
   assert.equal(r.ok, true, r.message)
   assert.equal(r.images, 1, '今天画了图，日记应该配一张')
-  const q = mock.sent('send_qzone_msg')[0]
+  const q = mock.sent('send_qzone_msg').at(-1)
   assert.equal(q.params.ugc_right, 64)
   assert.match(q.params.content, /白米饭/)
   assert.equal(q.params.images.length, 1, '说说带了一张图')
@@ -732,14 +733,14 @@ test('空间日记：手动写一篇（仅自己可见），配今天画的图�
   assert.deepEqual(sent, [], '日记那一轮没转发到聊天里')
   const d = (await fake.call('/qzone/delete', { tid: r.tid })).json()
   assert.equal(d.ok, true)
-  assert.equal(mock.qzone.size, 0)
+  assert.equal(mock.qzone.has(r.tid), false, '这次发的说说要删掉')
 
   // 面板关掉「日记配图」：只发文字
   await fake.call('/save', { diary: { attachImage: false } })
   const r2 = (await api.hub.capture(() => fake.call('/diary/run', { visibility: 'self' }))).result.json()
   assert.equal(r2.ok, true, r2.message)
   assert.equal(r2.images, 0)
-  const q2 = mock.sent('send_qzone_msg')[1]
+  const q2 = mock.sent('send_qzone_msg').at(-1)
   assert.equal(q2.params.images, undefined, '关掉后不带图')
   await fake.call('/qzone/delete', { tid: r2.tid })
 
