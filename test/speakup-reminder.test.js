@@ -44,7 +44,8 @@ function setup({ remind = {}, onTurnEnd = () => ({ ok: true }), pushed = [] } = 
       await opts?.onTurnEnd?.(onTurnEnd())
     },
   }
-  const s = createSpeakUp({ getConfig: () => cfg, hub, log: { info() {}, warn() {} } })
+  const identity = { owner: () => OWNER, accountOn: () => OWNER }
+  const s = createSpeakUp({ getConfig: () => cfg, hub, log: { info() {}, warn() {} }, identity, routeOwner: () => `private:${OWNER}` })
   return { s, cfg, pushed, hub }
 }
 

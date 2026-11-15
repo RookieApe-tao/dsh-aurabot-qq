@@ -273,9 +273,10 @@ export function createSpeakUp({ getConfig, hub, log, isMuted, memory, identity, 
   }
   async function attemptReminder(reminder, now = Date.now()) {
     const cfg = getConfig()
-    const owner = String(cfg.ownerQQ || '')
-    if (!owner || !cfg.enabled || cfg.speakUp?.enabled === false || !cfg.speakUp?.reminderEnabled) return
-    const chatId = `private:${owner}`
+    const chatId = resolveOwnerChat()
+    const parsed = chatId ? parseChatId(chatId) : null
+    const userId = String(parsed?.id || '')
+    if (!chatId || !userId || !ownerId() || !cfg.enabled || cfg.speakUp?.enabled === false || !cfg.speakUp?.reminderEnabled) return
     const outcome = await new Promise((resolve) => {
       let settled = false
       const timer = setTimeout(() => finish({ ok: false, error: '等回复超时' }), REMINDER_WAIT_MS)
@@ -288,7 +289,7 @@ export function createSpeakUp({ getConfig, hub, log, isMuted, memory, identity, 
       }
       try {
         const waiting = hub.pushToSession(
-          { chatId, kind: 'private', userId: owner, nickname: cfg.ownerName || '主人' },
+          { chatId, kind: parsed?.kind || 'private', userId, nickname: cfg.ownerName || '主人' },
           [{ type: 'text', text: reminderPrompt(reminder, cfg.ownerName || '主人') }],
           '',
           { onTurnEnd: finish },

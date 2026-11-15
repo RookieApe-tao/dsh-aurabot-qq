@@ -1,6 +1,7 @@
 // 内置模块：主动搭话。主人一阵子没找她时，她会在私聊里主动找主人聊几句（群里不会）。
 
 import { createSpeakUp } from '../../features/companion.js'
+import { isOwner } from '../../chat/access.js'
 import { defineTool, str } from '../../tools/tools.js'
 
 export default {
@@ -23,7 +24,7 @@ export default {
       return Boolean(api.core.onebot?.state && api.core.onebot.state !== 'connected')
     }
     api.every(60_000, () => (gatewayIdle() ? undefined : speakUp.tick()), '主动搭话')
-    const ownerChat = (chat) => chat?.kind === 'private' && String(chat.userId) === String(api.config().ownerQQ)
+    const ownerChat = (chat) => chat?.kind === 'private' && isOwner(api.core.identity, chat)
     // 工具常驻在主人私聊里；开关关着时执行层如实拒绝，避免开关切换后旧会话少了工具。
     api.tool(({ chat }) => {
       if (!ownerChat(chat) || api.config().speakUp?.enabled === false) return []
