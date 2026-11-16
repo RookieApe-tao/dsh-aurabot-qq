@@ -61,9 +61,11 @@
 
 `div.ab-manage-card[.is-blocked|.is-off|.is-absent]`，纵向 flex、`gap:8px`、`padding:14px 16px`、`border-radius:12px`：
 
-1. **头部** `.ab-manage-head`：**两端对齐**（`justify-content:space-between`），左侧 `span.ab-manage-name`（模块名 + 内嵌 `span.ab-badge[.ok|.warn|.dim]` 状态徽标），右侧启用开关。
+1. **头部** `.ab-manage-head`：**两端对齐**（`justify-content:space-between` + `width:100%; align-self:stretch; box-sizing:border-box`），左侧 `span.ab-manage-name`（模块名 + 内嵌 `span.ab-badge[.ok|.warn|.dim]` 状态徽标），右侧启用开关。
+   - **名称字号 `15.5px` / `font-weight:620`**（面板层级：正文 12.5px < 卡片标题 15px ≤ 卡内主标题 15.5px，卡片内比说明更醒目）；
    - 名称带 `min-width:0; overflow-wrap:anywhere`，长名折行不撑破卡片；
-   - 开关外层包 `span{flex-shrink:0}`，名称再长也不会把开关挤扁。
+   - 开关外层包 `span{flex-shrink:0}`，名称再长也不会把开关挤扁；
+   - ⚠️ **`width:100%` 不能省**：名称是 auto 宽度的 flex item，不显式撑满头部，`space-between` 就没有剩余空间可分配，开关看起来「没贴右」（本项目实测踩过）。
 2. **正文** `.ab-manage-desc`：一句话说明；`flex:1 1 auto` 把操作区顶到卡底；带 `min-width:0; overflow-wrap:anywhere` 防窄列横向溢出。
 3. **原因**（仅受限/失败）：`div.ab-note.warn.ab-manage-reason`，沿用既有 `.ab-note.warn` 告警样式。
 4. **操作区** `.ab-manage-acts`：只放动作按钮（打开设置 / 看日志排障 / 去安装）；`margin-top:auto` 固定贴底，保证同排卡片按钮水平对齐。

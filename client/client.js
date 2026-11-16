@@ -707,10 +707,12 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
 /* 受限/失败：告警色边框 + 卡底，提示需要处理（色值沿用 .ab-badge.warn 的告警色，不引入新颜色） */
 .ab-manage-card.is-blocked{border-color:rgba(191,135,0,.35);background:var(--ab-card-2)}
 .ab-manage-card.is-off,.ab-manage-card.is-absent{background:var(--ab-card-2)}
-/* 卡片头部：名称+徽标左对齐，启用开关右对齐（两端对齐） */
-.ab-manage-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
-/* 名称过长时折行，开关不被挤（开关在 JSX 里另加 flex-shrink:0） */
-.ab-manage-name{font-weight:600;font-size:13.5px;min-width:0;overflow-wrap:anywhere}
+/* 卡片头部：名称+徽标左对齐，启用开关右对齐（两端对齐）。
+   width:100% / align-self:stretch 显式撑满卡宽——space-between 只有在头部占满可用宽时
+   才会把开关顶到右缘；名称是 auto 宽度的 flex item，靠它撑不满整行。 */
+.ab-manage-head{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;align-self:stretch;box-sizing:border-box}
+/* 模块名字号：比面板正文(12.5px)/卡片标题(15px)之间取 15.5px，作为卡片内的主标题更醒目 */
+.ab-manage-name{font-weight:620;font-size:15.5px;min-width:0;overflow-wrap:anywhere}
 .ab-manage-desc{color:var(--ab-sub);font-size:12.5px;line-height:1.55;flex:1 1 auto;min-width:0;overflow-wrap:anywhere}
 .ab-manage-reason{margin:0;font-size:12.5px}
 /* 操作区固定在卡片底部，保证同排卡片按钮对齐 */
