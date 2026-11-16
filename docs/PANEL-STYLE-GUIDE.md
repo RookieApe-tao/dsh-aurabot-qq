@@ -104,3 +104,241 @@
 
 > **给下一个改造页的提示**：本页的「卡片网格 + 头部/正文/操作三段式 + `margin-top:auto` 贴底」可直接复用；
 > 行式 `.ab-mod` 仍保留给「已安装模块」等列表页，两者不要混用。
+
+---
+
+### 聊天（group）— 已实施（2026-11-17）
+
+> 状态：**已实施**。用户两轮修订口径后落地：①按心智自由重组分组 ②折叠单位是「组行」而非单项，
+> 可见区 2~3 组行、行内项自由流式排版、其余全部折叠 ③`.ab-seg` 两段维持。
+> 源码基准：`feat/panel-nav` 分支 `client/client.js`，`function Group`（L2540-2627）及其子组件。
+> 盘点方式：正则抽取 `f.*('键')` + `setPath(...)` 全量枚举，并与 `src/chat/group-policy.js: DEFAULT_GROUP_POLICY` 逐键核对，**无遗漏、无虚键**。
+
+#### 一、现状结构（改造前）
+
+页面顶部是**三段式分段按钮**（相当于页内子页），每段下挂若干 `Card`：
+
+| 段 | 现有卡片 |
+| --- | --- |
+| 群聊（`groups`） | 选择群（GroupOverrides） / 相关设置 / 群聊通用设置 / 被叫到时回复 / 主动插话频率 / 避免连续刷屏 |
+| 回复方式（`messages`） | 连发合并 / 合并转发 / 回复发送与等待 |
+| 权限与限制（`manage`） | 不回应的人 / 群设置指令 / 跨群查看 / 按头衔不理 / 群聊摘要 / 发文件 / 群里的本机工具 |
+
+**问题**：分组按「配置结构 + 实现模块」划分（merge/forward/chat/files 各自一卡），与用户心智（谁能说、怎么接话、何时别说、怎么回）不对齐；`权限与限制` 一段塞了 7 张卡、40+ 项，是全页最长的一段。
+
+#### 二、设置项全量盘点（共 **47 项**）
+
+图例：控件类型 ｜ 所在卡片（改造前）｜ 条件显隐
+
+**A. 群与白名单（5 项）**
+
+| # | 配置键 | 控件 | 现卡片 | 条件/联动 |
+| --- | --- | --- | --- | --- |
+| 1 | `allow.groups`（群号增删） | 文本 + chip 列表 | 选择群 | 决定其余群项的可用性 |
+| 2 | `group.overrides[gid]`（整块） | 局部草稿对象 | 选择群 | 每群独立；空对象=用通用 |
+| 3 | 群响应模式（`allow.groups` + `group.moduleOnlyGroups` 派生） | 选择 off/modules/chat | 选择群 › 群详情 | 非 `chat` 时下方 AI 设置置灰/折叠 |
+| 4 | `memory.passiveGroups` | 开关 | 选择群 › 群详情 | 仅"不响应"时有意义 |
+| 5 | `group.moduleOnlyGroups`（间接，由响应模式写） | — | 选择群 | 与 3 联动 |
+
+**B. 谁能让它说话 · 被叫到（6 项）**
+
+| # | 配置键 | 控件 | 现卡片 | 条件/联动 |
+| --- | --- | --- | --- | --- |
+| 6 | `group.wakeWords` | 列表（一行一个） | 被叫到时回复 | — |
+| 7 | `group.ignoreAtOthers` | 开关 | 被叫到时回复 | — |
+| 8 | `group.mustMaxPerHour` | 范围 0-100（0=不限） | 被叫到时回复 | — |
+| 9 | `memberFilter.enabled` | 开关（Card right） | 不回应的人 | 关掉则下方规则全部失效 |
+| 10 | `memberFilter.rules[]`（userId/scope/groups） | 文本 + 选择 + 列表 | 不回应的人 | 主人不可加入；上限 100 |
+| 11 | `titleFilter.enabled` / `titleFilter.title` / `titleFilter.groups` | 开关 + 文本 + chip | 按头衔不理 | 需拉 `/groups/titles` |
+
+**C. 怎么接话 · 主动插话（10 项）**
+
+| # | 配置键 | 控件 | 现卡片 | 条件/联动 |
+| --- | --- | --- | --- | --- |
+| 12 | `group.proactiveEnabled` | 开关 | 群聊通用设置 | 群覆盖可覆写 |
+| 13 | `group.engagedEnabled` | 开关 | 群聊通用设置 | fallback 到 `interjectChance>0` |
+| 14 | `group.quietHours` [start,end] | 双数字 | 群聊通用设置 | 起止相同=不限制 |
+| 15 | `group.interjectChance` | 百分比 | 主动插话频率 | =0 时提示条出现 |
+| 16 | `group.cooldownSec` | 范围 0-600 | 主动插话频率 | — |
+| 17 | `group.maxPerHour` | 范围 0-30 | 主动插话频率 | — |
+| 18 | `group.interests` | 列表 | 主动插话频率 › **details 折叠** | — |
+| 19 | `group.minRelevance` | 范围 0-1（0=不看话题） | 同上 | — |
+| 20 | `group.minRecentMessages` + `group.activeWindowSec` | 数字 ×2 | 同上 | 组合成"群冷清"判定 |
+| 21 | `group.engagedMax` | 范围 0-10 | 避免连续刷屏 | — |
+
+**D. 防刷屏 / 安全刹车（3 项）**
+
+| # | 配置键 | 控件 | 现卡片 |
+| --- | --- | --- | --- |
+| 22 | `group.burstMax` | 范围 1-20 | 避免连续刷屏 |
+| 23 | `group.burstWindowSec` | 范围 30-600 | 避免连续刷屏 |
+| 24 | `group.engagedMax`（与 #21 同键，视觉上属本组） | — | 归并时注意不要重复渲染 |
+
+**E. 怎么回复 · 发送行为（11 项）**
+
+| # | 配置键 | 控件 | 现卡片 | 条件/联动 |
+| --- | --- | --- | --- | --- |
+| 25 | `merge.enabled` | 开关（right） | 连发合并 | 关掉后下 4 项无效果 |
+| 26 | `merge.waitSec` | 范围 0.5-10 | 连发合并 | — |
+| 27 | `merge.maxSec` | 范围 2-30 | 连发合并 | — |
+| 28 | `merge.groupWaitSec` | 范围 1-20 | 连发合并 | 群专用 |
+| 29 | `merge.groupMaxSec` | 范围 3-60 | 连发合并 | 群专用 |
+| 30 | `forward.expandEarly` | 开关（right） | 合并转发 | 关掉则 #31 无效 |
+| 31 | `forward.expandHistory` | 开关 | 合并转发 | 依赖 #30 |
+| 32 | `chat.seedHistory` | 开关 | 回复发送与等待 | — |
+| 33 | `chat.everyStep` | 开关 | 同上 | — |
+| 34 | `chat.rescueFromThinking` | 开关 | 同上 | — |
+| 35 | `chat.turnTimeoutMinutes` | 数字 0-180 | 同上 | 0=不兜底 |
+
+**F. 跨群 / 主人侧能力（6 项）**
+
+| # | 配置键 | 控件 | 现卡片 | 条件/联动 |
+| --- | --- | --- | --- | --- |
+| 36 | `group.crossRead` | choices（off/private/group） | 跨群查看 | — |
+| 37 | `group.ownerBrief.enabled` | 开关（right） | 群聊摘要 | 关掉则下 2 项无效 |
+| 38 | `group.ownerBrief.lines` | 范围 1-30 | 群聊摘要 | — |
+| 39 | `group.ownerBrief.groups` | chip 多选 | 群聊摘要 | 空=全部白名单群 |
+| 40 | `group.privateCommandsEnabled` | 开关（right） | 群设置指令 | — |
+| 41 | `group.ownerTools` | choices（off/owner） | 群里的本机工具 | 非 off 才显示 #42 |
+| 42 | `group.ownerToolsGroups` | 列表 | 群里的本机工具 | 条件显隐（依赖 #41） |
+
+**G. 文件（4 项）**
+
+| # | 配置键 | 控件 | 现卡片 | 条件/联动 |
+| --- | --- | --- | --- | --- |
+| 43 | `files.enabled` | 开关（right） | 发文件 | 需权限页配合 |
+| 44 | `files.maxMB` | 数字 1-2048 | 发文件 | — |
+| 45 | `files.dirs` | 列表（路径） | 发文件 | — |
+| 46 | `files.imageByPath` | 开关 | 发文件 | — |
+
+**H. 导航/跳转（非配置，2 处）**
+
+| # | 项 | 类型 | 位置 |
+| --- | --- | --- | --- |
+| 47 | 「记忆总开关与清理」「管理模块」「表情制作与休息时段」 | 跳转按钮 | 相关设置卡 |
+
+**统计口径说明**：47 = 46 个真实配置项（含 2 个派生/间接项 #3、#5）+ 1 组跳转入口。
+其中 **6 项有条件显隐**（#4、#9、#10 内部、#25、#30、#41→#42），**1 个键被两处渲染**（`group.engagedMax`：#21 与 #24，实施时须合并）。
+
+#### 三、最终分组（已实施 · 2026-11-17）
+
+**折叠口径（用户最终确认）**：可见区放 **2~3 个「组行」**——单位是**组**不是单个设置项；每组占一行、
+行内项**自由流式排版**（`.ab-grp-row`，`auto-fit + minmax(190px,1fr)`，窄窗自动降列）；
+行内项数上限 ≤10；**其余所有组/项全部收进「更多设置（N 项）」折叠卡**（折叠卡内同样按行组织，不再二次限制）。
+
+结构：顶部 `.ab-seg` 两段「单个群 / 所有群默认」，替代原「群聊 / 回复方式 / 权限与限制」三段。
+
+**「单个群」视图** = 原 `GroupOverrides`（群选择 + 单群覆盖）+ 相关设置跳转卡，保持原有交互不变。
+
+**「所有群默认」视图**：
+
+| 位置 | 卡片/折叠标题 | 行内项 | 项数 |
+| --- | --- | --- | --- |
+| **可见组行 ①** | 被叫到时怎么回 | 称呼列表 / @了别人不算 / 每小时必回上限 | 3 |
+| **可见组行 ②** | 没人叫时怎么接话 | 主动插话开关 / 继续回应开关 / 插话概率 / 最多连续接话 | 4 |
+| **可见组行 ③** | 一条消息怎么变成回复 | 连发合并 / 合并转发 / 每段都发 | 3 |
+| 折叠 | 接话节奏与时段（4 项） | 插话间隔 / 每小时上限 / 不主动说话时段 / 短时间最多回复 | 4 |
+| 折叠 | 话题与群活跃度（3 项） | 感兴趣话题 / 相关度门槛 / 群冷清判定 | 3 |
+| 折叠 | 合并与发送明细（8 项） | 4 个 merge 参数 / 补展开 / 补看记录 / 捞思考 / 超时 | 8 |
+| 折叠 | 主人跨群与特权（7 项） | /群设置 / 群摘要 / 本机工具(+条件群列表) / 跨群看 / 摘要条数 / 摘要群 | 7 |
+| 折叠 | 发文件（4 项） | 允许发文件 / 大小 / 目录 / 图片直发 | 4 |
+| 整卡折叠 | 不想理的人与头衔 | MemberFilter + TitleFilter | 2 卡 |
+
+**合计**：可见 3 行共 **10 项**；折叠 **5 张 + 1 整卡**共 **26 项**；「单个群」视图承载群与覆盖项。
+
+#### 三点五、键 → 新位置对照表（47 项零缺失验证）
+
+| 原编号 | 配置键 | 新位置 |
+| --- | --- | --- |
+| 1-5 | `allow.groups` / `group.overrides` / 响应模式 / `memory.passiveGroups` / `group.moduleOnlyGroups` | 「单个群」视图（GroupOverrides 未改） |
+| 6 | `group.wakeWords` | 可见行① |
+| 7 | `group.ignoreAtOthers` | 可见行① |
+| 8 | `group.mustMaxPerHour` | 可见行① |
+| 9-11 | `memberFilter.*` / `titleFilter.*` | 整卡折叠「不想理的人与头衔」 |
+| 12 | `group.proactiveEnabled` | 可见行② |
+| 13 | `group.engagedEnabled` | 可见行② |
+| 14 | `group.quietHours` | 折叠「接话节奏与时段」 |
+| 15 | `group.interjectChance` | 可见行② |
+| 16 | `group.cooldownSec` | 折叠「接话节奏与时段」 |
+| 17 | `group.maxPerHour` | 折叠「接话节奏与时段」 |
+| 18-20 | `group.interests` / `minRelevance` / `minRecentMessages`+`activeWindowSec` | 折叠「话题与群活跃度」 |
+| 21,24 | `group.engagedMax`（原两处渲染合一） | 可见行② |
+| 22-23 | `group.burstMax` / `burstWindowSec` | 折叠「接话节奏与时段」 |
+| 25-29 | `merge.enabled` / `waitSec` / `maxSec` / `groupWaitSec` / `groupMaxSec` | enabled 在可见行③；其余 4 项在折叠「合并与发送明细」 |
+| 30-31 | `forward.expandEarly` / `expandHistory` | early 在可见行③；history 在折叠 |
+| 32-34 | `chat.seedHistory` / `everyStep` / `rescueFromThinking` | everyStep 在可见行③；另两项在折叠 |
+| 35 | `chat.turnTimeoutMinutes` | 折叠「合并与发送明细」 |
+| 36-39 | `group.crossRead` / `ownerBrief.enabled` / `.lines` / `.groups` | 折叠「主人跨群与特权」 |
+| 40-42 | `group.privateCommandsEnabled` / `ownerTools` / `ownerToolsGroups` | 折叠「主人跨群与特权」（群列表条件显隐保留） |
+| 43-46 | `files.enabled` / `maxMB` / `dirs` / `imageByPath` | 折叠「发文件」 |
+| 47 | 跳转按钮×3 | 「单个群」视图「相关设置」卡 |
+
+#### 四、布局设计与复用（实际落地）
+
+| 区域 | 复用/新建 | 实际做法 |
+| --- | --- | --- |
+| 页内两级切换 | **复用 `.ab-seg`（`Seg` 组件）** | `single`/`all` 两段，替代原三按钮 |
+| 分组卡 | **复用 `Card`** | 标题 + desc + children |
+| 折叠 | **复用 `Card collapsible defaultOpen=false`** | 折叠不渲染 children（已验证） |
+| 行内流式排版 | **新增 `.ab-grp-row`** | 见下，本页主要新增样式 |
+| 折叠子卡弱化 | **新增 `.ab-fold-sub`** | 虚线边框 + 透明底，避免父卡内再套实底卡 |
+| 群列表 chip | 复用 `.ab-chip` | 未改 |
+| 设置项控件 | 复用 `.ab-row` / `useField` | 未改 |
+| 名单卡（不回应的人/头衔） | **未引入新样式** | 评估后沿用现有 chip + 详情卡，`ab-people-*` 草案未采用 |
+
+**本页实际新增的 CSS（全部在 client.js 样式区）**：
+
+```css
+/* 组行：一行放一组设置，行内项自由流式排版（按类型与宽度自然排，窄窗自动降列） */
+.ab-grp-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px 14px;align-items:start}
+.ab-grp-row>.ab-row{flex-direction:column;align-items:flex-start;gap:4px}
+.ab-grp-row>.ab-row>.ab-ctl{width:100%}
+/* 卡片内「更多设置（N 项）」子折叠卡：视觉上弱化一层，避免与父卡重复的实底边框 */
+.ab-fold-sub{background:transparent;border-style:dashed;box-shadow:none}
+```
+
+> **关键点**：`.ab-grp-row` 让每组项自动按可用宽度排成 1~N 列（`auto-fit`），
+> 既满足「一行放一组」的组行语义，又不会在窄面板里把项挤成一条。
+> 想让某组固定 2 列，把 `auto-fit` 换成 `auto-fill` 并给 `minmax` 调宽即可。
+
+> 名单型设置（不回应的人 / 头衔）评估后**沿用现有 `ab-chip` + 下方详情卡**，未引入额外样式。
+
+#### 五、风险与不变量（实施时不能破坏）
+
+| # | 不变量 | 现状依据 | 风险点 |
+| --- | --- | --- | --- |
+| 1 | **草稿基线对账** | `_groupSettingsBase`（save 里 L9546）、`memberFilter`/`group`/`memory` 走单独 baseline 比对 | 重排卡片时若把某项挪出 `group` 键、或拆成新顶层键，会导致保存漏写/多写 |
+| 2 | **群覆盖优先级** | `group.overrides[gid]` 逐键覆盖通用值；`??` fallback 到通用 | 合并「单群/所有群默认」视图时，**必须保持 override 只写显式改过的键**（`value===''` 时 `delete`） |
+| 3 | **条件显隐的连带失效** | `merge.enabled` 关→参数无效；`files.enabled` 关→参数无效；`ownerTools==='off'`→群列表隐藏 | 不要因为重排把「被控制项」移出可视区却仍可编辑 |
+| 4 | **权限检查在宿主侧** | 群白名单/主人判定由后端做，前端只是编辑器 | 布局改造不得引入前端侧"看起来能开"的假开关 |
+| 5 | **保存栏常显** | 底部 `.ab-savebar` + 未保存标记 + 撤销 | `tabDirty('group')` 的键集合不能漏项，否则某组改动不显示未保存 |
+| 6 | **排障入口常显** | 方案 §五要求 | 「不回应的人」「头衔」折叠时，标题行要能看出当前生效数量 |
+| 7 | **深色/窄窗** | 全站变量体系 | 新 CSS 只用 `--ab-*`，不引入裸色值 |
+
+**TAB_KEYS 已修（本页改造的一项必修）**：
+- 改前：`group: ['group','merge','titleFilter','memberFilter','chat']` —— **漏 `files`、`forward`**
+- 改后：`group: ['group','merge','titleFilter','memberFilter','chat','files','forward']`
+- 若将来再加顶层配置域（如新的 `xxx`），**必须同步加进这个数组**，否则该组改动不显示未保存标记。
+
+#### 六、验收结果（已实施 · 2026-11-17）
+
+| 项 | 方式 | 结果 |
+| --- | --- | --- |
+| 语法 | `node --check client/client.js` | **exit 0** |
+| 回归 | `node --test test/panel-stage2.test.js test/panel-stage3.test.js` | **30/30 pass** |
+| 可见组行数 | vm 渲染 `Group`（all 视图），数 `.ab-grp-row` | **3 个**（用户口径 2~3 ✓） |
+| 行内项数 | 每行 `.ab-row` 计数 | **[3, 4, 3]**，均 ≤10 ✓ |
+| 折叠卡 | 未展开树上数 `Card.collapsible` | **5 张 + 1 整卡**，标题均标「（N 项）」、`defaultOpen:false` ✓ |
+| 47 项键位 | 键名清单逐一比对 Group+子组件 | **42 个客观键 + 3 个派生项，零缺失** |
+| TAB_KEYS | 源码断言 | 已补 `files`、`forward` ✓ |
+| 整树渲染兜底 | vm 渲染 `AurabotPage` 首帧 + ready，及 `Group` 两种视图 | **均不抛异常** ✓ |
+
+> `test/panel-root-render.test.js` 在实施时**尚未落地**（qa 侧未创建）。
+> 我用等价的临时脚本做了整树渲染兜底（AurabotPage 首帧 / ready+tab=group / Group 两视图），
+> 全部不抛异常；该临时脚本未进仓库。建议 qa 补上正式用例后由 CI 长期守住。
+
+**已知未覆盖**：真机视觉确认（深色/窄窗观感、行内项的实际换行效果）需在面板里目测一次。
+
+---
+
+**状态：已实施（feat/panel-nav，未提交）。** 47 项零缺失、可见组行 3 个（[3,4,3] 项）、折叠 6 处。
