@@ -657,6 +657,10 @@ export function createModules({ ctx, core, getConfig, setConfig, logger, version
   const revisions = new Map() // id → 停止次数，取消在途 import
   // 模块每次（重）启动都递增一次「代际」：hub 用它判断会话里挂的工具是不是旧模块实例的闭包。
   let generation = 0
+  // 导航版本：模块安装/启停/失败/重载（含可用平台随定义变化）时递增；
+  // 面板首屏轮询 /panel/pulse 拿它判断要不要重新拉导航摘要（方案 §二/§2.1）。
+  let navigationRevisionCounter = 0
+  const bumpNavigation = () => { navigationRevisionCounter++ }
   let userSeen = new Map() // id → { dir, file, stamp }
   const userMeta = new Map() // id → { name, description, version, platforms }
   const skipped = new Map() // id → 跳过原因（例如 '未启用对应平台'）
@@ -1106,11 +1110,13 @@ export function createModules({ ctx, core, getConfig, setConfig, logger, version
       }
       rec.exports = exports
       log.info(`模块「${def.name || id}」${source !== 'user' ? '' : existsSync(join(rec.dir, '.aurabot-source.json')) ? '（模块市场）' : '（自己写的）'}已启动`)
+      bumpNavigation() // 新实例进了注册表：导航摘要可能变（新增/替换）
       emit('module/start', id)
     } catch (error) {
       if (disposed || rec.stopped || live.get(id) !== rec) return null
       stop(id, { quiet: true })
       errors.set(id, { message: String(error && error.message ? error.message : error).slice(0, 800), at: Date.now(), source })
+      bumpNavigation() // 启动失败也进导航（availability=error）
       log.warn(`模块「${def.name || id}」启动失败：`, error.message)
     }
     return live.get(id)
@@ -1129,9 +1135,11 @@ export function createModules({ ctx, core, getConfig, setConfig, logger, version
       const r = def.setup(makeApi(id, 'builtin', rec))
       if (r && typeof r.then === 'function') throw new Error('内置模块的 setup 要同步返回')
       rec.exports = r ?? {}
+      bumpNavigation() // 内置模块（重）启动：导航摘要可能变
     } catch (error) {
       stop(id, { quiet: true })
       errors.set(id, { message: String(error.message || error).slice(0, 800), at: Date.now(), source: 'builtin' })
+      bumpNavigation() // 启动失败也进导航（availability=error）
       log.error(`内置模块「${def.name || id}」启动失败：`, error.message)
     }
   }
@@ -1142,6 +1150,7 @@ export function createModules({ ctx, core, getConfig, setConfig, logger, version
     if (!rec) return false
     live.delete(id)
     generation++ // 停止或替换也使会话工具缓存失效
+    bumpNavigation() // 模块停了/被替换：导航摘要可能变
     rec.stopped = true
     for (const off of rec.offs.splice(0).reverse()) cleanup(off)
     cleanup(() => rec.exports?.dispose?.())
@@ -1197,6 +1206,7 @@ export function createModules({ ctx, core, getConfig, setConfig, logger, version
       if (!stillWanted()) { resyncRequested = true; return null }
       skipped.delete(u.id)
       errors.set(u.id, { message: String(error.message || error).slice(0, 800), at: Date.now(), source: 'user', fallback: builtinDefs.has(u.id) })
+      bumpNavigation() // 加载失败也进导航（availability=error）
       log.warn(`模块「${u.id}」加载失败：`, error.message)
       userSeen.set(u.id, { ...u, stamp: stampOf(u.dir) })
       return null
@@ -1315,7 +1325,8 @@ export function createModules({ ctx, core, getConfig, setConfig, logger, version
         if (back) { back.fallback = true; log.warn(`模块「${id}」：你的版本没加载成功，先用内置的`) }
       }
     }
-    for (const id of [...userSeen.keys()]) if (!users.some((u) => u.id === id)) { userSeen.delete(id); userMeta.delete(id); skipped.delete(id); if (errors.get(id)?.source === 'user') errors.delete(id) }
+    // dev 侧清 userMeta/skipped（平台过滤缓存）；33c75e0 侧补 bumpNavigation（安装的模块被删了：导航摘要要变）
+    for (const id of [...userSeen.keys()]) if (!users.some((u) => u.id === id)) { userSeen.delete(id); userMeta.delete(id); skipped.delete(id); if (errors.get(id)?.source === 'user') errors.delete(id); bumpNavigation() }
   }
 
   function sync() {
@@ -1562,6 +1573,45 @@ export function createModules({ ctx, core, getConfig, setConfig, logger, version
     return names
   }
 
+  // ---------- 面板首屏：导航摘要（方案 §二/§2.1） ----------
+  /**
+   * 从内存注册表生成导航摘要：内置定义（builtinDefs）+ 用户模块扫描缓存（userSeen）+
+   * 运行记录（live）+ 错误表（errors）+ 配置（modCfg）。**绝不调 scanUser() 重扫模块目录，
+   * 也不执行工具构造器**（toolNames 那套不走）——首屏读取只准碰内存。
+   * 每项：id/name/tab/navGroup/hasSettings/hasPanel/enabled/running/platforms/availability。
+   */
+  function summarizeModules() {
+    const ids = new Set([...builtinDefs.keys(), ...userSeen.keys(), ...live.keys()])
+    const modules = [...ids].sort().map((id) => {
+      const b = builtinDefs.get(id)
+      const seen = userSeen.get(id)
+      const rec = live.get(id)
+      const def = rec?.def || b || {}
+      const m = modCfg(id)
+      const err = errors.get(id)
+      const enabled = m.enabled !== false
+      const availability = rec ? 'ready'
+        : err ? 'error'
+        : !enabled ? 'disabled'
+        : (b || seen) ? 'stopped' // 有定义/有安装记录但没在跑（被关、被替换、等待加载）
+        : 'unloaded' // 只有扫描缓存残影，定义还没拿到
+      return {
+        id,
+        name: def.name || id,
+        tab: def.tab || '',
+        navGroup: typeof def.navGroup === 'string' ? def.navGroup : '',
+        hasSettings: Array.isArray(def.settings) && def.settings.length > 0,
+        hasPanel: Boolean(rec && def.panel),
+        enabled,
+        running: rec ? rec.source : null, // 'builtin' | 'user' | null
+        platforms: Array.isArray(def.platforms) ? def.platforms.map(String) : [],
+        availability, // ready | error | disabled | stopped | unloaded
+        error: err && !rec ? err.message : '',
+      }
+    })
+    return { navigationRevision: navigationRevisionCounter, modules }
+  }
+
   /** file 是不是在 root 目录里面（root 自己不算；越过 root 的 ../ 一律不算）。 */
   function inside(root, file) {
     const rel = relative(resolve(root), resolve(file))
@@ -1653,6 +1703,8 @@ export function createModules({ ctx, core, getConfig, setConfig, logger, version
     boot, sync, reload, stop, dispose, status, create, fork, promptFor, panelSource,
     use: exportsOf, has: (id) => live.has(id), running: (id) => live.get(id)?.source || null, generation: () => generation,
     capabilitiesOf,
+    // 面板首屏提速：导航摘要（纯内存）与导航版本号（安装/启停/失败/重载时递增）
+    summarizeModules, navigationRevision: () => navigationRevisionCounter,
     emit, claim, filter, filterSync, buildTools,
     // 插件核心自己听事件（不属于任何模块，不会被撤掉）
     listen: (event, fn) => { const item = { id: '@core', fn }; listeners.set(event, [...(listeners.get(event) || []), item]); return () => listeners.set(event, (listeners.get(event) || []).filter((x) => x !== item)) }, contextFor, rules, commands, dshTools, builtinOff, handle,

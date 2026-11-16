@@ -1133,6 +1133,24 @@ export function saveConfig(cfg, previous = loadConfig()) {
   return c
 }
 
+// ---------- 面板首屏提速：配置提交版本（方案 §2.2） ----------
+// 「持久化落盘 + 发布新内存配置 + configRevision 递增」收敛为一个同步提交函数 commitConfig：
+// 启动初始化、面板 /save、运行期模块/命令/面板写入等各路径统一走它，保证版本号在实例内单调递增。
+let configRevisionCounter = 0
+/** 当前已发布配置的版本号（本次宿主实例内单调递增；重启后随新 bootId 从头计）。 */
+export function configRevision() { return configRevisionCounter }
+/**
+ * 同步提交一份配置：落盘 + 递增版本。归一化结果与已发布配置完全一致时，不重复落盘、不递增——
+ * 「只提交了没变化的字段」的面板保存回执返回接纳时的版本。返回值语义与 saveConfig 一致
+ * （归一化后的配置），既有调用方（含模块 API setConfig）不受影响。
+ */
+export function commitConfig(cfg, previous = loadConfig()) {
+  const c = saveConfig(cfg, previous)
+  if (previous && JSON.stringify(c) === JSON.stringify(previous)) return previous
+  configRevisionCounter++
+  return c
+}
+
 /** 给面板看的版本：密码 / token 不回传原文，只告诉有没有填。 */
 export function publicConfig(cfg) {
   const c = structuredClone(cfg)
