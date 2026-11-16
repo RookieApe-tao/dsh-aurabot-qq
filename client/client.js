@@ -937,11 +937,8 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       { id: 'pet', label: '桌宠' },
       { id: 'mood', label: '心情', flag: 'mood.enabled' },
       { id: 'memory', label: '记忆', flag: 'memory.enabled' },
-      { id: 'persona', label: '人物记忆', flag: 'memory.enabled' },
       { id: 'song', label: '翻唱', flag: 'song.enabled' },
-      { id: 'bili', label: 'B站', flag: 'bili.enabled' },
-      { id: 'douyin', label: '抖音', flag: 'douyin.enabled' },
-      { id: 'heybox', label: '小黑盒', flag: 'heybox.enabled' },
+      { id: 'content', label: '内容平台' },
       { id: 'local', label: '本地接口' },
       { id: 'browser', label: '浏览器' },
       { id: 'tools', label: '外置工具' },
@@ -953,16 +950,16 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       { id: 'logs', label: '日志' },
     ]
     // 内置标签页属于哪个模块：模块都没在跑就不显示这一页（语音识别 asr 已并入「语音」页）
-    const TAB_MODS = { voice: ['voice'], stickers: ['stickers'], imagegen: ['imagegen'], diary: ['diary', 'qzone-social'], speakup: ['speakup', 'purpose'], pet: ['pet'], mood: ['mood', 'memory'], persona: ['memory'], song: ['song'], bili: ['bili'], douyin: ['douyin'], heybox: ['heybox'], autotelic: ['autotelic'] }
+    const TAB_MODS = { voice: ['voice'], stickers: ['stickers'], imagegen: ['imagegen'], diary: ['diary', 'qzone-social'], speakup: ['speakup', 'purpose'], pet: ['pet'], mood: ['mood', 'memory'], memory: ['memory', 'persona'], song: ['song'], content: ['bili', 'douyin', 'heybox'], autotelic: ['autotelic'] }
     const modOn = (st, id) => (st.modules || []).some((m) => m.id === id && m.running)
 
     // 两层导航：上面一排是分组，下面一排是这组里的页面；每组记住上次看的那页，Alt+K 查找功能
     // （分组导航的思路来自社区贡献的「导航布局」扩展，这里改成面板自己实现）
     const NAV_GROUPS = [
       { id: 'home', label: '概览', icon: 'M3 10.5 12 3l9 7.5M5.5 9v11.5h13V9M10 20.5v-6h4v6', tabs: ['overview', 'manage'] },
-      { id: 'self', label: '人设', icon: 'M12 12.5a4.25 4.25 0 1 0 0-8.5 4.25 4.25 0 0 0 0 8.5zM4.5 20.5c.9-3.6 3.9-5.5 7.5-5.5s6.6 1.9 7.5 5.5', tabs: ['character', 'group', 'speakup', 'autotelic', 'mood', 'memory', 'persona'] },
+      { id: 'self', label: '人设', icon: 'M12 12.5a4.25 4.25 0 1 0 0-8.5 4.25 4.25 0 0 0 0 8.5zM4.5 20.5c.9-3.6 3.9-5.5 7.5-5.5s6.6 1.9 7.5 5.5', tabs: ['character', 'group', 'speakup', 'autotelic', 'mood', 'memory'] },
       { id: 'express', label: '表达', icon: 'M20.5 11.5a8 8 0 0 1-11.7 7.1L4 20l1.4-4.4A8 8 0 1 1 20.5 11.5zM9 13.2s1.1 1.5 3 1.5 3-1.5 3-1.5M9.5 9.6h.01M14.5 9.6h.01', tabs: ['voice', 'stickers', 'imagegen', 'song', 'pet'] },
-      { id: 'platform', label: '平台', icon: 'M3.5 6.5h17v11h-17zM10.5 9.8v4.4l3.8-2.2z', tabs: ['diary', 'bili', 'douyin', 'heybox'] },
+      { id: 'platform', label: '平台', icon: 'M3.5 6.5h17v11h-17zM10.5 9.8v4.4l3.8-2.2z', tabs: ['diary', 'content'] },
       { id: 'system', label: '系统', icon: 'M4 7h9M17 7h3M4 12h3M11 12h9M4 17h11M19 17h1M15 5v4M9 10v4M17 15v4', tabs: ['platforms', 'connect', 'model', 'access', 'browser', 'tools', 'security', 'backup', 'about', 'logs'] },
       { id: 'market', label: '模块', icon: 'M4 9.5 5.5 4h13L20 9.5M4 9.5a2.7 2.7 0 0 0 5.3 0 2.7 2.7 0 0 0 5.4 0 2.7 2.7 0 0 0 5.3 0M5.5 12.5V20h13v-7.5M10 20v-4.5h4V20', tabs: ['market', 'modules', 'local'] },
     ]
@@ -973,10 +970,10 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       (t.ext && PLATFORM_EXT.test(t.label) ? NAV_GROUPS[3] : NAV_GROUPS[4])
     const navOrder = (g, t) => { const i = g.tabs.indexOf(t.id); return i >= 0 ? i : g.tabs.length - (g.tabs.includes('logs') ? 1.5 : 0) }
     const NAV_ALIAS = {
-      overview: '首页 状态', manage: '管理功能 开关 启用 停用 可选功能', tools: '外置工具 ffmpeg python uv git edge-tts', connect: 'qq 网关 snowluma onebot 登录 工作区', character: '人设 性格 设定 头像', persona: '人物 画像 小档案 群印象 梗概 时间轴 相处经验 说话方式', access: '主人 白名单 权限 群管 改资料',
+      overview: '首页 状态', manage: '管理功能 开关 启用 停用 可选功能', tools: '外置工具 ffmpeg python uv git edge-tts', connect: 'qq 网关 snowluma onebot 登录 工作区', character: '人设 性格 设定 头像', access: '主人 白名单 权限 群管 改资料',
       group: '群聊 插话 合并', model: 'ai 大模型 视觉 思考强度', voice: '语音 tts 说话 音色 edge 语音识别 听语音 转文字 asr 语音转文本', stickers: '表情 小黄脸 gif 商城表情',
-      imagegen: '画图 图片', diary: '空间 说说 日记', speakup: '搭话 主动', autotelic: '自驱 自主 后台 账本 审计 做梦 立项', mood: '心情', memory: '记忆 星图 联想 翻一翻 向量 重排', song: '唱歌 翻唱 rvc 点歌',
-      bili: 'b站 bilibili 视频', douyin: '抖音 短视频 私信', pet: '桌宠 宠物 悬浮窗 气泡 electron', local: '本地 接口 sd sovits', browser: '浏览器 侧边 侧边栏 ego 共享 独立窗口', security: '安全 防护 ssrf 内网 图片 下载', modules: '扩展 自己写 模板 安全模式', market: '模块 市场 插件 社区 下载 安装 桌宠 抖音 小黑盒 群管', logs: '日志 报错', about: '关于 关于我们 版本 许可 鸣谢 开源', backup: '备份 恢复 换电脑 迁移 导入 导出',
+      imagegen: '画图 图片', diary: '空间 说说 日记', speakup: '搭话 主动', autotelic: '自驱 自主 后台 账本 审计 做梦 立项', mood: '心情', memory: '记忆 星图 联想 翻一翻 向量 重排 人物 画像 小档案 群印象 梗概 时间轴 相处经验 说话方式', song: '唱歌 翻唱 rvc 点歌',
+      content: '内容平台 抖音 b站 bilibili 小黑盒 短视频 私信 刷视频', pet: '桌宠 宠物 悬浮窗 气泡 electron', local: '本地 接口 sd sovits', browser: '浏览器 侧边 侧边栏 ego 共享 独立窗口', security: '安全 防护 ssrf 内网 图片 下载', modules: '扩展 自己写 模板 安全模式', market: '模块 市场 插件 社区 下载 安装 桌宠 抖音 小黑盒 群管', logs: '日志 报错', about: '关于 关于我们 版本 许可 鸣谢 开源', backup: '备份 恢复 换电脑 迁移 导入 导出',
     }
     const navIcon = (d) => h('svg', { viewBox: '0 0 24 24', 'aria-hidden': true }, h('path', { d }))
     // connections 是平台连接快照数组（平台/实例/连接阶段）；推不出 QQ 网关状态时返回 null、保留旧值不动。
@@ -4763,6 +4760,23 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
 
     // 「心情与记忆」拆成两页：心情只管情绪状态和半衰期，记忆页管记忆库、星图、整理、联想、向量检索。
     // 一页塞十几组设置太挤（实测要滚好几屏才能看到保存条），拆开后各管各的、找设置更快。
+    /**
+     * 记忆页外壳：「记忆条目」/「人物」两个子视图共用一个页签（照 VoiceTab 模式）。
+     * 关键约束：人物视图（PersonaMemory）只在 view==='person' 时挂载——不挂载即不拉人物列表。
+     */
+    function MemoryTab({ memoryView, setMemoryView, st, draft, setDraft, toast, go }) {
+      // 未传/异常值时归一化到默认「记忆条目」，避免两个页签都没有选中态
+      const view = memoryView === 'person' ? 'person' : 'entries'
+      const seg = h('div', { className: 'ab-seg', role: 'tablist', 'aria-label': '记忆子视图' },
+        h('button', { type: 'button', role: 'tab', 'aria-selected': view === 'entries', className: cx(view === 'entries' && 'on'), onClick: () => setMemoryView('entries') }, '记忆条目'),
+        h('button', { type: 'button', role: 'tab', 'aria-selected': view === 'person', className: cx(view === 'person' && 'on'), onClick: () => setMemoryView('person') }, '人物'))
+      return h('div', null,
+        h('div', { className: 'ab-flex', style: { margin: '0 0 12px' } }, seg),
+        view === 'person'
+          ? h(PersonaMemory, { toast })
+          : h(MemoryPage, { st, draft, setDraft, toast, go }))
+    }
+
     function MemoryPage({ st, draft, setDraft, toast }) {
       const f = useField(draft, setDraft)
       const [mem, setMem] = useState(null)
@@ -4899,6 +4913,8 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
           h(AssocPreview, { toast }),
         ),
 
+        // 低频参数统一收进「更多设置」折叠卡（defaultOpen=false：默认不展开，展开区才挂载控件）
+        h(Card, { title: '更多设置（3 项）', desc: '向量检索、重排候选、分层记忆与遗忘：都是调优用的低频参数，不改也能正常用。', collapsible: true, defaultOpen: false },
         h(Fold, { title: '向量检索（实验性）', icon: '🧭',
           summary: stats ? '已同步 ' + (stats.vector || 0) + ' / ' + (stats.count || 0) + ' 条' : '' },
           h('div', { className: 'ab-note' }, '默认关闭。打开后可以按意思找记忆：推荐用自带的本地小模型（纯离线、不联网、不花钱）；也可以改成自己的在线服务，那时会把记忆文字和查询文字发给你填的地址。'),
@@ -5026,6 +5042,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
           h(Row, { label: '把细节浓缩成长期印象', hint: '具体的事慢慢淡忘，留下更概括的关系和感受（比如「主人很疼她，总惦记她爱吃的东西」）。这些印象不会被自动整理改掉，也不会过期；手动加的和你自己总结的不会被压缩。每次整理最多多两次模型调用，默认开。' }, f.sw('memory.compress')),
           h(Row, { label: '多久以前的事开始浓缩', hint: '这些天以前的琐碎记忆才会被概括；最近的事先留着具体细节。默认 14 天' }, f.num('memory.compressAfterDays', { min: 1, max: 365 }), h('span', { className: 'ab-muted' }, '天')),
           h(Row, { label: '私聊时想起别处的话', hint: '和你私聊时，带上她最近 24 小时在别的聊天里说过的话，每轮多占约 300 字。只进你的私聊，别处一律不带。默认关。' }, f.sw('memory.crossContext')),
+        ),
         ),
 
         h(Fold, { title: '手动加一条', icon: '✍️', summary: '你想让她一定记住的事' },
@@ -7652,6 +7669,38 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         m.panel ? h(ExtPanel, { m, settings, draftSettings, setSettings, toast, reload }) : null)
     }
 
+    const CONTENT_PLATFORMS = [
+      { id: 'bili', label: 'B站', mod: 'bili' },
+      { id: 'douyin', label: '抖音', mod: 'douyin' },
+      { id: 'heybox', label: '小黑盒', mod: 'heybox' },
+    ]
+
+    /**
+     * 内容平台页外壳：B站 / 抖音 / 小黑盒 三个子视图共用一个页签。
+     * 只挂载选中的平台——不选不挂载，各平台数据互不拉取。
+     * 默认取首个当前可用的平台（boot.modules 里对应模块 running）；
+     * 尊重 aurabot.content-view 上次选择，存的平台若不可用则回落首个可用。
+     */
+    function ContentTab({ contentView, setContentView, boot, st, draft, setDraft, toast }) {
+      const mods = (boot && boot.modules) || (st && st.modules) || []
+      const avail = CONTENT_PLATFORMS.filter((p) => mods.some((m) => m && m.id === p.mod && m.running))
+      const usable = avail.length ? avail.map((p) => p.id) : CONTENT_PLATFORMS.map((p) => p.id)
+      const picked = usable.includes(contentView) ? contentView : usable[0]
+      const seg = h('div', { className: 'ab-seg', role: 'tablist', 'aria-label': '内容平台子视图' },
+        CONTENT_PLATFORMS.map((p) => h('button', {
+          key: p.id, type: 'button', role: 'tab',
+          'aria-selected': picked === p.id,
+          className: cx(picked === p.id && 'on'),
+          // 模块没在跑的也允许点进去看设置/登录状态，只是默认不选它
+          onClick: () => setContentView(p.id),
+        }, p.label)))
+      return h('div', null,
+        h('div', { className: 'ab-flex', style: { margin: '0 0 12px' } }, seg),
+        picked === 'bili' ? h(Bili, { draft, setDraft, toast })
+          : picked === 'douyin' ? h(Douyin, { draft, setDraft, toast })
+            : h(Heybox, { draft, setDraft, toast }))
+    }
+
     const BILI_KIND = { watch: '看了', comment: '评论', reply: '回复', share: '分享给你', shot: '发你截图', error: '没成功' }
 
     /** B 站：登录、定时刷、评论 / 回复、分享给主人，以及她刷过什么。 */
@@ -9469,6 +9518,34 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
             localStorage.setItem('aurabot.navlast', JSON.stringify(last))
             localStorage.setItem('aurabot.voice-tab-v1', '1')
           }
+          // 人物记忆（persona）已并入「记忆」页：旧页签迁到 memory，并记住要看「人物」子视图。
+          // 排在 persona-tab-v2 之后：更早的 persona = 旧人格页，仍按历史规则归到 character。
+          if (!localStorage.getItem('aurabot.memory-tab-v1')) {
+            let last = {}
+            try { last = JSON.parse(localStorage.getItem('aurabot.navlast') || '{}') || {} } catch (e) {}
+            if (localStorage.getItem('aurabot.tab') === 'persona') {
+              localStorage.setItem('aurabot.tab', 'memory')
+              localStorage.setItem('aurabot.memory-view', 'person')
+            }
+            for (const key of Object.keys(last)) if (last[key] === 'persona') last[key] = 'memory'
+            localStorage.setItem('aurabot.navlast', JSON.stringify(last))
+            localStorage.setItem('aurabot.memory-tab-v1', '1')
+          }
+          // B站 / 抖音 / 小黑盒已并入「内容平台」：旧页签迁到 content + 对应子视图。
+          if (!localStorage.getItem('aurabot.content-tab-v1')) {
+            let last = {}
+            try { last = JSON.parse(localStorage.getItem('aurabot.navlast') || '{}') || {} } catch (e) {}
+            const cur = localStorage.getItem('aurabot.tab')
+            if (cur === 'bili' || cur === 'douyin' || cur === 'heybox') {
+              localStorage.setItem('aurabot.tab', 'content')
+              localStorage.setItem('aurabot.content-view', cur)
+            }
+            for (const key of Object.keys(last)) {
+              if (last[key] === 'bili' || last[key] === 'douyin' || last[key] === 'heybox') last[key] = 'content'
+            }
+            localStorage.setItem('aurabot.navlast', JSON.stringify(last))
+            localStorage.setItem('aurabot.content-tab-v1', '1')
+          }
           return localStorage.getItem('aurabot.tab') || 'overview'
         } catch (e) { return 'overview' }
       })
@@ -9477,6 +9554,12 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       const [voiceView, setVoiceView] = useState(() => { try { return localStorage.getItem('aurabot.voice-view') === 'listen' ? 'listen' : 'send' } catch (e) { return 'send' } })
       // 切换子视图时记住选择：下次进来还停在同一视图
       const pickVoiceView = (v) => { setVoiceView(v); try { localStorage.setItem('aurabot.voice-view', v) } catch (e) {} }
+      // 记忆页子视图：'entries' 记忆条目 / 'person' 人物（旧「人物记忆」页迁入 person）
+      const [memoryView, setMemoryView] = useState(() => { try { return localStorage.getItem('aurabot.memory-view') === 'person' ? 'person' : 'entries' } catch (e) { return 'entries' } })
+      const pickMemoryView = (v) => { setMemoryView(v); try { localStorage.setItem('aurabot.memory-view', v) } catch (e) {} }
+      // 内容平台子视图：bili / douyin / heybox（旧三个独立页签迁入这里）
+      const [contentView, setContentView] = useState(() => { try { return localStorage.getItem('aurabot.content-view') || '' } catch (e) { return '' } })
+      const pickContentView = (v) => { setContentView(v); try { localStorage.setItem('aurabot.content-view', v) } catch (e) {} }
       const [wizardOpen, setWizardOpen] = useState(false)
       const [boot, setBoot] = useState(null)         // /panel/bootstrap 成功摘要
       const [bootErr, setBootErr] = useState(null)   // { code, message }：TIMEOUT / BOOTSTRAPPING / CONNECT / AUTH / STATE / CONFIG
@@ -9808,7 +9891,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       const conn = st.onebot.state === 'connected'
       const status = !cfg.enabled ? { cls: '', text: '休息中（总开关关着）' } : !conn ? { cls: 'err', text: 'QQ 没连上' } : cfg.debug ? { cls: 'warn', text: '在线 · 调试' } : cfg.dryRun ? { cls: 'warn', text: '在线 · 试运行' } : { cls: 'ok', text: '在线' }
       const persona = st.personas.find((p) => p.id === cfg.persona.current)
-      const props = { st, boot, draft, setDraft: setD, toast, reload, go, openWizard: () => setWizardOpen(true), voiceView, setVoiceView: pickVoiceView }
+      const props = { st, boot, draft, setDraft: setD, toast, reload, go, openWizard: () => setWizardOpen(true), voiceView, setVoiceView: pickVoiceView, memoryView, setMemoryView: pickMemoryView, contentView, setContentView: pickContentView }
       const showWizard = !cfg.setupDone || wizardOpen
       // 标签页：内置的按模块在不在跑决定显示；自己写的模块有设置或面板的各占一页
       const mods = st.modules || []
@@ -9843,10 +9926,10 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       const curTab = tabs.find((t) => t.id === tab) || tabs[0]
       const body = curTab.ext ? ExtPage : {
         overview: Overview, platforms: Platforms, manage: Manage, tools: Tools, connect: Connect, character: Persona, access: Access, group: Group, model: Model, voice: VoiceTab,
-        stickers: Stickers, imagegen: ImageGen, diary: Diary, speakup: SpeakUp, autotelic: Autotelic, pet: PetPanel, mood: Mood, memory: MemoryPage, persona: PersonaMemory, song: Song, bili: Bili, douyin: Douyin, heybox: Heybox, local: LocalApi, browser: Browser, security: Security, market: Market, modules: Modules, logs: Logs, about: About, backup: Backup,
+        stickers: Stickers, imagegen: ImageGen, diary: Diary, speakup: SpeakUp, autotelic: Autotelic, pet: PetPanel, mood: Mood, memory: MemoryTab, song: Song, content: ContentTab, local: LocalApi, browser: Browser, security: Security, market: Market, modules: Modules, logs: Logs, about: About, backup: Backup,
       }[curTab.id] || Overview
       // 哪些标签有没保存的改动
-      const TAB_KEYS = { platforms: ['platforms'], tools: [], connect: ['snowluma', 'botQQ'], access: ['ownerQQ', 'ownerName', 'ownerLevel', 'approvalNotify', 'approvalViaQQ', 'qqApi', 'longTasks', 'profilePerms', 'subagentBackground'], group: ['group', 'merge', 'titleFilter', 'chat'], model: ['model', 'chatModels'], voice: ['voice'], stickers: ['stickers'], imagegen: ['imageGen'], diary: ['diary', 'qzoneSocial'], speakup: ['speakUp'], autotelic: [], pet: [], mood: ['mood', 'memory'], song: ['song'], bili: ['bili'], douyin: ['douyin'], heybox: ['heybox'], local: ['local'], browser: ['browser'], security: ['security', 'update'] }
+      const TAB_KEYS = { platforms: ['platforms'], tools: [], connect: ['snowluma', 'botQQ'], access: ['ownerQQ', 'ownerName', 'ownerLevel', 'approvalNotify', 'approvalViaQQ', 'qqApi', 'longTasks', 'profilePerms', 'subagentBackground'], group: ['group', 'merge', 'titleFilter', 'chat'], model: ['model', 'chatModels'], voice: ['voice'], stickers: ['stickers'], imagegen: ['imageGen'], diary: ['diary', 'qzoneSocial'], speakup: ['speakUp'], autotelic: [], pet: [], mood: ['mood', 'memory'], song: ['song'], content: ['bili', 'douyin', 'heybox'], local: ['local'], browser: ['browser'], security: ['security', 'update'] }
       const tabDirty = (id) => {
         if (!dirty) return false
         // 对基线（/panel/config 快照）比对，不对比 st.config——pulse 只更新展示，不代表草稿基线
