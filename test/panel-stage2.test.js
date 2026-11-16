@@ -113,7 +113,7 @@ const findAll = (node, pred, out = []) => {
   return out
 }
 const text = (node) => (node == null || node === false || node === true ? '' : typeof node !== 'object' ? String(node) : Array.isArray(node) ? node.map(text).join('') : text(node.children))
-const featureCard = (tree, label) => find(tree, (n) => typeof n.type === 'string' && n.props && String(n.props.className || '').includes('ab-mod') && text(n).includes(label))
+const featureCard = (tree, label) => find(tree, (n) => typeof n.type === 'string' && n.props && String(n.props.className || '').includes('ab-manage-card') && text(n).includes(label))
 
 // ================= 1. 导航常量契约 =================
 

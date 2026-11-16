@@ -699,6 +699,18 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
 .ab-mod .what{color:var(--ab-dim);font-size:11.5px;margin-top:4px;word-break:break-word}
 .ab-mod .acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 .ab-mod .side{display:flex;flex-direction:column;align-items:flex-end;gap:6px}
+/* 管理功能页：模块项卡片网格（替代原行式布局，提高横向空间利用率；窄窗自动降为单列） */
+.ab-manage-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;align-items:stretch}
+.ab-manage-card{display:flex;flex-direction:column;gap:8px;padding:14px 16px;border:1px solid var(--ab-line);border-radius:12px;background:var(--ab-card);min-width:0}
+/* 受限/失败：告警色边框 + 卡底，提示需要处理（色值沿用 .ab-badge.warn 的告警色，不引入新颜色） */
+.ab-manage-card.is-blocked{border-color:rgba(191,135,0,.35);background:var(--ab-card-2)}
+.ab-manage-card.is-off,.ab-manage-card.is-absent{background:var(--ab-card-2)}
+.ab-manage-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.ab-manage-name{font-weight:600;font-size:13.5px;min-width:0;overflow-wrap:anywhere}
+.ab-manage-desc{color:var(--ab-sub);font-size:12.5px;line-height:1.55;flex:1 1 auto}
+.ab-manage-reason{margin:0;font-size:12.5px}
+/* 操作区固定在卡片底部，保证同排卡片按钮对齐 */
+.ab-manage-acts{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:auto;padding-top:2px}
 .ab-code{font-family:ui-monospace,Consolas,monospace;font-size:11.5px;background:var(--ab-card-2);border:1px solid var(--ab-line);border-radius:8px;padding:8px 10px;white-space:pre-wrap;word-break:break-all;margin:6px 0 0}
 `
     function useStyle() {
@@ -1326,21 +1338,26 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         const badge = { ok: ['ok', '可用'], blocked: ['warn', '受限'], off: ['', '已停用'], absent: ['', '未安装'] }[kind]
         return { f, kind, reason, badge, ms, userOff }
       })
-      const section = (title, desc, list) => (list.length ? h(Card, { title, desc }, h('div', { className: 'ab-grid' }, list.map(({ f, kind, reason, badge, ms }) => h('div', { key: f.key, className: 'ab-mod' },
-        h('div', { className: 'main' },
-          h('div', { className: 'nm' }, f.label, h('span', { className: cx('ab-badge', badge[0]) }, badge[1])),
-          h('div', { className: 'ds' }, f.desc),
-          reason ? h('div', { className: 'ab-note warn', style: { marginTop: 6 } }, reason) : null,
-          h('div', { className: 'acts' },
-            h(Btn, { small: true, kind: kind === 'ok' ? 'primary' : undefined, onClick: () => go(f.tab) }, kind === 'ok' ? '去设置' : '打开设置'),
-            kind === 'blocked' ? h(Btn, { small: true, onClick: () => go('logs') }, '看日志排障') : null,
-            kind === 'absent' ? h(Btn, { small: true, onClick: () => go('market') }, '去安装') : null)),
-        h('div', { className: 'side' },
-          ms.length ? h(Switch, {
-            on: ms.some((m) => m.enabled !== false),
-            onChange: (v) => setEnabled(ms[0].id, v),
-            title: '启用 / 停用这个功能',
-          }) : null))))) : null)
+      // 卡片网格：每项一张卡（头部=名称+状态徽标 / 正文=说明与原因 / 底部=操作区）。
+      // 行为与行式布局时完全一致：kind 判定、按钮文案、/save 流程都没动，只换 DOM 结构与样式。
+      const section = (title, desc, list) => (list.length ? h(Card, { title, desc }, h('div', { className: 'ab-manage-grid' }, list.map(({ f, kind, reason, badge, ms }) => h('div', {
+        key: f.key,
+        className: cx('ab-manage-card', kind === 'blocked' && 'is-blocked', kind === 'off' && 'is-off', kind === 'absent' && 'is-absent'),
+      },
+      h('div', { className: 'ab-manage-head' },
+        h('span', { className: 'ab-manage-name' }, f.label),
+        h('span', { className: cx('ab-badge', badge[0]) }, badge[1])),
+      h('div', { className: 'ab-manage-desc' }, f.desc),
+      reason ? h('div', { className: 'ab-note warn ab-manage-reason' }, reason) : null,
+      h('div', { className: 'ab-manage-acts' },
+        h(Btn, { small: true, kind: kind === 'ok' ? 'primary' : undefined, onClick: () => go(f.tab) }, kind === 'ok' ? '去设置' : '打开设置'),
+        kind === 'blocked' ? h(Btn, { small: true, onClick: () => go('logs') }, '看日志排障') : null,
+        kind === 'absent' ? h(Btn, { small: true, onClick: () => go('market') }, '去安装') : null,
+        ms.length ? h(Switch, {
+          on: ms.some((m) => m.enabled !== false),
+          onChange: (v) => setEnabled(ms[0].id, v),
+          title: '启用 / 停用这个功能',
+        }) : null))))) : null)
       return h('div', { className: 'ab-grid' },
         h('div', { className: 'ab-note' }, '这里汇总所有可选功能，按状态分组。想更细地调参数，点「去设置」进各自页面。'),
         section('正常可用', '已启用并在运行的功能。', rows.filter((r) => r.kind === 'ok')),
