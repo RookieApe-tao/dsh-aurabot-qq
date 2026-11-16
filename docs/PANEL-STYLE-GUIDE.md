@@ -31,19 +31,38 @@
 | 项 | 值 | 说明 |
 | --- | --- | --- |
 | 容器 | `.ab-manage-grid` | `display:grid` |
-| 列 | `repeat(auto-fill, minmax(280px, 1fr))` | 宽度够就多列，最窄 280px |
+| 列 | `repeat(auto-fill, minmax(180px, 1fr))` | 宽度够就多列，最窄 **180px** |
 | 间距 | `gap:12px` | 与面板既有 `.ab-grid{gap:12px}` 一致 |
 | 对齐 | `align-items:stretch` | 同一排卡片等高，操作区靠底对齐 |
-| 窄窗行为 | **无需单独断点** | `auto-fill + minmax(280px,1fr)` 在容器 < 280px 时自动降为单列 |
+| 窄窗行为 | **无需单独断点** | `auto-fill` 在放不下一列时自动降为单列 |
+
+**为什么是 180px（不是 280px）**：DSH 面板内容区偏窄，且本页每张卡外面还套了一层 `Card`（左右各约 16px 内边距）。
+初版取 `minmax(280px,1fr)`，在约 420px 的内容宽下 `auto-fill` 只算得出 **1 列**，用户实测反馈「宽度还是占满了整行」。
+收窄到 180px 后，**窄容器（380~560px）稳定排 2 列**，620px 以上排 3 列：
+
+| 容器可用宽度 | 列数（180px + gap 12） |
+| --- | --- |
+| 380px | 2 |
+| 420px | 2 |
+| 460px | 2 |
+| 520px | 2 |
+| 560px | 2 |
+| 620px | 3 |
+
+> **踩坑提示**：面板是窄容器，直接抄宽 minmax（280+) 会退化成单列，看起来「跟行式没区别」。
+> 给窄容器做卡片网格，minmax 建议 170~200px，并给正文补 `min-width:0; overflow-wrap:anywhere` 防止长英文/URL 横向溢出。
 
 > 复用提示：任何「等宽信息卡列表」都可以直接抄这四行，不必写媒体查询。
+
+**分组留白是结构性的**：9 项按四类状态分组，每组**各自一个 grid**（实测各组卡片数 `[2,2,2,3]`）。
+某组只有 1 张卡时右侧留白属正常——要的是卡片形式，不是把不同状态混排塞满一行。
 
 #### 单卡结构
 
 `div.ab-manage-card[.is-blocked|.is-off|.is-absent]`，纵向 flex、`gap:8px`、`padding:14px 16px`、`border-radius:12px`：
 
 1. **头部** `.ab-manage-head`：`span.ab-manage-name`（模块名）+ `span.ab-badge[.ok|.warn|.dim]`（状态徽标），flex + wrap。
-2. **正文** `.ab-manage-desc`：一句话说明；`flex:1 1 auto` 把操作区顶到卡底。
+2. **正文** `.ab-manage-desc`：一句话说明；`flex:1 1 auto` 把操作区顶到卡底；带 `min-width:0; overflow-wrap:anywhere` 防窄列横向溢出。
 3. **原因**（仅受限/失败）：`div.ab-note.warn.ab-manage-reason`，沿用既有 `.ab-note.warn` 告警样式。
 4. **操作区** `.ab-manage-acts`：`margin-top:auto` 固定贴底，保证同排卡片按钮水平对齐。
 
