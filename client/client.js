@@ -9575,6 +9575,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       const [lastSyncAt, setLastSyncAt] = useState(0) // 最近一次 pulse 成功时间（失败时保留旧数据并标注更新时间）
       const toastTimer = useRef(null)
       const dirtyRef = useRef(false)
+      const draftBaseRef = useRef(null)      // 草稿基线（/panel/config 快照；dirty/tabDirty/save 回执都靠它）
       const saveRef = useRef(null)
       const pluginStartRef = useRef(0)
       // kind：ok / err / 不填 = 普通
