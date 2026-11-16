@@ -707,7 +707,9 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
 /* 受限/失败：告警色边框 + 卡底，提示需要处理（色值沿用 .ab-badge.warn 的告警色，不引入新颜色） */
 .ab-manage-card.is-blocked{border-color:rgba(191,135,0,.35);background:var(--ab-card-2)}
 .ab-manage-card.is-off,.ab-manage-card.is-absent{background:var(--ab-card-2)}
-.ab-manage-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+/* 卡片头部：名称+徽标左对齐，启用开关右对齐（两端对齐） */
+.ab-manage-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+/* 名称过长时折行，开关不被挤（开关在 JSX 里另加 flex-shrink:0） */
 .ab-manage-name{font-weight:600;font-size:13.5px;min-width:0;overflow-wrap:anywhere}
 .ab-manage-desc{color:var(--ab-sub);font-size:12.5px;line-height:1.55;flex:1 1 auto;min-width:0;overflow-wrap:anywhere}
 .ab-manage-reason{margin:0;font-size:12.5px}
@@ -1346,20 +1348,20 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         key: f.key,
         className: cx('ab-manage-card', kind === 'blocked' && 'is-blocked', kind === 'off' && 'is-off', kind === 'absent' && 'is-absent'),
       },
+      // 头部两端对齐：左=名称+徽标，右=启用开关（开关逻辑与之前完全一致，只是位置从操作区挪上来）
       h('div', { className: 'ab-manage-head' },
-        h('span', { className: 'ab-manage-name' }, f.label),
-        h('span', { className: cx('ab-badge', badge[0]) }, badge[1])),
+        h('span', { className: 'ab-manage-name' }, f.label, h('span', { className: cx('ab-badge', badge[0]) }, badge[1])),
+        ms.length ? h('span', { style: { flexShrink: 0 } }, h(Switch, {
+          on: ms.some((m) => m.enabled !== false),
+          onChange: (v) => setEnabled(ms[0].id, v),
+          title: '启用 / 停用这个功能',
+        })) : null),
       h('div', { className: 'ab-manage-desc' }, f.desc),
       reason ? h('div', { className: 'ab-note warn ab-manage-reason' }, reason) : null,
       h('div', { className: 'ab-manage-acts' },
         h(Btn, { small: true, kind: kind === 'ok' ? 'primary' : undefined, onClick: () => go(f.tab) }, kind === 'ok' ? '去设置' : '打开设置'),
         kind === 'blocked' ? h(Btn, { small: true, onClick: () => go('logs') }, '看日志排障') : null,
-        kind === 'absent' ? h(Btn, { small: true, onClick: () => go('market') }, '去安装') : null,
-        ms.length ? h(Switch, {
-          on: ms.some((m) => m.enabled !== false),
-          onChange: (v) => setEnabled(ms[0].id, v),
-          title: '启用 / 停用这个功能',
-        }) : null))))) : null)
+        kind === 'absent' ? h(Btn, { small: true, onClick: () => go('market') }, '去安装') : null))))) : null)
       return h('div', { className: 'ab-grid' },
         h('div', { className: 'ab-note' }, '这里汇总所有可选功能，按状态分组。想更细地调参数，点「去设置」进各自页面。'),
         section('正常可用', '已启用并在运行的功能。', rows.filter((r) => r.kind === 'ok')),

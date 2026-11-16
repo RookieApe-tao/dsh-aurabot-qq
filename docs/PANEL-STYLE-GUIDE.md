@@ -61,25 +61,31 @@
 
 `div.ab-manage-card[.is-blocked|.is-off|.is-absent]`，纵向 flex、`gap:8px`、`padding:14px 16px`、`border-radius:12px`：
 
-1. **头部** `.ab-manage-head`：`span.ab-manage-name`（模块名）+ `span.ab-badge[.ok|.warn|.dim]`（状态徽标），flex + wrap。
+1. **头部** `.ab-manage-head`：**两端对齐**（`justify-content:space-between`），左侧 `span.ab-manage-name`（模块名 + 内嵌 `span.ab-badge[.ok|.warn|.dim]` 状态徽标），右侧启用开关。
+   - 名称带 `min-width:0; overflow-wrap:anywhere`，长名折行不撑破卡片；
+   - 开关外层包 `span{flex-shrink:0}`，名称再长也不会把开关挤扁。
 2. **正文** `.ab-manage-desc`：一句话说明；`flex:1 1 auto` 把操作区顶到卡底；带 `min-width:0; overflow-wrap:anywhere` 防窄列横向溢出。
 3. **原因**（仅受限/失败）：`div.ab-note.warn.ab-manage-reason`，沿用既有 `.ab-note.warn` 告警样式。
-4. **操作区** `.ab-manage-acts`：`margin-top:auto` 固定贴底，保证同排卡片按钮水平对齐。
+4. **操作区** `.ab-manage-acts`：只放动作按钮（打开设置 / 看日志排障 / 去安装）；`margin-top:auto` 固定贴底，保证同排卡片按钮水平对齐。
+
+> 阅读顺序：**头部（名称徽标 ↔ 开关）→ 说明 → 原因 → 操作区**。
+> 开关属于「状态控制」，放头部右侧与名称同行，一眼能看出这项开没开；操作区只留「去别处做什么」的跳转按钮，职责不混。
 
 #### 四类状态视觉
 
-| 状态 | kind | 卡片类名 | 徽标 | 卡片底色/边框 | 操作区 |
-| --- | --- | --- | --- | --- | --- |
-| 可用 | `ok` | （无） | `ab-badge.ok`（蓝底白字） | 默认卡底 `--ab-card` + `--ab-line` 边框 | 去设置（primary）+ 开关 |
-| 受限/失败 | `blocked` | `is-blocked` | `ab-badge.warn`（黄） | 告警色边框 `rgba(191,135,0,.35)` + `--ab-card-2` 底 | 打开设置 + **看日志排障** + 开关 |
-| 已停用 | `off` | `is-off` | `ab-badge`（无修饰，灰调） | `--ab-card-2` 底 | 打开设置 + 开关 |
-| 未安装 | `absent` | `is-absent` | `ab-badge`（灰） | `--ab-card-2` 底 | **去安装**（跳模块市场） |
+| 状态 | kind | 卡片类名 | 徽标 | 卡片底色/边框 | 头部右侧 | 操作区按钮 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 可用 | `ok` | （无） | `ab-badge.ok`（蓝底白字） | 默认卡底 `--ab-card` + `--ab-line` 边框 | 开关 | 去设置（primary） |
+| 受限/失败 | `blocked` | `is-blocked` | `ab-badge.warn`（黄） | 告警色边框 `rgba(191,135,0,.35)` + `--ab-card-2` 底 | 开关 | 打开设置 + **看日志排障** |
+| 已停用 | `off` | `is-off` | `ab-badge`（无修饰，灰调） | `--ab-card-2` 底 | 开关 | 打开设置 |
+| 未安装 | `absent` | `is-absent` | `ab-badge`（灰） | `--ab-card-2` 底 | 无（找不到模块，无开关） | **去安装**（跳模块市场） |
 
 > 告警边框色与既有 `.ab-badge.warn` 同源同色（`rgba(191,135,0,…)`），未引入新色值；其余全部走 `--ab-card` / `--ab-card-2` / `--ab-line` / `--ab-sub`。
 
 #### 交互不变量（布局改造不碰行为）
 
 - 启用/停用仍走既有 `setEnabled` → `POST /save { modules: { [id]: { enabled } } }`，成功后 `reload()` 刷新导航，失败 `toast(err)` 就地提示、不刷新。
+  - 开关位置两次调整（操作区 → 头部右侧），`onChange` 逻辑**始终未改**；无对应模块的项（`ms.length === 0`，如未安装）不渲染开关。
 - 受限项**必须保留**「看日志排障」入口；未安装项保留「去安装」入口 —— 这是方案 §五「严重问题保留明确排障入口」的落地。
 - `kind` 判定逻辑（absent / error / 未运行 / 平台受限 / 用户停用）一行未改，只换了 DOM 结构与类名。
 - 分组标题与说明文案保持原样（正常可用 / 需要处理 / 已停用 / 未安装）。
