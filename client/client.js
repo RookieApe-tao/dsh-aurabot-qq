@@ -922,13 +922,13 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
     const TABS = [
       { id: 'overview', label: '概览' },
       { id: 'platforms', label: '通讯平台' },
+      { id: 'manage', label: '管理功能' },
       { id: 'connect', label: '连接QQ' },
       { id: 'character', label: '人格' },
       { id: 'access', label: '权限' },
       { id: 'group', label: '聊天', flag: 'group' },
       { id: 'model', label: '模型' },
       { id: 'voice', label: '语音', flag: 'voice.enabled' },
-      { id: 'asr', label: '语音识别', flag: 'voice.asr' },
       { id: 'stickers', label: '表情包', flag: 'stickers.enabled' },
       { id: 'imagegen', label: '生图', flag: 'imageGen.enabled' },
       { id: 'diary', label: '空间日记', flag: 'diary.enabled' },
@@ -952,16 +952,16 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       { id: 'about', label: '关于' },
       { id: 'logs', label: '日志' },
     ]
-    // 内置标签页属于哪个模块：模块都没在跑就不显示这一页
-    const TAB_MODS = { voice: ['voice'], asr: ['voice'], stickers: ['stickers'], imagegen: ['imagegen'], diary: ['diary', 'qzone-social'], speakup: ['speakup', 'purpose'], pet: ['pet'], mood: ['mood', 'memory'], persona: ['memory'], song: ['song'], bili: ['bili'], douyin: ['douyin'], heybox: ['heybox'], autotelic: ['autotelic'] }
+    // 内置标签页属于哪个模块：模块都没在跑就不显示这一页（语音识别 asr 已并入「语音」页）
+    const TAB_MODS = { voice: ['voice'], stickers: ['stickers'], imagegen: ['imagegen'], diary: ['diary', 'qzone-social'], speakup: ['speakup', 'purpose'], pet: ['pet'], mood: ['mood', 'memory'], persona: ['memory'], song: ['song'], bili: ['bili'], douyin: ['douyin'], heybox: ['heybox'], autotelic: ['autotelic'] }
     const modOn = (st, id) => (st.modules || []).some((m) => m.id === id && m.running)
 
     // 两层导航：上面一排是分组，下面一排是这组里的页面；每组记住上次看的那页，Alt+K 查找功能
     // （分组导航的思路来自社区贡献的「导航布局」扩展，这里改成面板自己实现）
     const NAV_GROUPS = [
-      { id: 'home', label: '概览', icon: 'M3 10.5 12 3l9 7.5M5.5 9v11.5h13V9M10 20.5v-6h4v6', tabs: ['overview'] },
+      { id: 'home', label: '概览', icon: 'M3 10.5 12 3l9 7.5M5.5 9v11.5h13V9M10 20.5v-6h4v6', tabs: ['overview', 'manage'] },
       { id: 'self', label: '人设', icon: 'M12 12.5a4.25 4.25 0 1 0 0-8.5 4.25 4.25 0 0 0 0 8.5zM4.5 20.5c.9-3.6 3.9-5.5 7.5-5.5s6.6 1.9 7.5 5.5', tabs: ['character', 'group', 'speakup', 'autotelic', 'mood', 'memory', 'persona'] },
-      { id: 'express', label: '表达', icon: 'M20.5 11.5a8 8 0 0 1-11.7 7.1L4 20l1.4-4.4A8 8 0 1 1 20.5 11.5zM9 13.2s1.1 1.5 3 1.5 3-1.5 3-1.5M9.5 9.6h.01M14.5 9.6h.01', tabs: ['voice', 'asr', 'stickers', 'imagegen', 'song', 'pet'] },
+      { id: 'express', label: '表达', icon: 'M20.5 11.5a8 8 0 0 1-11.7 7.1L4 20l1.4-4.4A8 8 0 1 1 20.5 11.5zM9 13.2s1.1 1.5 3 1.5 3-1.5 3-1.5M9.5 9.6h.01M14.5 9.6h.01', tabs: ['voice', 'stickers', 'imagegen', 'song', 'pet'] },
       { id: 'platform', label: '平台', icon: 'M3.5 6.5h17v11h-17zM10.5 9.8v4.4l3.8-2.2z', tabs: ['diary', 'bili', 'douyin', 'heybox'] },
       { id: 'system', label: '系统', icon: 'M4 7h9M17 7h3M4 12h3M11 12h9M4 17h11M19 17h1M15 5v4M9 10v4M17 15v4', tabs: ['platforms', 'connect', 'model', 'access', 'browser', 'tools', 'security', 'backup', 'about', 'logs'] },
       { id: 'market', label: '模块', icon: 'M4 9.5 5.5 4h13L20 9.5M4 9.5a2.7 2.7 0 0 0 5.3 0 2.7 2.7 0 0 0 5.4 0 2.7 2.7 0 0 0 5.3 0M5.5 12.5V20h13v-7.5M10 20v-4.5h4V20', tabs: ['market', 'modules', 'local'] },
@@ -973,8 +973,8 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       (t.ext && PLATFORM_EXT.test(t.label) ? NAV_GROUPS[3] : NAV_GROUPS[4])
     const navOrder = (g, t) => { const i = g.tabs.indexOf(t.id); return i >= 0 ? i : g.tabs.length - (g.tabs.includes('logs') ? 1.5 : 0) }
     const NAV_ALIAS = {
-      overview: '首页 状态', tools: '外置工具 ffmpeg python uv git edge-tts', connect: 'qq 网关 snowluma onebot 登录 工作区', character: '人设 性格 设定 头像', persona: '人物 画像 小档案 群印象 梗概 时间轴 相处经验 说话方式', access: '主人 白名单 权限 群管 改资料',
-      group: '群聊 插话 合并', model: 'ai 大模型 视觉 思考强度', voice: '语音 tts 说话 音色 edge', asr: '语音识别 听语音 转文字 asr 语音转文本', stickers: '表情 小黄脸 gif 商城表情',
+      overview: '首页 状态', manage: '管理功能 开关 启用 停用 可选功能', tools: '外置工具 ffmpeg python uv git edge-tts', connect: 'qq 网关 snowluma onebot 登录 工作区', character: '人设 性格 设定 头像', persona: '人物 画像 小档案 群印象 梗概 时间轴 相处经验 说话方式', access: '主人 白名单 权限 群管 改资料',
+      group: '群聊 插话 合并', model: 'ai 大模型 视觉 思考强度', voice: '语音 tts 说话 音色 edge 语音识别 听语音 转文字 asr 语音转文本', stickers: '表情 小黄脸 gif 商城表情',
       imagegen: '画图 图片', diary: '空间 说说 日记', speakup: '搭话 主动', autotelic: '自驱 自主 后台 账本 审计 做梦 立项', mood: '心情', memory: '记忆 星图 联想 翻一翻 向量 重排', song: '唱歌 翻唱 rvc 点歌',
       bili: 'b站 bilibili 视频', douyin: '抖音 短视频 私信', pet: '桌宠 宠物 悬浮窗 气泡 electron', local: '本地 接口 sd sovits', browser: '浏览器 侧边 侧边栏 ego 共享 独立窗口', security: '安全 防护 ssrf 内网 图片 下载', modules: '扩展 自己写 模板 安全模式', market: '模块 市场 插件 社区 下载 安装 桌宠 抖音 小黑盒 群管', logs: '日志 报错', about: '关于 关于我们 版本 许可 鸣谢 开源', backup: '备份 恢复 换电脑 迁移 导入 导出',
     }
@@ -1276,6 +1276,80 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
           ),
         ),
         h(RecentLogs, { go }),
+      )
+    }
+
+    /**
+     * 「管理功能」页：把散在各页的可选功能收在一处，按四类状态展示。
+     * 判定来源 = 阶段一 bootstrap 摘要（boot.modules：enabled/running/availability/error）+ 对应配置键。
+     * 四类：ready（正常可用）→ 去设置；blocked（启用但平台受限/启动失败）→ 原因 + 排障入口；
+     *       off（用户停用）→ 启用入口；absent（未安装）→ 安装入口。
+     */
+    const MANAGE_FEATURES = [
+      { key: 'voice', label: '语音', desc: '让她用语音条说话：<voice> 标出来的部分会变成语音。', tab: 'voice', flag: 'voice.enabled', cli: 'voice' },
+      { key: 'stickers', label: '表情包', desc: '会挑合适的表情一起发，也能认出你发的表情。', tab: 'stickers', flag: 'stickers.enabled', cli: 'stickers' },
+      { key: 'imagegen', label: '生图', desc: '按描述画图发给你。', tab: 'imagegen', flag: 'imageGen.enabled', cli: 'imagegen' },
+      { key: 'song', label: '翻唱', desc: '用 RVC 翻唱一段发给你。', tab: 'song', flag: 'song.enabled', cli: 'song' },
+      { key: 'pet', label: '桌宠', desc: '桌面上的悬浮窗形象，和 QQ 里是同一个她。', tab: 'pet', cli: 'pet' },
+      { key: 'diary', label: '空间日记', desc: '自己写日记、发到空间说说。', tab: 'diary', flag: 'diary.enabled', cli: 'diary' },
+      { key: 'platform', label: '内容平台', desc: '逛 B站 / 抖音 / 小黑盒，看内容也能互动。', tab: 'bili', cli: ['bili', 'douyin', 'heybox'] },
+      { key: 'speakup', label: '主动搭话', desc: '闲着的时候主动来找你说话。', tab: 'speakup', flag: 'speakUp.enabled', cli: 'speakup' },
+      { key: 'autotelic', label: '自驱引擎', desc: '后台自己立项、做事、记账。', tab: 'autotelic', flag: 'ext.autotelic.enabled', cli: 'autotelic' },
+    ]
+
+    function Manage({ st, boot, toast, go, reload, draft }) {
+      const mods = (boot && boot.modules) || st.modules || []
+      // 启用/停用沿用现有保存流程：成功才用回执里的模块表刷新导航，失败就地提示
+      const setEnabled = async (id, on) => {
+        const r = await post('/save', { modules: { [id]: { ...((draft.modules || {})[id] || {}), enabled: on } } })
+        if (r.ok === false) return toast(r.message || '没改成', 'err')
+        toast(on ? '已启用' : '已停用', 'ok')
+        reload()
+      }
+      const find = (id) => mods.find((m) => m && m.id === id)
+      const rows = MANAGE_FEATURES.map((f) => {
+        const ids = Array.isArray(f.cli) ? f.cli : [f.cli]
+        const ms = ids.map(find).filter(Boolean)
+        const cfgOn = f.flag ? getPath(st.config, f.flag) !== false && Boolean(getPath(st.config, f.flag)) : true
+        const anyRunning = ms.some((m) => m.running)
+        const anyError = ms.find((m) => m.availability === 'error')
+        const userOff = ms.length ? ms.every((m) => m.enabled === false) : false
+        const absent = !ms.length || ms.every((m) => m.availability === 'unloaded')
+        // 平台受限：模块声明了 platforms，但当前连接里没有它支持的平台
+        const plats = ms.flatMap((m) => m.platforms || [])
+        const conns = ((boot && boot.connections) || []).map((c) => String(c.platform || '').toLowerCase())
+        const limited = plats.length > 0 && conns.length > 0 && !plats.some((p) => conns.includes(String(p).toLowerCase()))
+        let kind = 'ok'
+        let reason = ''
+        if (absent) { kind = 'absent' }
+        else if (anyError) { kind = 'blocked'; reason = anyError.error || '启动时出错了' }
+        else if (ms.some((m) => m.enabled !== false) && !anyRunning) { kind = 'blocked'; reason = '已启用，但没在运行' }
+        else if (limited && anyRunning) { kind = 'blocked'; reason = '已启用，但当前连接的平台不支持（需要 ' + plats.join(' / ') + '）' }
+        else if (userOff || !cfgOn) { kind = 'off' }
+        const badge = { ok: ['ok', '可用'], blocked: ['warn', '受限'], off: ['', '已停用'], absent: ['', '未安装'] }[kind]
+        return { f, kind, reason, badge, ms, userOff }
+      })
+      const section = (title, desc, list) => (list.length ? h(Card, { title, desc }, h('div', { className: 'ab-grid' }, list.map(({ f, kind, reason, badge, ms }) => h('div', { key: f.key, className: 'ab-mod' },
+        h('div', { className: 'main' },
+          h('div', { className: 'nm' }, f.label, h('span', { className: cx('ab-badge', badge[0]) }, badge[1])),
+          h('div', { className: 'ds' }, f.desc),
+          reason ? h('div', { className: 'ab-note warn', style: { marginTop: 6 } }, reason) : null,
+          h('div', { className: 'acts' },
+            h(Btn, { small: true, kind: kind === 'ok' ? 'primary' : undefined, onClick: () => go(f.tab) }, kind === 'ok' ? '去设置' : '打开设置'),
+            kind === 'blocked' ? h(Btn, { small: true, onClick: () => go('logs') }, '看日志排障') : null,
+            kind === 'absent' ? h(Btn, { small: true, onClick: () => go('market') }, '去安装') : null)),
+        h('div', { className: 'side' },
+          ms.length ? h(Switch, {
+            on: ms.some((m) => m.enabled !== false),
+            onChange: (v) => setEnabled(ms[0].id, v),
+            title: '启用 / 停用这个功能',
+          }) : null))))) : null)
+      return h('div', { className: 'ab-grid' },
+        h('div', { className: 'ab-note' }, '这里汇总所有可选功能，按状态分组。想更细地调参数，点「去设置」进各自页面。'),
+        section('正常可用', '已启用并在运行的功能。', rows.filter((r) => r.kind === 'ok')),
+        section('需要处理', '已启用但没跑起来：可能是启动失败，或当前连接的平台不支持。', rows.filter((r) => r.kind === 'blocked')),
+        section('已停用', '你手动关掉的功能，点开关就能重新启用。', rows.filter((r) => r.kind === 'off')),
+        section('未安装', '还没装上的功能，去模块市场装，或在内置页里打开。', rows.filter((r) => r.kind === 'absent')),
       )
     }
 
@@ -3139,9 +3213,6 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
               ? h(Row, { key: 'b', label: '请求体', hint: '{text} 换成要念的话（自动转义），{reqid} 换成每次不同的随机串' }, f.area('voice.http.body', { size: 'wide', rows: 6, placeholder: '{"app":{"appid":"你的appid","token":"随便填","cluster":"volcano_tts"},"user":{"uid":"aurabot"},"audio":{"voice_type":"zh_female_wanwanxiaohe_moon_bigtts","encoding":"mp3"},"request":{"reqid":"{reqid}","text":"{text}"}}' }))
               : null,
           ] : null,
-          h(Row, { label: '短回复变语音的概率' }, f.percent('voice.autoChance')),
-          h(Row, { label: '多短算短回复' }, f.range('voice.autoMaxChars', 10, 200, 5, (v) => v + ' 字')),
-          h(Row, { label: '表情和语音分开发', hint: '语音条里的表情 / emoji 不念出来，语音发完再单独补一条文字发出去（没有表情就不补）；关掉 = 表情直接丢掉，不补发' }, f.sw('voice.emojiSeparate')),
           h(Row, { label: '试听', hint: '用当前页面设置试听（没保存也生效；本地接口不会把这里顶掉）' },
             h('input', { className: 'ab-input', value: txt, onChange: (e) => setTxt(e.target.value) }),
             h(Btn, { small: true, onClick: async () => {
@@ -3152,11 +3223,31 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
             } }, '生成'),
             src ? h('audio', { key: src, src, controls: true, autoPlay: true, style: { height: 32 } }) : null),
         ),
+        // 低频参数收进折叠卡：默认不展开，展开区才挂载（不展开就不渲染、不注册控件）
+        h(Card, { title: '更多设置（3 项）', desc: '什么时候自动变语音、表情和语音怎么分开发。不改也能正常用。', collapsible: true, defaultOpen: false },
+          h(Row, { label: '短回复变语音的概率' }, f.percent('voice.autoChance')),
+          h(Row, { label: '多短算短回复' }, f.range('voice.autoMaxChars', 10, 200, 5, (v) => v + ' 字')),
+          h(Row, { label: '表情和语音分开发', hint: '语音条里的表情 / emoji 不念出来，语音发完再单独补一条文字发出去（没有表情就不补）；关掉 = 表情直接丢掉，不补发' }, f.sw('voice.emojiSeparate'))),
         h(VoiceSongModel, { draft, setDraft }),
       )
     }
 
-    /** 语音识别单独一页：和「语音」「表情包」同级，不再塞在语音合成下面。 */
+    /**
+     * 语音页外壳：发语音 / 听语音两个子视图共用一个页签。
+     * 关键约束：听语音（Asr）只在 view==='listen' 时挂载——不挂载即不发请求、不跑轮询。
+     */
+    function VoiceTab({ voiceView, setVoiceView, st, draft, setDraft, toast, reload }) {
+      const seg = h('div', { className: 'ab-seg', role: 'tablist', 'aria-label': '语音子视图' },
+        h('button', { type: 'button', role: 'tab', 'aria-selected': voiceView === 'send', className: cx(voiceView === 'send' && 'on'), onClick: () => setVoiceView('send') }, '发语音'),
+        h('button', { type: 'button', role: 'tab', 'aria-selected': voiceView === 'listen', className: cx(voiceView === 'listen' && 'on'), onClick: () => setVoiceView('listen') }, '听语音'))
+      return h('div', null,
+        h('div', { className: 'ab-flex', style: { margin: '0 0 12px' } }, seg),
+        voiceView === 'listen'
+          ? h(Asr, { draft, setDraft, toast })
+          : h(Voice, { st, draft, setDraft, toast, reload }))
+    }
+
+    /** 语音识别：作为「语音」页的「听语音」子视图渲染（不再单独占页签）。 */
     function Asr({ draft, setDraft, toast }) {
       const f = useField(draft, setDraft)
       return h('div', { className: 'ab-grid' },
@@ -9366,10 +9457,26 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
             localStorage.setItem('aurabot.navlast', JSON.stringify(last))
             localStorage.setItem('aurabot.persona-tab-v2', '1')
           }
+          // 语音识别（asr）已并入「语音」页：旧页签迁到 voice，并记住要看「听语音」子视图。
+          if (!localStorage.getItem('aurabot.voice-tab-v1')) {
+            let last = {}
+            try { last = JSON.parse(localStorage.getItem('aurabot.navlast') || '{}') || {} } catch (e) {}
+            if (localStorage.getItem('aurabot.tab') === 'asr') {
+              localStorage.setItem('aurabot.tab', 'voice')
+              localStorage.setItem('aurabot.voice-view', 'listen')
+            }
+            for (const key of Object.keys(last)) if (last[key] === 'asr') last[key] = 'voice'
+            localStorage.setItem('aurabot.navlast', JSON.stringify(last))
+            localStorage.setItem('aurabot.voice-tab-v1', '1')
+          }
           return localStorage.getItem('aurabot.tab') || 'overview'
         } catch (e) { return 'overview' }
       })
       const [toastMsg, setToastMsg] = useState(null)
+      // 语音页子视图：'send' 发语音 / 'listen' 听语音（旧「语音识别」页迁入 listen）
+      const [voiceView, setVoiceView] = useState(() => { try { return localStorage.getItem('aurabot.voice-view') === 'listen' ? 'listen' : 'send' } catch (e) { return 'send' } })
+      // 切换子视图时记住选择：下次进来还停在同一视图
+      const pickVoiceView = (v) => { setVoiceView(v); try { localStorage.setItem('aurabot.voice-view', v) } catch (e) {} }
       const [wizardOpen, setWizardOpen] = useState(false)
       const [boot, setBoot] = useState(null)         // /panel/bootstrap 成功摘要
       const [bootErr, setBootErr] = useState(null)   // { code, message }：TIMEOUT / BOOTSTRAPPING / CONNECT / AUTH / STATE / CONFIG
@@ -9701,7 +9808,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       const conn = st.onebot.state === 'connected'
       const status = !cfg.enabled ? { cls: '', text: '休息中（总开关关着）' } : !conn ? { cls: 'err', text: 'QQ 没连上' } : cfg.debug ? { cls: 'warn', text: '在线 · 调试' } : cfg.dryRun ? { cls: 'warn', text: '在线 · 试运行' } : { cls: 'ok', text: '在线' }
       const persona = st.personas.find((p) => p.id === cfg.persona.current)
-      const props = { st, draft, setDraft: setD, toast, reload, go, openWizard: () => setWizardOpen(true) }
+      const props = { st, boot, draft, setDraft: setD, toast, reload, go, openWizard: () => setWizardOpen(true), voiceView, setVoiceView: pickVoiceView }
       const showWizard = !cfg.setupDone || wizardOpen
       // 标签页：内置的按模块在不在跑决定显示；自己写的模块有设置或面板的各占一页
       const mods = st.modules || []
@@ -9735,11 +9842,11 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       tabs.splice(tabs.findIndex((t) => t.id === 'logs'), 0, ...extTabs)
       const curTab = tabs.find((t) => t.id === tab) || tabs[0]
       const body = curTab.ext ? ExtPage : {
-        overview: Overview, platforms: Platforms, tools: Tools, connect: Connect, character: Persona, access: Access, group: Group, model: Model, voice: Voice, asr: Asr,
+        overview: Overview, platforms: Platforms, manage: Manage, tools: Tools, connect: Connect, character: Persona, access: Access, group: Group, model: Model, voice: VoiceTab,
         stickers: Stickers, imagegen: ImageGen, diary: Diary, speakup: SpeakUp, autotelic: Autotelic, pet: PetPanel, mood: Mood, memory: MemoryPage, persona: PersonaMemory, song: Song, bili: Bili, douyin: Douyin, heybox: Heybox, local: LocalApi, browser: Browser, security: Security, market: Market, modules: Modules, logs: Logs, about: About, backup: Backup,
       }[curTab.id] || Overview
       // 哪些标签有没保存的改动
-      const TAB_KEYS = { platforms: ['platforms'], tools: [], connect: ['snowluma', 'botQQ'], access: ['ownerQQ', 'ownerName', 'ownerLevel', 'approvalNotify', 'approvalViaQQ', 'qqApi', 'longTasks', 'profilePerms', 'subagentBackground'], group: ['group', 'merge', 'titleFilter', 'chat'], model: ['model', 'chatModels'], voice: ['voice'], asr: ['voice'], stickers: ['stickers'], imagegen: ['imageGen'], diary: ['diary', 'qzoneSocial'], speakup: ['speakUp'], autotelic: [], pet: [], mood: ['mood', 'memory'], song: ['song'], bili: ['bili'], douyin: ['douyin'], heybox: ['heybox'], local: ['local'], browser: ['browser'], security: ['security', 'update'] }
+      const TAB_KEYS = { platforms: ['platforms'], tools: [], connect: ['snowluma', 'botQQ'], access: ['ownerQQ', 'ownerName', 'ownerLevel', 'approvalNotify', 'approvalViaQQ', 'qqApi', 'longTasks', 'profilePerms', 'subagentBackground'], group: ['group', 'merge', 'titleFilter', 'chat'], model: ['model', 'chatModels'], voice: ['voice'], stickers: ['stickers'], imagegen: ['imageGen'], diary: ['diary', 'qzoneSocial'], speakup: ['speakUp'], autotelic: [], pet: [], mood: ['mood', 'memory'], song: ['song'], bili: ['bili'], douyin: ['douyin'], heybox: ['heybox'], local: ['local'], browser: ['browser'], security: ['security', 'update'] }
       const tabDirty = (id) => {
         if (!dirty) return false
         // 对基线（/panel/config 快照）比对，不对比 st.config——pulse 只更新展示，不代表草稿基线
