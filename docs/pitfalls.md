@@ -60,3 +60,10 @@ ode --test "test/replay/**/*.test.js"。
 - 解决：把「能不能点」和「默认选哪个」拆开——`all`（全部平台，用于校验并沿用上次选择）+ `defaultId`（running 的第一个，仅作默认值），`picked = all.includes(contentView) ? contentView : defaultId`。改 `repo/client/client.js` ContentTab。
 - 教训：**「可用集合」不能既当白名单又当选择校验**，否则未启用项的点击会被静默弹回；抓「点击后 setState 但渲染值来自过滤集合」的回流。面板交互问题优先读渲染函数本身，别先怀疑 CSS 遮挡/事件绑定。
 - 涉及文件/命令：`repo/client/client.js`（ContentTab，约 L8333-8353）；验证 `node --check`（拷 .mjs）+ `node --test test/panel-stage2.test.js test/group-panel-layout.test.js test/panel-root-render.test.js`。
+
+## 2026-11-17 内容平台页点抖音/小黑盒整页崩「Cannot read properties of undefined (reading 'length')」
+- 现象：接上一条修好「按钮点不动」后，点抖音/小黑盒立刻变成「这一页出错了」，错误信息 `Cannot read properties of undefined (reading 'length')`。
+- 原因：两个平台模块没在跑 → `/douyin/state`、`/heybox/state` 路由不存在 → `get()` 的 `.catch` 返回 `{ok:false,message}`（**没有 history 字段**）→ `setS` 把它当正常 state 存进 `s` → 渲染层 `s.history.length` 直接对 undefined 取属性。`!s ? 加载中 : s.history.length===0` 这种写法只防了「s 为 null」，没防「s 存在但缺字段」。B站页同理（L8445）只是它模块在跑才没暴露。
+- 解决：①渲染层改成 `!Array.isArray(s.history) || s.history.length === 0`（B站/抖音两处）；②ContentTab 层加 `runningOf(picked)` 判断——模块没在跑就不挂载子组件，直接渲染「这个平台还没启用」提示卡，从根上不发那个必然失败、必然返回残对象的请求。
+- 教训：`!s ? ... : s.field.length` 只挡 null，挡不住 `{ok:false}` 这类残对象；接口失败兜底对象是 `{ok:false,message}`，凡进入渲染的 API 结果都要按「可能只含 ok/message」设防。**优先在容器层判断「组件该不该挂载」，而不是在每个子组件里补容错**——前者一次解决，后者容易漏（三个组件只改了两个才是常态）。
+- 涉及文件/命令：`repo/client/client.js`（ContentTab L8333-8370、Bili L8445、Douyin L8625）；`get()` 定义在 L18（catch 返回 `{ok:false,message}`）。
