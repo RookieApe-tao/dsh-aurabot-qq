@@ -966,6 +966,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       { id: 'diary', label: '空间日记', flag: 'diary.enabled' },
       { id: 'speakup', label: '目的引擎', flag: 'ext.purpose.enabled' },
       { id: 'autotelic', label: '自驱引擎', flag: 'ext.autotelic.enabled' },
+      { id: 'persona-runtime', label: '人格运行时', flag: 'ext.persona-runtime.enabled' },
       { id: 'pet', label: '桌宠' },
       { id: 'mood', label: '心情', flag: 'mood.enabled' },
       { id: 'memory', label: '记忆', flag: 'memory.enabled' },
@@ -982,14 +983,14 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       { id: 'logs', label: '日志' },
     ]
     // 内置标签页属于哪个模块：模块都没在跑就不显示这一页（语音识别 asr 已并入「语音」页）
-    const TAB_MODS = { voice: ['voice'], stickers: ['stickers'], imagegen: ['imagegen'], video: ['video'], diary: ['diary', 'qzone-social'], speakup: ['speakup', 'purpose'], pet: ['pet'], mood: ['mood', 'memory'], memory: ['memory', 'persona'], song: ['song'], content: ['bili', 'douyin', 'heybox'], autotelic: ['autotelic'] }
+    const TAB_MODS = { voice: ['voice'], stickers: ['stickers'], imagegen: ['imagegen'], video: ['video'], diary: ['diary', 'qzone-social'], speakup: ['speakup', 'purpose'], pet: ['pet'], mood: ['mood', 'memory'], memory: ['memory', 'persona'], song: ['song'], content: ['bili', 'douyin', 'heybox'], autotelic: ['autotelic'], 'persona-runtime': ['persona-runtime'] }
     const modOn = (st, id) => (st.modules || []).some((m) => m.id === id && m.running)
 
     // 两层导航：上面一排是分组，下面一排是这组里的页面；每组记住上次看的那页，Alt+K 查找功能
     // （分组导航的思路来自社区贡献的「导航布局」扩展，这里改成面板自己实现）
     const NAV_GROUPS = [
       { id: 'home', label: '概览', icon: 'M3 10.5 12 3l9 7.5M5.5 9v11.5h13V9M10 20.5v-6h4v6', tabs: ['overview', 'manage'] },
-      { id: 'self', label: '人设', icon: 'M12 12.5a4.25 4.25 0 1 0 0-8.5 4.25 4.25 0 0 0 0 8.5zM4.5 20.5c.9-3.6 3.9-5.5 7.5-5.5s6.6 1.9 7.5 5.5', tabs: ['character', 'group', 'speakup', 'autotelic', 'mood', 'memory'] },
+      { id: 'self', label: '人设', icon: 'M12 12.5a4.25 4.25 0 1 0 0-8.5 4.25 4.25 0 0 0 0 8.5zM4.5 20.5c.9-3.6 3.9-5.5 7.5-5.5s6.6 1.9 7.5 5.5', tabs: ['character', 'group', 'speakup', 'autotelic', 'persona-runtime', 'mood', 'memory'] },
       { id: 'express', label: '表达', icon: 'M20.5 11.5a8 8 0 0 1-11.7 7.1L4 20l1.4-4.4A8 8 0 1 1 20.5 11.5zM9 13.2s1.1 1.5 3 1.5 3-1.5 3-1.5M9.5 9.6h.01M14.5 9.6h.01', tabs: ['voice', 'stickers', 'imagegen', 'video', 'song', 'pet'] },
       { id: 'platform', label: '平台', icon: 'M3.5 6.5h17v11h-17zM10.5 9.8v4.4l3.8-2.2z', tabs: ['diary', 'content'] },
       { id: 'system', label: '系统', icon: 'M4 7h9M17 7h3M4 12h3M11 12h9M4 17h11M19 17h1M15 5v4M9 10v4M17 15v4', tabs: ['platforms', 'connect', 'model', 'access', 'browser', 'tools', 'security', 'backup', 'about', 'logs'] },
@@ -1004,7 +1005,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
     const NAV_ALIAS = {
       overview: '首页 状态', manage: '管理功能 开关 启用 停用 可选功能', tools: '外置工具 ffmpeg python uv git edge-tts', connect: 'qq 网关 snowluma onebot 登录 工作区', character: '人设 性格 设定 头像', access: '主人 白名单 权限 群管 改资料',
       group: '群聊 发言 白名单 仅模块 主动 窗口 插话 旁听 静默 合并 不回应 不理 屏蔽 黑名单 通用设置 继续回应 回复方式 权限与限制', model: 'ai 大模型 视觉 思考强度', voice: '语音 tts 说话 音色 edge 语音识别 听语音 转文字 asr 语音转文本', stickers: '表情 小黄脸 gif 商城表情',
-      imagegen: '画图 图片', video: '视频 生视频 拍视频', diary: '空间 说说 日记', speakup: '搭话 主动 目的引擎 目的 素材 立目标 小闹钟 追问', autotelic: '自驱 自主 后台 账本 审计 做梦 立项', mood: '心情', memory: '记忆 星图 联想 翻一翻 向量 重排 人物 画像 小档案 群印象 梗概 时间轴 相处经验 说话方式', song: '唱歌 翻唱 rvc 点歌',
+      imagegen: '画图 图片', video: '视频 生视频 拍视频', diary: '空间 说说 日记', speakup: '搭话 主动 目的引擎 目的 素材 立目标 小闹钟 追问', autotelic: '自驱 自主 后台 账本 审计 做梦 立项', 'persona-runtime': '人格 运行时 自我意识 情感 语气 情绪 残余 每轮 回复 注入 超管 接管', mood: '心情', memory: '记忆 星图 联想 翻一翻 向量 重排 人物 画像 小档案 群印象 梗概 时间轴 相处经验 说话方式', song: '唱歌 翻唱 rvc 点歌',
       content: '内容平台 抖音 b站 bilibili 小黑盒 短视频 私信 刷视频', pet: '桌宠 宠物 悬浮窗 气泡 electron', local: '本地 接口 sd sovits', browser: '浏览器 侧边 侧边栏 ego 共享 独立窗口', security: '安全 防护 ssrf 内网 图片 下载', modules: '扩展 自己写 模板 安全模式', market: '模块 市场 插件 社区 下载 安装 桌宠 抖音 小黑盒 群管', logs: '日志 报错', about: '关于 关于我们 版本 许可 鸣谢 开源', backup: '备份 恢复 换电脑 迁移 导入 导出',
     }
     const navIcon = (d) => h('svg', { viewBox: '0 0 24 24', 'aria-hidden': true }, h('path', { d }))
@@ -4520,6 +4521,197 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       return h('div', { className: 'ab-flex', style: { alignItems: 'center', gap: 8 } },
         h('input', { className: 'ab-input', type: 'number', min, max, style: { width: '84px' }, value: Number(value), onChange: (e) => { const v = Number(e.target.value); if (Number.isFinite(v)) onChange(v) } }),
         suffix ? h('span', { className: 'ab-muted ab-small', style: { whiteSpace: 'nowrap' } }, suffix) : null)
+    }
+
+    // ============ 人格运行时（persona-runtime）页 ============
+    // 设计与自驱引擎页分开两页（D7）。写法照目的引擎页（状态 pill + 卡片）与记忆页（列表操作）：
+    // 纯行式 Row、复用 Card/Btn/Empty/ab-pill/ab-note，不发明新样式类。
+    // 本页只做三件事：让主人看清她在每条消息里是谁、哪一段被注入了、闸门在哪。
+    const RT_SWITCH_GROUPS = [
+      {
+        title: '体验开关（她是谁）',
+        desc: '关掉哪一段，她这轮就少那一层。全关等于「安静日的她」——人格卡基线 + 心情旧口径，不是陌生人。',
+        keys: [
+          ['selfAware', '自我意识', '「我是谁、在跟谁说话」的稳定指向。关了她只靠人格卡正文，长对话可能自称漂移'],
+          ['affectThought', '情感思想', '判断带好恶、有温度。关了就是中性助手腔，有问必答没态度'],
+          ['affectPerceive', '情感感知', '撒娇接得住、抱怨先共情、玩笑不较真。关了是字面理解（「我自己来」她就真不管）'],
+          ['emotionMemory', '情绪记忆', '聊天气氛有连续性。关了每条消息情绪从零开始'],
+          ['agentIdentity', '独立智能体身份', '群聊/被 @ 时以自己的名字与身份应答'],
+        ],
+      },
+      {
+        title: '安全开关（她的权限边界）',
+        desc: '这两个不是语气开关——它们管的是「她在对话里能申报多重的本机动作」。分级与硬禁区永远优先于开关：开了也不会突破硬禁区，只留开关没有审计回滚就是伪安全。',
+        keys: [
+          ['adminMode', '超级管理员', '开：主机级动作（写数据/碰主人侧）可以在对话里申报；关：主机级一律软拒「这个我做不了主」'],
+          ['hostTakeover', '宿主接管', '开：她的所有主机动作一律排队等你亲自放行——永不进「免确认」豁免'],
+        ],
+      },
+    ]
+
+    function PersonaRuntime({ st, draft, setDraft, toast }) {
+      const f = useField(draft, setDraft)
+      const [s, setS] = useState(null)
+      const [pv, setPv] = useState(null) // 零副作用试拼预览
+      const [busy, setBusy] = useState('')
+      const [probeText, setProbeText] = useState('')
+      const load = () => get('/persona-runtime/status').then((r) => { if (r.ok) setS(r); else setS(null) }).catch(() => setS(null))
+      useEffect(() => {
+        load()
+        const t = setInterval(load, 15000) // 与自驱页同节奏
+        return () => { clearInterval(t) }
+      }, [])
+      const act = async (key, path, body) => {
+        setBusy(key)
+        try { const r = await post(path, body || {}); toast(r.message || (r.ok === false ? '没成' : '好了'), r.ok === false ? 'err' : 'ok') }
+        catch (e) { toast(e.message, 'err') } finally { setBusy(''); load() }
+      }
+      const doPreview = async () => {
+        setBusy('preview')
+        try { const r = await post('/persona-runtime/preview', { text: probeText, chatKind: 'private' }); if (r.ok) setPv(r); else toast(r.message || '试拼失败', 'err') }
+        catch (e) { toast(e.message, 'err') } finally { setBusy('') }
+      }
+      const doClear = () => act('clear', '/persona-runtime/emotions/clear')
+      const doIgnite = () => act('ignite', '/persona-runtime/ignite', { reason: '面板手动点火' })
+
+      const pill = (cls, text) => h('span', { className: 'ab-pill' }, h('i', { className: cx('ab-dot', cls) }), text)
+      const fmtAt = (ts) => (Number(ts) ? new Date(Number(ts)).toLocaleString() : '—')
+      const pfx = (s && s.prefix) || {}
+      const res = (s && s.residuals) || { items: [] }
+      const emo = s && s.emotion
+      const brg = (s && s.bridge) || {}
+      const ign = (s && s.ignite) || {}
+
+      const pills = !s ? [pill('', '加载中…')] : [
+        pill(s.enabled ? 'ok' : '', s.enabled ? '人格运行时 开着' : '已关闭（= 安静日的她）'),
+        s.configError ? pill('err', '⚠ 配置读取异常（安全开关按关）') : null,
+        pill(pfx.drift ? 'err' : 'ok', pfx.drift ? '⚠ 前缀漂移' : '前缀同源'),
+        emo && emo.top ? pill('', '此刻「' + (emo.top.label || emo.top.key) + '」') : pill('', '没有情绪数据'),
+      ].filter(Boolean)
+
+      // ---------- 卡片 1：运行状态 ----------
+      const cardStatus = h(Card, {
+        title: '运行状态',
+        desc: '她每轮回复前会读一遍这几段。这里显示的是「这一层此刻是什么样」——不是另一个引擎，是同一个她在对话里的样子。',
+      },
+        h('div', { className: 'ab-flex', style: { flexWrap: 'wrap', gap: 6, marginBottom: 10 } }, pills),
+        s && s.configError ? h('div', { className: 'ab-note err' }, '配置读不出来，安全开关（超级管理员/宿主接管）已按「关」处理——这是 fail-closed，不是故障。查一下面板设置能不能正常保存。') : null,
+        h(Row, { label: '管理人格运行时', hint: '关掉整层 ≠ 关掉插件；关掉后她依然完整，只是少了这些细腻' }, f.sw('ext.persona-runtime.enabled')),
+        h(Row, { label: '管线触点', hint: '她只在回复管线的这一处被注入，不碰发送、不立项' },
+          h('span', { className: 'ab-small' }, (s && s.pipeline && s.pipeline.touchpoint) || "api.on('prompt')")),
+        h(Row, { label: '注入顺序', hint: '离生成最近的排最后：自我指向权重最高，情绪记忆最先被裁' },
+          h('span', { className: 'ab-small' }, ((s && s.pipeline && s.pipeline.order) || ['perceive', 'affect', 'memory', 'identity']).join(' → '))),
+        h(Row, { label: '落盘文件', hint: '刻意保持薄：只存开关快照，情绪真相在心情模块、前缀在 prefix.js、审计在自驱引擎' },
+          h('span', { className: 'ab-muted ab-small' }, ((s && s.pipeline && s.pipeline.dataDirFiles) || ['runtime.json']).join('、'))),
+        h(Row, { label: '情绪来源', hint: 'Runtime 只读心情模块，不设第二个写入口——她的情绪只有一个真相' },
+          emo ? h('span', { className: 'ab-small' }, (emo.top ? (emo.top.label || emo.top.key) + ' · ' : '') + '强度 ' + (Number(emo.value) || 0) + ' · 更新于 ' + fmtAt(emo.at)) : h('span', { className: 'ab-muted ab-small' }, '心情模块没跑或没有数据')),
+      )
+
+      // ---------- 卡片 2：九开关（两组） ----------
+      const switchRows = RT_SWITCH_GROUPS.map((g) => h('div', { key: g.title, style: { marginBottom: 4 } },
+        h('div', { className: 'ab-small ab-muted', style: { margin: '10px 0 4px 2px' } }, g.title),
+        h('div', { className: 'ab-small ab-muted', style: { margin: '0 0 8px 2px', opacity: 0.85 } }, g.desc),
+        g.keys.map(([key, label, hint]) => h(Row, { key, label, hint }, f.sw('ext.persona-runtime.' + key))),
+      ))
+      const cardSwitches = h(Card, { title: '九个开关', desc: '照主人那张图的口径重排：留四个、收编两个、自留两个、改造一个。' }, switchRows,
+        h('div', { className: 'ab-note' },
+          '主动思考不在这里——它已被改造为「点火入口」：静默期的想事交给自驱引擎的双轨触发（定时回味 + 心念点火），',
+          '她依然会自己想，但只在有纪律的想。点火在下面那张卡里手动试。'),
+      )
+
+      // ---------- 卡片 3：前缀同源（防漂移） ----------
+      const cardPrefix = h(Card, {
+        title: '前缀同源',
+        desc: '人格锚只有一份实现（prefix.js）、一个输入源。下面两个 hash 不一致就说明接线漂移了——那是必须查的信号。',
+      },
+        pfx.drift ? h('div', { className: 'ab-note err' }, '⚠ 前缀不一致：' + (pfx.why || '两边的输入源不同步')) : null,
+        h(Row, { label: '人格运行时 hash' }, h('span', { className: 'ab-small', style: { fontFamily: 'monospace' } }, pfx.runtimeHash || '—')),
+        h(Row, { label: '自驱引擎 hash' }, h('span', { className: 'ab-small', style: { fontFamily: 'monospace' } }, pfx.autotelicHash || '—')),
+        h(Row, { label: '对照结果', hint: '同源 = 两个模块读的是同一份人格锚，不会各持副本' },
+          pfx.drift ? h('span', { className: 'ab-small', style: { color: 'var(--ab-err)' } }, '漂移') : h('span', { className: 'ab-small', style: { color: 'var(--ab-ok)' } }, '一致 ✓')),
+        h(Row, { label: '人格摘要长度', hint: '本能附加段也在里面（本能晋升后长度会变）' },
+          h('span', { className: 'ab-small' }, (pfx.personaChars || 0) + ' / ' + (pfx.personaMax || 1200) + ' 字符' + (pfx.instinctAddonInPersona ? ' · 含本能附加段' : ''))),
+        h(Row, { label: '稳定半段进 system', hint: '变化频率 ≤ 本能晋升级的才允许进 system；每轮变化的绝不进' },
+          h('span', { className: 'ab-small' }, pfx.stableGetsSystem ? '允许（自我意识稳定半段）' : '不注入')),
+      )
+
+      // ---------- 卡片 4：注入预算 + 试拼 ----------
+      const segRows = pv && Array.isArray(pv.segments)
+        ? pv.segments.map((seg) => h(Row, { key: seg.key, label: (seg.label || seg.key) },
+          h('span', { className: 'ab-small' }, (seg.tokens == null ? '—' : seg.tokens + ' token') + (seg.cut ? ' · 已裁' : ''))))
+        : null
+      const cardBudget = h(Card, {
+        title: '注入预算与试拼',
+        desc: '对话注入不是模型调用，是 prompt 拼装——预算管的是「别把每轮撑长」。超预算先裁情绪记忆、再裁感知、再裁思想；人格锚与约束永不裁。',
+      },
+        h(Row, { label: '总注入上限（token）', hint: '超了按钉死顺序降级，永不裁自我意识与人格锚' }, f.num('ext.persona-runtime.rtMaxInjectTokens', { min: 100, max: 4000, step: 50 })),
+        h(Row, { label: '自我意识段' }, f.num('ext.persona-runtime.rtIdentityTokens', { min: 40, max: 800, step: 10 })),
+        h(Row, { label: '情感思想段' }, f.num('ext.persona-runtime.rtAffectTokens', { min: 40, max: 800, step: 10 })),
+        h(Row, { label: '情感感知段' }, f.num('ext.persona-runtime.rtPerceiveTokens', { min: 40, max: 800, step: 10 })),
+        h(Row, { label: '情绪记忆段' }, f.num('ext.persona-runtime.rtMemoryTokens', { min: 40, max: 800, step: 10 })),
+        h('div', { className: 'ab-flex', style: { gap: 8, marginTop: 10, alignItems: 'center' } },
+          h('input', {
+            className: 'ab-input', style: { flex: 1 }, placeholder: '打一句想试的话，看她这轮会看到什么（零副作用，不写盘不动情绪）',
+            value: probeText, onChange: (e) => setProbeText(e.target.value),
+          }),
+          h(Btn, { small: true, disabled: busy === 'preview', onClick: doPreview }, '试拼')),
+        pv ? h('div', { style: { marginTop: 10 } },
+          pv.overflow ? h('div', { className: 'ab-note err' }, '⚠ 超出预算且裁无可裁：' + (pv.overflowReason || '') + (pv.uncutSegments && pv.uncutSegments.length ? '（永不裁：' + pv.uncutSegments.join('、') + '）' : '')) : null,
+          h('div', { className: 'ab-small ab-muted' }, '语气：' + (pv.tone && (pv.tone.label || pv.tone.tone) || '—') + ' · 任务性：' + (pv.taskness && pv.taskness.level || '—') + ' · 合计 ' + (pv.totalTokens || 0) + ' / ' + (pv.budget || 0) + ' token'),
+          segRows ? h('div', { className: 'ab-list', style: { marginTop: 6 } }, segRows) : null,
+          pv.text ? h('div', { className: 'ab-note', style: { marginTop: 8, whiteSpace: 'pre-wrap' } }, pv.text) : h('div', { className: 'ab-muted ab-small' }, '这一段她什么都不用看到（开关可能关着）'),
+          pv.degradation && pv.degradation.length ? h('div', { className: 'ab-small ab-muted', style: { marginTop: 6 } }, '降级记录：' + pv.degradation.join('；')) : null,
+        ) : h('div', { className: 'ab-muted ab-small', style: { marginTop: 8 } }, '点「试拼」看她这一轮会读到什么——不会真的发出去，也不动任何状态。'),
+      )
+
+      // ---------- 卡片 5：情绪残余 ----------
+      const residualRows = (res.items || []).length
+        ? res.items.map((r, i) => h('div', { key: i, className: 'ab-flex', style: { gap: 8, padding: '3px 0', alignItems: 'center' } },
+          h('span', { className: 'ab-badge' }, r.label || r.key || '?'),
+          h('span', { className: 'ab-small', style: { flex: 1 } }, (r.reason || '') + (r.delta == null ? '' : '（' + (r.delta > 0 ? '+' : '') + r.delta + '）')),
+          h('span', { className: 'ab-muted ab-small' }, fmtAt(r.at))))
+        : h(Empty, { icon: '🫧', text: '最近 24 小时没有值得记住的情绪波动' })
+      const cardResidual = h(Card, {
+        title: '情绪残余',
+        desc: '她回味的不只是「发生了什么」，还有「我当时什么感受」。这些小史是从心情现状现场派生的，不落盘、不复制真相。',
+      },
+        h(Row, { label: '摘要' }, h('span', { className: 'ab-small' }, res.summary || '—')),
+        h(Row, { label: '窗口', hint: '超过 24 小时的自动不再注入；最多 5 条' },
+          h('span', { className: 'ab-muted ab-small' }, '近 ' + (res.windowHours || 24) + ' 小时 · 上限 ' + (res.max || 5) + ' 条')),
+        h('div', { className: 'ab-list', style: { margin: '8px 0' } }, residualRows),
+        h('div', { className: 'ab-flex', style: { gap: 8 } },
+          h(Btn, { small: true, disabled: busy === 'clear', onClick: doClear }, '清掉这些展示')),
+        h('div', { className: 'ab-small ab-muted', style: { marginTop: 6 } }, res.note || '清它不动情绪向量——那部分归心情模块半衰，一会儿自己就淡了。'),
+        s && s.lastInjection ? h('div', { className: 'ab-note', style: { marginTop: 10 } },
+          '最近一次真实注入：' + (s.lastInjection.totalTokens || 0) + ' token · 各段 ' +
+          (Array.isArray(s.lastInjection.segments) ? s.lastInjection.segments.map((x) => (x.label || x.key) + ':' + (x.tokens || 0)).join(' / ') : '—')
+        ) : null,
+      )
+
+      // ---------- 卡片 6：两条单向出口 ----------
+      const cardOut = h(Card, {
+        title: '两条单向出口',
+        desc: '她只能往外送两样东西：情绪波动（当作经历喂给自驱引擎）和一次「有件事刚发生」的点火。判断权全在引擎那边——她不决定值不值得想。',
+      },
+        h(Row, { label: '观察桥', hint: '显著情绪波动 → 观察层 emotion 标签：情绪也是经历' },
+          h('span', { className: 'ab-small' }, (brg.pushed == null ? '—' : '已推送 ' + brg.pushed + ' 条') + (brg.lastAt ? ' · 最近 ' + fmtAt(brg.lastAt) : ''))),
+        brg.lastWhy ? h(Row, { label: '最近一次推送' }, h('span', { className: 'ab-muted ab-small' }, brg.lastWhy)) : null,
+        h(Row, { label: '点火入口', hint: '重要对话结束后转发一次；冷却由自驱引擎统一管，防止事件风暴' },
+          h('div', { className: 'ab-flex', style: { gap: 8, alignItems: 'center' } },
+            h('span', { className: 'ab-small' }, (ign.fired == null ? '—' : '已点火 ' + ign.fired + ' 次') + (ign.lastAt ? ' · 最近 ' + fmtAt(ign.lastAt) : '')),
+            h(Btn, { small: true, disabled: busy === 'ignite', onClick: doIgnite }, '现在点火试试'))),
+        h(Row, { label: 'duty 行动申报', hint: '主人在对话里委托她动手时，Runtime 只负责编译成票并标注 kind:duty，执行永远走自驱引擎那一条通道' },
+          h('span', { className: 'ab-small' }, s && s.duty && s.duty.last
+            ? ((s.duty.last.ok ? '放行' : '拦下') + '：' + (s.duty.last.why || s.duty.last.message || '') + ' · ' + fmtAt(s.duty.last.at))
+            : '最近没有申报')),
+        h('div', { className: 'ab-small ab-muted', style: { marginTop: 6 } }, '审计接线：' + (s && s.duty && s.duty.auditWired ? '已接线 ✓' : '未接线（她的动作不会留痕，建议查宿主）')),
+      )
+
+      return h('div', { className: 'ab-page' },
+        cardStatus, cardSwitches, cardPrefix, cardBudget, cardResidual, cardOut,
+        h('div', { className: 'ab-small ab-muted', style: { marginTop: 10 } },
+          '这一层管「她在每条消息里是谁」；对话外的生活（心念、行动、沉淀）在「自驱引擎」页。两页分开，各管各的。'),
+      )
     }
 
     // 「这条任务的流水账」弹窗正文：单任务详情 + 它生命周期内的审计流水。
@@ -10935,7 +11127,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       const curTab = tabs.find((t) => t.id === tab) || tabs[0]
       const body = curTab.ext ? ExtPage : {
         overview: Overview, platforms: Platforms, manage: Manage, tools: Tools, connect: Connect, character: Persona, access: Access, group: Group, model: Model, voice: VoiceTab,
-        stickers: Stickers, imagegen: ImageGen, video: Video, diary: Diary, speakup: SpeakUp, autotelic: Autotelic, pet: PetPanel, mood: Mood, memory: MemoryTab, song: Song, content: ContentTab, local: LocalApi, browser: Browser, security: Security, market: Market, modules: Modules, logs: Logs, about: About, backup: Backup,
+        stickers: Stickers, imagegen: ImageGen, video: Video, diary: Diary, speakup: SpeakUp, autotelic: Autotelic, 'persona-runtime': PersonaRuntime, pet: PetPanel, mood: Mood, memory: MemoryTab, song: Song, content: ContentTab, local: LocalApi, browser: Browser, security: Security, market: Market, modules: Modules, logs: Logs, about: About, backup: Backup,
       }[curTab.id] || Overview
       // 哪些标签有没保存的改动
       // 融合：group 键补上 files/forward（聊天页重组后发文件、合并转发成独立配置域，不补则不显示未保存标记）；
