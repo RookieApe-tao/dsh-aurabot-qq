@@ -75,6 +75,23 @@ test('醒着窗口边界：0/24、24/24、0/0 才是全天（安静 00:00~00:00 
   assert.deepEqual(quietWindowOf(7, 0), { quietStart: '00:00', quietEnd: '07:00' })
 })
 
+test('醒着窗口边界：7/23 当天窗口与跨午夜环绕（非 24 端点的 from>to 不受 24 修复影响）', () => {
+  // 7~23 是普通当天窗口：安静 = 23:00~07:00（不含 24 端点参与）
+  assert.deepEqual(quietWindowOf(7, 23), { quietStart: '23:00', quietEnd: '07:00' })
+  // 9~3 跨午夜环绕保持原语义：醒着 9 点到次日 3 点，安静 3 点–9 点
+  const config = purposeConfig({ speakUp: { awakeFrom: 9, awakeTo: 3 } })
+  assert.equal(config.quietStart, '03:00')
+  assert.equal(config.quietEnd, '09:00')
+  // 行为口径：环绕窗口 3~8 点睡着、9~23 点与 0~2 点醒着
+  const h = (hour) => inHourWindow(new Date(2026, 0, 1, hour).getTime(), 9, 3)
+  assert.equal(h(3), false, '3 点睡着')
+  assert.equal(h(8), false, '8 点睡着')
+  assert.equal(h(9), true, '9 点醒着')
+  assert.equal(h(23), true, '23 点醒着')
+  assert.equal(h(0), true, '0 点（次日凌晨）仍醒着')
+  assert.equal(h(2), true, '2 点仍醒着')
+})
+
 // ---------- 3. 播种（§3.1：只发生一次，只写 ext.purpose，显式关过不覆盖） ----------
 
 /** createModules 最小 harness：只装 purpose 一个内置模块，getConfig/setConfig 用内存配置。
