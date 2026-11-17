@@ -67,3 +67,10 @@ ode --test "test/replay/**/*.test.js"。
 - 解决：①渲染层改成 `!Array.isArray(s.history) || s.history.length === 0`（B站/抖音两处）；②ContentTab 层加 `runningOf(picked)` 判断——模块没在跑就不挂载子组件，直接渲染「这个平台还没启用」提示卡，从根上不发那个必然失败、必然返回残对象的请求。
 - 教训：`!s ? ... : s.field.length` 只挡 null，挡不住 `{ok:false}` 这类残对象；接口失败兜底对象是 `{ok:false,message}`，凡进入渲染的 API 结果都要按「可能只含 ok/message」设防。**优先在容器层判断「组件该不该挂载」，而不是在每个子组件里补容错**——前者一次解决，后者容易漏（三个组件只改了两个才是常态）。
 - 涉及文件/命令：`repo/client/client.js`（ContentTab L8333-8370、Bili L8445、Douyin L8625）；`get()` 定义在 L18（catch 返回 `{ok:false,message}`）。
+
+## 2026-11-17 记忆条目页设置项被 ab-grp-row 网格压成竖排「高卡片」
+- 现象：「记忆 → 记忆条目」页第一组设置（每天自动整理两次 / 自动记忆容量 / 聊天流水留多久 / 合并重复记忆）里，第一项被渲染成占满整列的竖排高卡片，右侧三项是普通列，高度与节奏完全不一致。
+- 原因：这几组 `Row` 被包在 `h('div',{className:'ab-grp-row'})` 里，而 CSS `.ab-grp-row>.ab-row{flex-direction:column;align-items:flex-start}` 会把网格内的 Row 强制竖排、`.ab-ctl{width:100%}` 把控件撑满整列 —— 于是每个 Row 变成一张「窄高卡」而非行。`.ab-grp-row` 本意是「组内自由流式排版」（聊天页在用），不适合承载标准行式设置项。
+- 解决：记忆页三处组行（记忆开关与整理 / 每轮想起多少 / 记忆联想与加深）的 `ab-grp-row` 包裹全部去掉，`Row` 直接纵向排列（label 左、控件右）。聊天页 L2998/3006/3016 的用法保持不动（那边是用户验收过的流式排版）。
+- 教训：`.ab-grp-row` 不是「行容器」而是「网格碎片排版容器」，里面放标准 `Row` 会被 CSS 改写成竖排卡。判断面板设置项该用哪种：**标准参数行一律直接放 `Row`**；只有需要把多个小控件挤在一行内自由换行时才用 `ab-grp-row`。
+- 涉及文件/命令：`repo/client/client.js`（记忆页约 L5304-5378、CSS L727-729）；验证 `node --check` + `node --test test/panel-stage2.test.js test/panel-stage3.test.js test/group-panel-layout.test.js test/panel-root-render.test.js`（41/41）。

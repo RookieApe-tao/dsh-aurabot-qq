@@ -5301,49 +5301,48 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
             h('div', { className: 'ab-card ab-stat' }, h('div', { className: 'n' }, stats ? stats.count : '–'), h('div', { className: 'l' }, '条长期记忆')),
             h('div', { className: 'ab-card ab-stat' }, h('div', { className: 'n' }, stats ? stats.auto : '–'), h('div', { className: 'l' }, '条来自每日整理' + (stats && stats.outdated ? '（另有 ' + stats.outdated + ' 条已过时）' : ''))),
             h('div', { className: 'ab-card ab-stat' }, h('div', { className: 'n', style: { fontSize: 16, paddingTop: 6 } }, last ? new Date(last.at).toLocaleString() : '还没整理过'), h('div', { className: 'l' }, '上次整理'))),
-          h('div', { className: 'ab-grp-row' },
-            h(Row, { label: '每天自动整理两次', hint: '把临时记忆（聊天流水）提炼成长期记忆、相处经验和说话方式；第二次只处理新聊天，过了一天的流水整理完清空；各会话自己的上下文不受影响' },
-              f.sw('memory.dailyConsolidate'), h('span', { className: 'ab-muted' }, '每天'),
-              h('input', { className: 'ab-input sm', type: 'time', value: times[0] || '04:00', onChange: (e) => setTime(0, e.target.value) }),
-              h('span', { className: 'ab-muted' }, '和'),
-              h('input', { className: 'ab-input sm', type: 'time', value: times[1] || '16:00', onChange: (e) => setTime(1, e.target.value) }),
-              h(Btn, { small: true, onClick: async () => { toast('正在整理，可能要一两分钟…'); const r = await post('/memory/extract', {}); toast(r.message); load(); loadIns() } }, '现在整理一次')),
-            h(Row, { label: '自动记忆容量', hint: '默认 3000 条，可调高到 100000；聊天提炼、经历和日记按现有比例分配。手动记忆和分档事实不受此限制，过期与压缩规则照常生效。' },
-              h('input', {
-                className: 'ab-input sm', type: 'number', min: 3000, max: 100000, step: 1, 'aria-label': '自动记忆容量',
-                value: capacityInput === null ? capacityTotal : capacityInput,
-                onFocus: () => { capacityBeforeEdit.current = capacity },
-                onChange: (e) => {
-                  const raw = e.target.value
-                  setCapacityInput(raw)
-                  const n = Number(raw)
-                  if (raw !== '' && Number.isInteger(n) && n >= 3000 && n <= 100000) {
-                    setDraft(setPath(draft, 'memory.capacity', resizeMemoryCapacity(capacityBeforeEdit.current || capacity, n)))
-                  }
-                },
-                onBlur: (e) => {
-                  const n = Number(e.target.value)
-                  if ((e.target.value === '' || !Number.isInteger(n) || n < 3000 || n > 100000) && capacityBeforeEdit.current) {
-                    setDraft(setPath(draft, 'memory.capacity', capacityBeforeEdit.current))
-                  }
-                  capacityBeforeEdit.current = null
-                  setCapacityInput(null)
-                },
-              }), h('span', { className: 'ab-muted' }, '条')),
-            chatlogRow,
-            mergeRow,
-          )),
+          // 记忆设置一律纯行式（label 左、控件右），不用 ab-grp-row 网格——
+          // 网格会把每个 Row 压成竖排窄卡，控件被撑成整列，和旁边的行完全不是一个节奏。
+          h(Row, { label: '每天自动整理两次', hint: '把临时记忆（聊天流水）提炼成长期记忆、相处经验和说话方式；第二次只处理新聊天，过了一天的流水整理完清空；各会话自己的上下文不受影响' },
+            f.sw('memory.dailyConsolidate'), h('span', { className: 'ab-muted' }, '每天'),
+            h('input', { className: 'ab-input sm', type: 'time', value: times[0] || '04:00', onChange: (e) => setTime(0, e.target.value) }),
+            h('span', { className: 'ab-muted' }, '和'),
+            h('input', { className: 'ab-input sm', type: 'time', value: times[1] || '16:00', onChange: (e) => setTime(1, e.target.value) }),
+            h(Btn, { small: true, onClick: async () => { toast('正在整理，可能要一两分钟…'); const r = await post('/memory/extract', {}); toast(r.message); load(); loadIns() } }, '现在整理一次')),
+          h(Row, { label: '自动记忆容量', hint: '默认 3000 条，可调高到 100000；聊天提炼、经历和日记按现有比例分配。手动记忆和分档事实不受此限制，过期与压缩规则照常生效。' },
+            h('input', {
+              className: 'ab-input sm', type: 'number', min: 3000, max: 100000, step: 1, 'aria-label': '自动记忆容量',
+              value: capacityInput === null ? capacityTotal : capacityInput,
+              onFocus: () => { capacityBeforeEdit.current = capacity },
+              onChange: (e) => {
+                const raw = e.target.value
+                setCapacityInput(raw)
+                const n = Number(raw)
+                if (raw !== '' && Number.isInteger(n) && n >= 3000 && n <= 100000) {
+                  setDraft(setPath(draft, 'memory.capacity', resizeMemoryCapacity(capacityBeforeEdit.current || capacity, n)))
+                }
+              },
+              onBlur: (e) => {
+                const n = Number(e.target.value)
+                if ((e.target.value === '' || !Number.isInteger(n) || n < 3000 || n > 100000) && capacityBeforeEdit.current) {
+                  setDraft(setPath(draft, 'memory.capacity', capacityBeforeEdit.current))
+                }
+                capacityBeforeEdit.current = null
+                setCapacityInput(null)
+              },
+            }), h('span', { className: 'ab-muted' }, '条')),
+          chatlogRow,
+          mergeRow,
+          ),
 
         // ===== 可见组行 ② 每轮想起多少（4 项核心参数，行内自由排版）=====
         h(Card, { title: '每轮想起多少',
           desc: '每轮回复前，ta 会按对方正在说的话翻出最相关的几条。这里是「想起多少」的调节。' },
-          h('div', { className: 'ab-grp-row' },
-            h(Row, { label: '每轮最多直接想起几条', hint: '「直接命中」的条数上限：按你说的关键词/意思直接对上的那几条。联想不占这个名额。' }, f.range('memory.recallCount', 0, 12, 1, (v) => v + ' 条')),
-            h(Row, { label: '每轮最多带几条联想', hint: '「间接想起」的条数上限：从上面那几条往外联想出来的。和直接想起各自独立，最后合在一起交给她。' }, f.range('memory.assoc.recall', 0, 8, 1, (v) => v + ' 条')),
-            h(Row, { label: '想起总数上限', hint: '直接 + 联想合起来的总条数；0 = 不额外限制（就等于「直接 N 条 + 联想 M 条」）。调小可以在上下文紧张时封顶。' },
-              f.num('memory.recallTotal', { min: 0, max: 24 }), h('span', { className: 'ab-muted' }, '条')),
-            h(Row, { label: '常驻记忆上限', hint: '每一轮都会带上的长期记忆最多多少字，超了从末尾截断。太小会显得忘事，太大会占上下文；默认 1200，范围 200~4000' }, f.num('memory.residentMaxChars', { min: 200, max: 4000 }), h('span', { className: 'ab-muted' }, '字')),
-          ),
+          h(Row, { label: '每轮最多直接想起几条', hint: '「直接命中」的条数上限：按你说的关键词/意思直接对上的那几条。联想不占这个名额。' }, f.range('memory.recallCount', 0, 12, 1, (v) => v + ' 条')),
+          h(Row, { label: '每轮最多带几条联想', hint: '「间接想起」的条数上限：从上面那几条往外联想出来的。和直接想起各自独立，最后合在一起交给她。' }, f.range('memory.assoc.recall', 0, 8, 1, (v) => v + ' 条')),
+          h(Row, { label: '想起总数上限', hint: '直接 + 联想合起来的总条数；0 = 不额外限制（就等于「直接 N 条 + 联想 M 条」）。调小可以在上下文紧张时封顶。' },
+            f.num('memory.recallTotal', { min: 0, max: 24 }), h('span', { className: 'ab-muted' }, '条')),
+          h(Row, { label: '常驻记忆上限', hint: '每一轮都会带上的长期记忆最多多少字，超了从末尾截断。太小会显得忘事，太大会占上下文；默认 1200，范围 200~4000' }, f.num('memory.residentMaxChars', { min: 200, max: 4000 }), h('span', { className: 'ab-muted' }, '字')),
           h('div', { className: 'ab-note' }, '当前效果：每轮最多直接想起 ' + (draft.memory.recallCount ?? 6) + ' 条 + 联想 ' + (draft.memory.assoc?.recall ?? 3) + ' 条' + ((Number(draft.memory.recallTotal) || 0) > 0 ? '，总数封顶 ' + draft.memory.recallTotal + ' 条' : '（不额外限制总数') + '。'),
           more('更多设置', [
             h(Row, { key: 'pp', label: '私人记忆优先', hint: '想起相关记忆时，如果没在问 B站、视频、最近看了什么，优先带关于某个人 / 她自己记的；问具体视频时仍先想起视频' }, f.sw('memory.preferPersonal')),
@@ -5369,14 +5368,12 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
             ? [h('div', { className: 'ab-note' }, '⏳ 还没有可用的关联：已经有 ' + stats.count + ' 条记忆，系统会在下一分钟自动建边。')]
             : []),
           // 可见组行 ③ 只放 3 个最常用的：联想开关、相似门槛、联想跳数；其余进折叠
-          h('div', { className: 'ab-grp-row' },
-            h(Row, { label: '记忆联想', hint: '已建 ' + (stats && stats.assoc ? stats.assoc : '–') + ' 条关联' + (stats && stats.assocAt ? '（' + new Date(stats.assocAt).toLocaleString() + ' 更新）' : '') }, f.sw('memory.assoc.enabled')),
-            h(Row, { label: '多条相似才算关联', hint: '余弦相似度门槛，越高连得越少越准；默认 45%' }, f.range('memory.assoc.minSim', 0.3, 0.9, 0.05, (v) => Math.round(v * 100) + '%')),
-            h(Row, { label: '联想跳数', hint: '0 关、1 = A→B、2 = A→B→C（默认）、3 最多。再高就是套娃，已封顶。条数上限在上面「每轮最多带几条联想」里调' },
-              h('div', { className: 'ab-flex', style: { gap: 8 } }, ['0', '1', '2', '3'].map((v) => h('label', { key: v, className: 'ab-flex', style: { gap: 4, cursor: 'pointer', alignItems: 'center' } },
-                h('input', { type: 'radio', name: 'memory.assoc.hops', checked: String(draft.memory.assoc?.hops ?? 2) === v, onChange: () => setDraft(setPath(draft, 'memory.assoc.hops', Number(v))) }),
-                h('span', null, v === '0' ? '关' : v === '1' ? '1 跳' : v === '2' ? '2 跳' : '3 跳'))))),
-          ),
+          h(Row, { label: '记忆联想', hint: '已建 ' + (stats && stats.assoc ? stats.assoc : '–') + ' 条关联' + (stats && stats.assocAt ? '（' + new Date(stats.assocAt).toLocaleString() + ' 更新）' : '') }, f.sw('memory.assoc.enabled')),
+          h(Row, { label: '多条相似才算关联', hint: '余弦相似度门槛，越高连得越少越准；默认 45%' }, f.range('memory.assoc.minSim', 0.3, 0.9, 0.05, (v) => Math.round(v * 100) + '%')),
+          h(Row, { label: '联想跳数', hint: '0 关、1 = A→B、2 = A→B→C（默认）、3 最多。再高就是套娃，已封顶。条数上限在上面「每轮最多带几条联想」里调' },
+            h('div', { className: 'ab-flex', style: { gap: 8 } }, ['0', '1', '2', '3'].map((v) => h('label', { key: v, className: 'ab-flex', style: { gap: 4, cursor: 'pointer', alignItems: 'center' } },
+              h('input', { type: 'radio', name: 'memory.assoc.hops', checked: String(draft.memory.assoc?.hops ?? 2) === v, onChange: () => setDraft(setPath(draft, 'memory.assoc.hops', Number(v))) }),
+              h('span', null, v === '0' ? '关' : v === '1' ? '1 跳' : v === '2' ? '2 跳' : '3 跳'))))),
           more('更多设置', [
             h(Row, { key: 'al', label: '每条最多连几个', hint: '度上限，防止一条记忆连到半个库' }, f.num('memory.assoc.limit', { min: 1, max: 8 }), h('span', { className: 'ab-muted' }, '条')),
             h(Row, { key: 'hd', label: '每多跳一次打几折', hint: '跳得越远越不可信，分数乘以这个系数；默认 55%' }, f.range('memory.assoc.hopDecay', 0.1, 1, 0.05, (v) => Math.round(v * 100) + '%')),

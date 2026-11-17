@@ -328,12 +328,18 @@ test('内容平台：aurabot.content-view 记住上次选择；存的平台不�
   const names = findAll(raw, (n) => typeof n.type === 'function').map((n) => n.type.name)
   assert.ok(names.some((n) => /Douyin/i.test(n)), '有效记忆要恢复 douyin')
   assert.ok(!names.some((n) => /Bili/i.test(n)))
-  // 记忆的 heybox 已不可用：回落到可用平台
+  // 记忆的 heybox 没在跑：沿用记忆（标签停在 heybox）但不挂载子组件 —— 2026-11-17 契约变更。
+  // 旧契约「回落到首个可用平台」会让用户点未启用的平台被立刻弹回，表现为「按钮点不动」（实际 bug），
+  // 所以改为：平台合法就沿用选择，未运行则渲染「这个平台还没启用」提示卡、不挂载子组件（不发请求、不崩）。
   const bootNoHey = { modules: [mkMod('bili', { running: 'builtin' })], connections: [] }
   const { raw: raw2 } = p.render('ContentTab', { ...base, boot: bootNoHey, contentView: 'heybox', setContentView() {} })
   const names2 = findAll(raw2, (n) => typeof n.type === 'function').map((n) => n.type.name)
-  assert.ok(!names2.some((n) => /Heybox/i.test(n)), '不可用的记忆平台不能挂载')
-  assert.ok(names2.some((n) => /Bili/i.test(n)), '失效记忆要回落到首个可用平台')
+  assert.ok(!names2.some((n) => /Heybox/i.test(n)), '不可用的记忆平台不能挂载子组件')
+  assert.ok(!names2.some((n) => /Bili/i.test(n)), '合法但未运行的记忆平台不该被弹回别的平台（否则就是「点了没反应」）')
+  // 真正非法的记忆值（不在三个平台里）才回落首个可用
+  const { raw: raw3 } = p.render('ContentTab', { ...base, boot: bootNoHey, contentView: 'not-a-platform', setContentView() {} })
+  const names3 = findAll(raw3, (n) => typeof n.type === 'function').map((n) => n.type.name)
+  assert.ok(names3.some((n) => /Bili/i.test(n)), '非法记忆值要回落到首个可用平台')
   // 切换持久化（源码契约）
   const src = CLIENT()
   assert.match(src, /localStorage\.setItem\('aurabot\.content-view'/, '平台子视图切换要持久化到 aurabot.content-view')
