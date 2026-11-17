@@ -34,3 +34,14 @@ ode --test "test/replay/**/*.test.js"。
 - 原因：try 块同时包住了「开库/初始化」和「fn 执行」，坏库包装范围过宽。
 - 解决：只在开库+initialize 阶段做损坏包装（且仅当文件已存在），fn 的错误原样抛出。涉及 src/gateway/identity-store.js。
 - 另：createIdentity 原本懒开库，库损坏要到第一次调用才炸；改成构造时 transact(() => {}) 预热，启动当场报错（任务书过关条件要求「启动报清楚的错」）。
+
+## 2026-11-16 git rebase 把主检出的分支切走了，后续 merge 落错线
+- 现象：阶段二收尾执行 `git rebase dev local/runtime` 后主检出从 dev 切到 local/runtime，紧接着的 `git merge --ff-only` 实际快进了 local/runtime，dev 停在阶段一；下一阶段 port 时成员发现 worktree 基线缺阶段二组件（VoiceTab/Manage 计数为 0），险些照错基线硬合。
+- 原因：`git rebase <upstream> <branch>` 会把主检出切到 branch；后续命令的落点全部跟着变，而汇报里只看了 log 没核对 `git branch --show-current`。
+- 解决：port 前先用 `git branch --show-current` + `git log -1 <线>` 核对落点；本机统一口径以 local/runtime 为准（本机运行线），dev 用 `git branch -f` 对齐。涉及命令 `git rebase` / `git merge --ff-only` / `git worktree add`。
+- 教训：任何 rebase/checkout 后，紧接的 merge/push 前必须重新确认「当前在哪个分支」。
+
+## 2026-11-16 在途编辑的测试文件被截断出中文引号，node --check 都过不了
+- 现象：qa-tests 预写 test/panel-stage3.test.js 时 L37 中文引号被截断（`'…要跟着改?)`），整文件 Invalid or unexpected token，实现成员差点把它当实现 bug 排查。
+- 原因：编辑器/工具对含中文标点的行做流式写入时截断（与 MEMORY.md §3.12 pwsh Get-Content/Set-Content 转写毁 UTF-8 同族）。
+- 解决：编辑工具统一用 read/edit/write 而非 pwsh 转写；文件损坏先 `node --check` 分清「语法坏」还是「逻辑坏」，语法坏的先修语法再谈对齐。qa 已在该测试文件头加禁用 pwsh 转写提醒注释。

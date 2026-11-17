@@ -131,7 +131,7 @@ test('契约：引用里套的合并转发也展开，字数上限单独放宽',
 })
 
 test('契约：面板上有这两个开关', () => {
-  assert.ok(clientSrc.includes("title: '合并转发'"), '面板缺「合并转发」卡')
+  assert.ok(clientSrc.includes("label: '合并转发'"), '面板缺「合并转发」开关')
   assert.ok(clientSrc.includes("f.sw('forward.expandEarly')"), '缺早展开开关')
   assert.ok(clientSrc.includes("f.sw('forward.expandHistory')"), '缺补展开开关')
 })
