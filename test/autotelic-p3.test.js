@@ -200,17 +200,17 @@ test('autotelic_propose_say（场景 11）：安静时段先攒着不 submit；�
   assert.match(rq.message, /攒着/)
   assert.equal(submits, 0, '安静时段绝不直发')
   assert.ok(existsSync(join(quiet.root, 'modules-data', 'autotelic', 'say-pending.json')), '攒的话落了盘（留痕）')
-  // 平时：交治理
-  const normal = mkApi(t, { submit: async () => { submits++; return { deliveryId: 'd1', state: 'pending' } } })
+  // 平时：交治理（v5 用 awakeFrom/awakeTo 表示醒着窗口，要显式设成全天，否则凌晨跑会落进安静时段）
+  const normal = mkApi(t, { settings: { awakeFrom: 0, awakeTo: 24 }, submit: async () => { submits++; return { deliveryId: 'd1', state: 'pending' } } })
   const rn = await normal.call('autotelic_propose_say', { text: '想跟你说件事' })
   assert.equal(rn.ok, true)
   assert.match(rn.message, /出站治理/)
   // unsupported：主人还没开 broker 档 → 优雅提示，不炸
-  const unsup = mkApi(t, { submit: async () => ({ deliveryId: null, state: 'unsupported' }) })
+  const unsup = mkApi(t, { settings: { awakeFrom: 0, awakeTo: 24 }, submit: async () => ({ deliveryId: null, state: 'unsupported' }) })
   const ru = await unsup.call('autotelic_propose_say', { text: 'hi' })
   assert.match(ru.message, /broker/)
   // dropped：治理没放行 → 说清楚，不假装发了
-  const dropped = mkApi(t, { submit: async () => ({ deliveryId: null, state: 'dropped', reason: 'quiet' }) })
+  const dropped = mkApi(t, { settings: { awakeFrom: 0, awakeTo: 24 }, submit: async () => ({ deliveryId: null, state: 'dropped', reason: 'quiet' }) })
   const rd = await dropped.call('autotelic_propose_say', { text: 'hi' })
   assert.match(rd.message, /没放行/)
 })

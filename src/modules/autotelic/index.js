@@ -639,7 +639,7 @@ export default {
               const pending = readJsonSafe(own('say-pending.json'), [])
               pending.push({ at: Date.now(), text: body, reason: clip(reason, 200) })
               writeJsonSafe(own('say-pending.json'), pending.slice(-20))
-              return { ok: true, message: '现在是安静时段，这句先攒着（没丢，安静结束再交给治理）' }
+              return { ok: true, message: '现在是安静时段，这句先攒着（没丢，安静结束再交给出站治理）' }
             }
             const r = await api.proactive.submit({ text: body, itemId: `say-${Date.now()}`, cause: { kind: 'background' } })
             note({ kind: 'autotelic/say', tool: 'propose_say', args: { reason: clip(reason, 120) }, outcome: r?.state || 'unknown' })
