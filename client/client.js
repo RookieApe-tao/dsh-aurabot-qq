@@ -4214,33 +4214,114 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       )
     }
 
-    // 「自驱引擎」独立页（少爷定的：不属于主动搭话，单独一页）。
-    // P0 只有地基（审计哈希链 + 状态），引擎闭环（立项/做事/做梦）在 P1 之后逐期点亮；
-    // 数据走 /autotelic/status，参数就是 ext.autotelic.*（模块 defaults 里全有）。
-    // 自驱引擎的出厂默认（跟 src/modules/autotelic 的 defaults 对齐；滑块控件在草稿没值时兜底显示用）。
-    const AUTOTELIC_DEFAULTS = { enabled: false, presetIdOverride: false, minCuriosity: 0.55, evalModel: '', maxCandidates: 3, allowAct: true, actTimeoutMs: 180000, maxSteps: 8, maxTasksActive: 8, budgetActionsPerHour: 12, quietFrom: '23:30', quietTo: '07:30', dailyReviewHour: 23, minBatchForReview: 3, dreamFrom: '03:00', dreamTo: '05:00', allowUserModules: true, allowPython: true, pythonBin: '', scriptTimeoutMs: 120000 }
+    // 「自驱引擎」独立页（v5：她自己的日子——观察→回味→行动→沉淀→反馈）。
+    // 数据源：/autotelic/status（状态+节奏+待确认）/decisions（她最近想事的过程）/skills（三层技能库）
+    // /feedback（抑制偏好冷度）/journal（复盘刊物）。配置就是 ext.autotelic.*（模块 defaults 里全有）。
+    // 自驱引擎 v5 的出厂默认（跟 src/modules/autotelic 的 defaults 对齐；控件在草稿没值时兜底显示用）。
+    const AUTOTELIC_DEFAULTS = { enabled: false, awakeFrom: 8, awakeTo: 23, minIntervalMinutes: 90, maxIntervalMinutes: 240, maxPerDay: 3, igniteCooldownMinutes: 45, constraintRules: '', autoConfirmOwner: false, confirmWindowMinutes: 720, responseWindowHours: 48, chillHalfLifeDays: 14, chillParkThreshold: 3, maxSteps: 8, maxTasksActive: 8, budgetActionsPerHour: 12, allowUserModules: true, allowPython: true, pythonBin: '', scriptTimeoutMs: 120000, chatMaxInputTokens: 4096, chatMaxOutputTokens: 1024, intentMaxInputTokens: 8192, intentMaxOutputTokens: 1024, gateMaxInputTokens: 4096, gateMaxOutputTokens: 512, reviewMaxInputTokens: 4096, reviewMaxOutputTokens: 512 }
     function Autotelic({ st, draft, setDraft, toast }) {
       const f = useField(draft, setDraft)
       const [s, setS] = useState(null)
-      const [pv, setPv] = useState(null)
-      const [showPv, setShowPv] = useState(false)
-      const [busy, setBusy] = useState('')
+      const [dc, setDc] = useState(null) // 决策日志：{ chain, tail }（tail 新→旧）
+      const [sk, setSk] = useState(null) // 技能库：{ list(旧), v5:{ index, stale, snapshots } }
+      const [fb, setFb] = useState(null) // 反馈回路快照：{ suppress, prefer, park, breaker, ... }
       const [jr, setJr] = useState(null)
-      const [openDay, setOpenDay] = useState(null)
+      const [busy, setBusy] = useState('')
+      const [openRound, setOpenRound] = useState(null) // 展开的决策轮
+      const [openDay, setOpenDay] = useState(null) // 展开的复盘刊物
+      const [skillLayer, setSkillLayer] = useState('skills')
       const load = () => get('/autotelic/status').then((r) => { if (r.ok) setS(r); else setS(null) }).catch(() => setS(null))
+      const loadDec = () => get('/autotelic/decisions').then((r) => { if (r.ok) setDc(r) }).catch(() => {})
+      const loadSk = () => get('/autotelic/skills').then((r) => { if (r.ok) setSk(r) }).catch(() => {})
+      const loadFb = () => get('/autotelic/feedback').then((r) => { if (r.ok) setFb(r.snapshot || null) }).catch(() => {})
       const loadJournal = () => get('/autotelic/journal').then((r) => { if (r.ok) setJr(r) }).catch(() => {})
-      useEffect(() => { load(); loadJournal(); const t = setInterval(load, 15000); return () => { clearInterval(t) } }, [])
-      const doPreview = async () => { setBusy('preview'); try { const r = await get('/autotelic/preview'); setPv(r); setShowPv(true) } catch (e) { toast(e.message, 'err') } finally { setBusy('') } }
-      const act = async (key, path) => {
+      useEffect(() => {
+        load(); loadDec(); loadSk(); loadFb(); loadJournal()
+        const t = setInterval(() => { load(); loadDec(); loadFb() }, 15000)
+        return () => { clearInterval(t) }
+      }, [])
+      const reloadAll = () => { load(); loadDec(); loadSk(); loadFb() }
+      const act = async (key, path, body) => {
         setBusy(key)
-        try { const r = await post(path, {}); toast(r.message || '这轮结束了', r.ok === false ? 'err' : 'ok') }
-        catch (e) { toast(e.message, 'err') } finally { setBusy(''); load() }
+        try { const r = await post(path, body || {}); toast(r.message || (r.ok === false ? '没成' : '好了'), r.ok === false ? 'err' : 'ok') }
+        catch (e) { toast(e.message, 'err') } finally { setBusy(''); reloadAll() }
       }
+      const doThink = () => act('plan', '/autotelic/plan')
+      const doConfirm = (id) => act('confirm-' + id, '/autotelic/confirm', { ticketId: id })
+      const doCancel = (id) => act('cancel-' + id, '/autotelic/confirm', { ticketId: id, action: 'cancel' })
+      const doResume = (tag) => act('resume-' + tag, '/autotelic/feedback', { action: 'resume', tag, source: 'panel' })
+      const doClearReview = () => act('clear-review', '/autotelic/feedback', { action: 'clearReview' })
+      const doRollback = (stamp) => act('rollback-' + stamp, '/autotelic/skills', { action: 'rollback', stamp })
+      const doArchive = (id) => act('archive-' + id, '/autotelic/skills', { action: 'archive', id })
+
+      // ---------- 状态 pill（照目的引擎页的写法） ----------
+      const pill = (cls, text) => h('span', { className: 'ab-pill' }, h('i', { className: cx('ab-dot', cls) }), text)
+      const sch = s && s.schedule
+      const chain = s && s.audit && s.audit.chain
+      const lastBeat = s && s.heartbeats && s.heartbeats.length ? s.heartbeats[s.heartbeats.length - 1] : null
+      const fbk = s && s.feedback
+      const fmtAt = (ts) => (Number(ts) ? new Date(Number(ts)).toLocaleString() : '—')
+      const pills = !s ? [pill('', '加载中…')] : [
+        pill(s.enabled ? 'ok' : '', s.enabled ? (s.schedule && s.schedule.inFlight ? '正在回味' : '开着 · 待心跳') : '已关闭'),
+        s.enabled ? pill('', sch && sch.nextFireAt ? '下次回味 ' + timeAgo(sch.nextFireAt) : '排程待定') : null,
+        pill('', sch && sch.lastRunAt ? '上轮 ' + timeAgo(sch.lastRunAt) + (sch.lastOutcome ? ' · ' + sch.lastOutcome : '') : '还没回味过'),
+        fbk && fbk.silent ? pill('err', '静默中（熔断）') : null,
+        fbk && fbk.needsReview ? pill('err', '待主人检视') : null,
+        pill(chain ? (chain.ok ? 'ok' : 'err') : '', chain ? (chain.ok ? '审计完整 · 今日 ' + (s.audit.today || 0) + ' 条' : '⚠ 审计断了') : '审计…'),
+        pill(s.audit && s.audit.wired ? 'ok' : '', s.audit && s.audit.wired ? '审计已接线' : '审计未接线'),
+        s.enabled ? pill('', lastBeat ? '上次心跳 ' + timeAgo(lastBeat.at) : '还没心跳') : null,
+      ].filter(Boolean)
+
+      // ---------- 决策日志：按轮分组（她想了什么、哪些候选被毙、为什么） ----------
+      const tail = (dc && dc.tail) || []
+      const byRound = {}
+      for (const rec of tail) {
+        const k = String(rec.round ?? '?')
+        if (!byRound[k]) byRound[k] = { round: rec.round, ts: rec.ts, phases: [] }
+        byRound[k].phases.push(rec)
+      }
+      const rounds = Object.values(byRound).sort((a, b) => (b.ts || 0) - (a.ts || 0))
+      const PHASE_LABEL = { intent: '生成', gate: '把关', review: '复盘', error: '出错' }
+      const roundLine = (r) => {
+        const key = 'r' + (r.round ?? '?') + r.ts
+        const open = openRound === key
+        const gate = r.phases.find((p) => p.phase === 'gate') || {}
+        const intent = r.phases.find((p) => p.phase === 'intent') || {}
+        const nCand = ((intent.payload || {}).candidates || []).length
+        const nTicket = ((gate.payload || {}).tickets || []).length
+        const verdicts = (gate.payload || {}).verdicts || []
+        const head = h('div', { className: 'meta', style: { cursor: 'pointer' }, onClick: () => setOpenRound(open ? null : key) },
+          h('b', null, '第 ' + (r.round ?? '?') + ' 轮'), ' ',
+          h('span', { className: 'ab-badge' }, nTicket ? '立项 ' + nTicket : (verdicts.length ? '全灭' : (intent.payload || {}).outcome || '—')),
+          h('div', null, timeAgo(r.ts)),
+          h('div', null, h('span', { className: 'ab-muted ab-small' }, open ? '▲ 收起' : '▼ 她想了什么')))
+        return h('div', { key, className: 'ab-li' }, head,
+          open ? h('div', { className: 'body ab-small' },
+            (intent.payload || {}).deadReasons && intent.payload.deadReasons.length
+              ? h('div', { style: { color: '#c62828' } }, intent.payload.deadReasons.map((d, i) => h('div', { key: i }, '⊘ ' + d)))
+              : null,
+            ((intent.payload || {}).candidates || []).map((c, i) => h('div', { key: 'c' + i }, '💭 「' + c.title + '」（' + c.tag + '）')),
+            verdicts.length ? h('div', { style: { marginTop: 4 } }, verdicts.map((v, i) => h('div', { key: i, style: v.verdict === 'pass' ? { color: 'var(--ab-ok, #2e7d32)' } : { color: '#c62828' } },
+              (v.verdict === 'pass' ? '✓ ' : v.verdict === 'rework' ? '✎ ' : v.verdict === 'park' ? '⏸ ' : '✗ ') + (i + 1) + '. ' + (v.why || v.verdict))))
+              : ((gate.payload || {}).skipped ? h('div', { className: 'ab-muted' }, gate.payload.skipped) : null),
+            r.phases.filter((p) => p.phase === 'review').map((p, i) => h('div', { key: 'v' + i, style: { marginTop: 4 } },
+              '复盘：' + clipV((p.payload || {}).ticketId) + ' → next=' + ((p.payload || {}).next || '?'))),
+          ) : null)
+      }
+      const clipV = (v, n = 40) => { const t = String(v || ''); return t.length > n ? t.slice(0, n) + '…' : t }
+
+      // ---------- 确认队列（touch-owner 行动单：放行 / 取消） ----------
+      const pending = (s && s.pendingConfirms) || []
+      // ---------- 反馈区数据 ----------
+      const suppressTags = (fb && fb.suppress && Array.isArray(fb.suppress)) ? fb.suppress : Object.keys((fb && fb.suppress) || {})
+      const preferTags = fb && fb.prefer ? Object.keys(fb.prefer) : []
+      const parkTags = fb && fb.park ? Object.keys(fb.park) : []
+
+      // ---------- 行动流水（账本任务 + 点行看流水账，沿用旧交互） ----------
       const tasks = (s && s.tasks) || []
       const sm = (s && s.summary) || {}
       const TASK_BADGE = { active: '在办', done: '办成', failed: '失败', blocked: '卡住', abandoned: '放弃' }
-      // 点任务行 → 打开「这一天的记录」弹窗（当天审计流水 + 任务 + 复盘刊物）
-      const [dayM, setDayM] = useState(null) // { date, data }
+      const [dayM, setDayM] = useState(null)
       const dkey = (ts) => { const d = new Date(ts); const p = (n) => String(n).padStart(2, '0'); return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) }
       const openTaskDay = (t) => {
         const date = dkey(t.updatedAt || t.createdAt)
@@ -4248,7 +4329,6 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         get('/autotelic/day?date=' + date + '&taskId=' + encodeURIComponent(t.id)).then((r) => { if (r.ok) setDayM({ date, taskId: t.id, data: r }); else { toast(r.message || '没读到', 'err'); setDayM(null) } }).catch((e) => { toast(e.message, 'err'); setDayM(null) })
       }
       const clipText = (v, n) => { const t = String(v || ''); return t.length > n ? t.slice(0, n) + '…' : t }
-      // 审计行用纯文本堆叠（不玩 flex 固定宽），样式全部沿用页面既有类
       const auditLine = (a, i) => h('div', { key: i, className: 'ab-small', style: { padding: '3px 0', borderBottom: '1px dashed var(--ab-line, #dbe5ea)', wordBreak: 'break-all' } },
         a.kind === 'tool/denied'
           ? h('span', { style: { color: '#c62828' } }, '⛔ ' + clipText((a.at || '').slice(11, 19) + '　' + (a.kind || '') + (a.tool ? ' · ' + a.tool : '') + '　' + clipText(a.outcome || a.args || '', 160), 220))
@@ -4261,37 +4341,35 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
             h(Btn, { small: true, onClick: () => setDayM(null) }, '关闭')),
           !dayM.data ? h(Empty, { icon: '⏳', text: '读账本中…' }) : h(TaskDayBody, { data: dayM.data, clipText, TASK_BADGE, auditLine }),
         )) : null
-      const chain = s && s.audit && s.audit.chain
-      const lastBeat = s && s.heartbeats && s.heartbeats.length ? s.heartbeats[s.heartbeats.length - 1] : null
-      // 状态 pill：一眼看清「她在不在动 + 账本干不干净」
-      const pill = (cls, text) => h('span', { className: 'ab-pill' }, h('i', { className: cx('ab-dot', cls) }), text)
-      const pills = !s ? [pill('', '加载中…')] : [
-        pill(s.enabled ? (s.running ? '' : 'ok') : '', s.enabled ? (s.running ? '正在想' : '开着 · 待心跳') : '已关闭'),
-        pill(chain ? (chain.ok ? 'ok' : 'err') : '', chain ? (chain.ok ? '账本完整 · 今日 ' + (s.audit.today || 0) + ' 条' : '⚠ 账本断了') : '账本…'),
-        pill(s.audit && s.audit.wired ? 'ok' : '', s.audit && s.audit.wired ? '审计已接线' : '审计未接线'),
-        s.enabled ? pill('', lastBeat ? '上次心跳 ' + timeAgo(lastBeat.at) : '还没心跳') : null,
-      ].filter(Boolean)
-      // 「她在想的事」分页 + 状态筛选（点行还是打开这条任务的流水账）
-      const [tFilter, setTFilter] = useState('all')
-      const [tPage, setTPage] = useState(0)
-      const PER_PAGE = 6
-      const tFiltered = tasks.filter((t) => tFilter === 'all' || t.status === tFilter)
-      const tPages = Math.max(1, Math.ceil(tFiltered.length / PER_PAGE))
-      const tPageSafe = Math.min(tPage, tPages - 1)
-      const tShown = tFiltered.slice(tPageSafe * PER_PAGE, tPageSafe * PER_PAGE + PER_PAGE)
-      const STATUS_OPTS = [['all', '全部'], ['active', '在办'], ['done', '办成'], ['failed', '失败'], ['blocked', '卡住'], ['abandoned', '放弃']]
       const taskLine = (t) => h('div', { key: t.id, className: 'ab-li', style: { cursor: 'pointer' }, title: '点开看这条任务的流水账', onClick: () => openTaskDay(t) },
         h('div', { className: 'meta' },
           h('b', null, t.title), ' ',
           h('span', { className: 'ab-badge' }, TASK_BADGE[t.status] || t.status),
-          h('div', null, '好奇 ' + (t.score != null ? t.score.toFixed(2) : '?')),
           h('div', null, timeAgo(t.updatedAt || t.createdAt))),
-        // 注意：.ab-li 是横排 flex，meta 之外的所有内容必须包进单个 .body（flex:1），
-        // 多塞一个直接子项就会被挤成零宽、文字一字一行竖排（少爷真机抓到的就是这个）
         h('div', { className: 'body ab-small' },
           h('div', null, t.reason),
           t.why ? h('div', { style: { color: '#c62828' } }, '→ ' + t.why) : null))
-      // 复盘刊物：默认只露标题，点开才看全文（页面不都被长文淹没）
+
+      // ---------- 技能库三区（本能 / 技能 / 记忆） ----------
+      const items = sk && sk.v5 && sk.v5.index ? (sk.v5.index.items || []) : []
+      const layerItems = items.filter((it) => it.layer === skillLayer)
+      const LAYER_LABEL = { instinct: '本能', skills: '技能', memory: '记忆片段', archive: '归档' }
+      const skillLine = (it) => h('div', { key: it.layer + it.id, className: 'ab-li' },
+        h('div', { className: 'meta' },
+          h('b', null, it.title || it.id), ' ',
+          it.stale ? h('span', { className: 'ab-badge', style: { color: '#c62828' } }, 'stale') : h('span', { className: 'ab-badge' }, LAYER_LABEL[it.layer] || it.layer),
+          h('div', null, 'score ' + (it.score != null ? Number(it.score).toFixed(2) : '?') + ' · 用过 ' + (it.uses || 0) + ' 次'),
+          h('div', null, timeAgo(it.updatedAt || (sk.v5.index && sk.v5.index.updatedAt)))),
+        h('div', { className: 'body ab-small' },
+          h('div', { className: 'ab-muted' }, '#' + it.id + (it.tags && it.tags.length ? ' · ' + it.tags.join(' / ') : '')),
+          it.layer !== 'archive' ? h('div', { style: { marginTop: 4 } }, h(Btn, { small: true, disabled: busy === 'archive-' + it.id, onClick: () => doArchive(it.id) }, '归档（保历史）')) : null))
+      const snapshots = sk && sk.v5 ? (sk.v5.snapshots || []) : []
+      const staleList = sk && sk.v5 ? (sk.v5.stale || []) : []
+      const [openSnap, setOpenSnap] = useState(false)
+      const snapLine = (stamp) => h('div', { key: stamp, className: 'ab-li' },
+        h('div', { className: 'meta' }, h('b', { style: { fontSize: 12 } }, stamp)),
+        h('div', { className: 'body' }, h(Btn, { small: true, disabled: busy === 'rollback-' + stamp, onClick: () => doRollback(stamp) }, '一键回滚到这份快照')))
+      // ---------- 复盘刊物（沿用旧交互：点标题展开全文） ----------
       const jLine = (kind, d) => {
         const open = openDay === kind + d.day
         const head = h('div', { className: 'meta', style: { cursor: 'pointer' }, onClick: () => setOpenDay(open ? null : kind + d.day) },
@@ -4300,7 +4378,8 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
           open ? h('div', { className: 'body ab-small', style: { whiteSpace: 'pre-wrap' } }, d.text) : null)
       }
       const jAll = jr ? [...(jr.daily || []).map((d) => jLine('daily', d)), ...(jr.dreams || []).map((d) => jLine('dream', d))] : null
-      // ---------- 控件：数值 = 滑块 + 文本框；时间 = 原生 time 控件 + 一键清空 ----------
+
+      // ---------- 控件 ----------
       const A = 'ext.autotelic.'
       const aut = getPath(draft, A, {}) || {}
       const ap = (patch) => setDraft((previous) => {
@@ -4308,109 +4387,139 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         return setPath(previous, A, { ...cur, ...patch })
       })
       const dv = (k) => { const v = aut[k]; return v == null ? AUTOTELIC_DEFAULTS[k] : v }
-      // 数值双联：滑杆拖个大概，框里填精确值（照「桌宠·人物大小」那行的样式）
       const NumRow = ({ label, hint, k, min, max, step = 1, suffix = '' }) => h(Row, { label, hint },
         h('div', { className: 'ab-flex', style: { alignItems: 'center', gap: 8 } },
           h('input', { type: 'range', min, max, step, style: { flex: 1, minWidth: 110, accentColor: 'var(--ab-sea, #2a86c6)' }, value: Number(dv(k)), onChange: (e) => ap({ [k]: Number(e.target.value) }) }),
           h('input', { className: 'ab-input', type: 'number', min, max, step, style: { width: '84px' }, value: Number(dv(k)), onChange: (e) => { const v = Number(e.target.value); if (Number.isFinite(v)) ap({ [k]: v }) } }),
           suffix ? h('span', { className: 'ab-muted ab-small', style: { whiteSpace: 'nowrap' } }, suffix) : null))
-      // 时间对（起~止）：原生 time 控件；两格都空 = 该功能关闭
-      const TimeRow = ({ label, hint, kf, kt, clearHint }) => h(Row, { label, hint },
-        h('div', { className: 'ab-flex', style: { alignItems: 'center', gap: 8 } },
-          h('input', { className: 'ab-input', type: 'time', style: { width: '118px' }, value: String(aut[kf] || ''), onChange: (e) => ap({ [kf]: e.target.value }) }),
-          h('span', { className: 'ab-muted ab-small' }, '到'),
-          h('input', { className: 'ab-input', type: 'time', style: { width: '118px' }, value: String(aut[kt] || ''), onChange: (e) => ap({ [kt]: e.target.value }) }),
-          h(Btn, { small: true, onClick: () => ap({ [kf]: '', [kt]: '' }) }, '清空=关'),
-          aut[kf] && aut[kt] ? h('span', { className: 'ab-muted ab-small' }, clearHint || '') : h('span', { className: 'ab-muted ab-small' }, '未启用')))
-      // 节奏预设：一键铺一整套作息；「恢复默认」回到出厂值
-      const PRESETS = {
-        default: { name: '恢复默认（出厂作息）', v: { quietFrom: '23:30', quietTo: '07:30', dailyReviewHour: 23, minBatchForReview: 3, dreamFrom: '03:00', dreamTo: '05:00', minCuriosity: 0.55, maxSteps: 8, maxTasksActive: 8, budgetActionsPerHour: 12, maxCandidates: 3 } },
-        standard: { name: '标准（23:30 睡，03 点做梦）', v: { quietFrom: '23:30', quietTo: '07:30', dailyReviewHour: 23, minBatchForReview: 3, dreamFrom: '03:00', dreamTo: '05:00' } },
-        night: { name: '夜猫子（02:00 睡，10:00 起）', v: { quietFrom: '02:00', quietTo: '10:00', dailyReviewHour: 1, minBatchForReview: 3, dreamFrom: '05:00', dreamTo: '07:00' } },
-        early: { name: '早起鸟（21:00 睡，05:00 起）', v: { quietFrom: '21:00', quietTo: '05:00', dailyReviewHour: 20, minBatchForReview: 3, dreamFrom: '23:00', dreamTo: '01:00' } },
-        always: { name: '全天候（不设安静时段）', v: { quietFrom: '', quietTo: '', dreamFrom: '', dreamTo: '', dailyReviewHour: 22, minBatchForReview: 3 } },
-      }
-      const [preset, setPreset] = useState('')
-      const applyPreset = (name) => {
-        setPreset(name)
-        if (name && PRESETS[name]) { ap(PRESETS[name].v); toast('已套用：' + PRESETS[name].name + '（记得点右下角「保存设置」）', 'ok') }
-      }
+      // 「更多设置（N 项）」折叠子卡（与记忆页同口径）
+      const more = (title, items2) => (items2.length ? h(Card, { title: (title || '更多设置') + '（' + items2.length + ' 项）', collapsible: true, defaultOpen: false, className: 'ab-fold-sub' }, items2) : null)
+
       return h('div', { className: 'ab-grid' },
-        // ---------- 卡 1：总控 + 状态 + 动作 ----------
-        h(Card, { title: '自驱引擎（实验）', right: f.sw('ext.autotelic.enabled'), desc: '她自己的后台会话与一本别人代记的账：够好奇才立项，办完写复盘。账是框架机械记的，删了必断链。（实验性功能，行为可能随版本调整）' },
+        // ---------- 卡 1：总控 + 状态 + 操作 ----------
+        h(Card, { title: '自驱引擎', right: f.sw('ext.autotelic.enabled'), desc: '她按「定时回味 + 心念点火」过自己的日子：安静时刻回味经历长出念头，多数时候空手而归（这是健康态）。办完沉淀成技能，越攒越熟练。' },
           h('div', { className: 'ab-flex', style: { flexWrap: 'wrap', gap: 6, marginBottom: 10 } }, pills),
-          h(Row, { label: '允许后台会话指定 preset', hint: '开着她做事才带工具（fs 只读；无 shell、无 QQ 工具）；关着只「想」不动' }, f.sw('ext.autotelic.presetIdOverride')),
-          h(Row, { label: '允许动手（L1）', hint: '立项后一步一步办；失败 2 次自动卡住，同观察 2 次熔断' }, f.sw('ext.autotelic.allowAct')),
-          chain && !chain.ok ? h('div', { className: 'ab-note err', style: { marginTop: 8 } }, '⚠ 账本断链 @ ' + chain.brokenAt.file + ' 第 ' + chain.brokenAt.line + ' 条：' + chain.brokenAt.reason) : null,
+          chain && !chain.ok ? h('div', { className: 'ab-note err', style: { marginTop: 8 } }, '⚠ 审计断链 @ ' + chain.brokenAt.file + ' 第 ' + chain.brokenAt.line + ' 条：' + chain.brokenAt.reason) : null,
+          dc && dc.chain && !dc.chain.ok ? h('div', { className: 'ab-note err', style: { marginTop: 8 } }, '⚠ 决策日志哈希链断了 @ 第 ' + dc.chain.brokenAt.line + ' 行：' + dc.chain.brokenAt.reason) : null,
+          h(Row, { label: '醒着窗口', hint: '回味只排在醒着窗口内（小时，0~24）；安静时段连点火都只攒不触发' },
+            h('input', { className: 'ab-input', type: 'number', min: 0, max: 24, style: { width: '64px' }, value: Number(dv('awakeFrom')), onChange: (e) => ap({ awakeFrom: Number(e.target.value) }) }),
+            h('span', { className: 'ab-muted ab-small' }, '到'),
+            h('input', { className: 'ab-input', type: 'number', min: 0, max: 24, style: { width: '64px' }, value: Number(dv('awakeTo')), onChange: (e) => ap({ awakeTo: Number(e.target.value) }) }),
+            h('span', { className: 'ab-muted ab-small' }, '点')),
+          NumRow({ label: '回味间隔', hint: '区间内随机，并向主人更常回话的小时轻推', k: 'minIntervalMinutes', min: 5, max: 1440, step: 5, suffix: '分钟（下限）' }),
+          NumRow({ label: '回味间隔上限', hint: '与下限组成区间', k: 'maxIntervalMinutes', min: 5, max: 1440, step: 5, suffix: '分钟' }),
+          NumRow({ label: '单日回味上限', hint: '0 = 不限。一个天天立项的 AI 不是活着，是焦虑', k: 'maxPerDay', min: 0, max: 20, suffix: '轮' }),
           h('div', { style: { marginTop: 10, paddingTop: 10, borderTop: '1px dashed var(--ab-line, #dbe5ea)' } },
             h('div', { className: 'ab-small ab-muted', style: { marginBottom: 6 } }, '手动推一把（开着总开关才有反应）：'),
             h('div', { className: 'ab-flex' },
-              h(Btn, { small: true, kind: 'primary', onClick: () => act('run', '/autotelic/run'), disabled: busy === 'run' }, busy === 'run' ? h(Fragment, null, h('i', { className: 'ab-spin' }), ' 正在想…') : '现在想一轮'),
-              h(Btn, { small: true, onClick: () => act('step', '/autotelic/step'), disabled: busy === 'step' }, busy === 'step' ? h(Fragment, null, h('i', { className: 'ab-spin' }), ' 正在做…') : '推进一步'),
-              h(Btn, { small: true, onClick: doPreview, disabled: busy === 'preview' }, busy === 'preview' ? '预览中…' : '预览'),
-              h('span', { className: 'ab-muted ab-small' }, s && s.running ? '上一轮还没结束' : '')),
-            showPv && pv ? h('div', { className: 'ab-note', style: { marginTop: 8 } },
-              h('div', { className: 'ab-small' }, '素材 ' + pv.materialCount + ' 条 · 候选 ' + pv.candidates.length + ' 个（阈值 ' + pv.thresholds.minCuriosity + '）'),
-              pv.candidates.map((c) => h('div', { key: c.title, className: 'ab-small', style: { marginTop: 4 } }, '✓ 「' + c.title + '」 ' + c.score.toFixed(2) + ' — ' + c.reason)),
-              pv.rejected.slice(0, 3).map((x, i) => h('div', { key: i, className: 'ab-small ab-muted', style: { marginTop: 2 } }, '✗ 「' + x.title + '」 ' + x.score.toFixed(2) + ' — ' + x.why)),
-              // 预审否决（账本里记着的，2026-11-05 少爷定）：让她「想办但被拦下」的东西看得见
-              (s && s.screenVetoes && s.screenVetoes.length)
-                ? h('div', { style: { marginTop: 8, paddingTop: 8, borderTop: '1px dashed var(--ab-line, #dbe5ea)' } },
-                  h('div', { className: 'ab-small ab-muted' }, '立项前预审拦下的（6 小时内不再送审）：'),
-                  s.screenVetoes.slice(-5).reverse().map((v, i) => h('div', { key: i, className: 'ab-small ab-muted', style: { marginTop: 2 } }, '⊘ 「' + v.title + '」 — ' + v.why)))
-                : null) : null),
+              h(Btn, { small: true, kind: 'primary', onClick: doThink, disabled: busy === 'plan' }, busy === 'plan' ? h(Fragment, null, h('i', { className: 'ab-spin' }), ' 正在想…') : '现在想想'),
+              h('span', { className: 'ab-muted ab-small' }, sch && sch.inFlight ? '上一轮还没结束' : (s && s.enabled ? '' : '总开关关着')))),
         ),
-        // ---------- 卡 2：她在想的事 ----------
-        h(Card, { title: '她在想的事', desc: '进行中 ' + (sm.active || 0) + ' · 办成 ' + (sm.done || 0) + ' · 卡住 ' + (sm.blocked || 0) + ' · 放弃 ' + (sm.abandoned || 0) },
-          h(Row, { label: '筛选', hint: '只看某一类任务；点行看这条的流水账' },
-            h(Select, { value: tFilter, width: 130, onChange: (v) => { setTFilter(v); setTPage(0) }, options: STATUS_OPTS.map(([value, label]) => ({ value, label })) }),
-            h('span', { className: 'ab-muted ab-small' }, '共 ' + tFiltered.length + ' 条 · 第 ' + (tPageSafe + 1) + ' / ' + tPages + ' 页'),
-            h(Btn, { small: true, disabled: tPageSafe <= 0, onClick: () => setTPage(tPageSafe - 1) }, '‹ 上一页'),
-            h(Btn, { small: true, disabled: tPageSafe >= tPages - 1, onClick: () => setTPage(tPageSafe + 1) }, '下一页 ›')),
+        // ---------- 卡 2：她最近想事的过程（决策日志） ----------
+        h(Card, { title: '她最近想事的过程', desc: (dc && dc.chain ? '决策日志 ' + dc.chain.total + ' 条 · 哈希链' + (dc.chain.ok ? '完整' : '已断') : '决策日志…') + ' · 点一轮看她想什么、哪些念头被毙了、为什么' },
+          !dc ? h(Empty, { icon: '⏳', text: '加载中…' })
+            : rounds.length === 0 ? h(Empty, { icon: '💭', text: '还没有决策记录。开着总开关等第一轮回味，或点「现在想想」。' })
+              : h('div', { className: 'ab-list' }, rounds.slice(0, 12).map(roundLine))),
+        // ---------- 卡 3：确认队列 ----------
+        h(Card, { title: '确认队列', desc: '碰你侧的行动（发言/发说说）先排队等你点头；不放行就静静过期，不会偷偷发。' },
           !s ? h(Empty, { icon: '⏳', text: '加载中…' })
-            : tShown.length === 0 ? h(Empty, { icon: '💭', text: tFiltered.length ? '这一页没有内容' : '账本还空着（或这个筛选下没有任务）。开着总开关等她心跳，或点上面的「现在想一轮」。' })
-              : h('div', { className: 'ab-list' }, tShown.map(taskLine))),
-        // ---------- 卡 3：节奏与预算（预设 + 滑块/时间控件） ----------
-        h(Card, { title: '节奏与预算', desc: '上限是你定的；她能往下调，永远调不上来。' },
-          h(Row, { label: '作息预设', hint: '一键铺一整套作息（安静时段 / 做梦 / 每日一页）；套用后点右下角「保存设置」才生效' },
-            h(Select, { value: preset, width: 220, onChange: applyPreset, options: [{ value: '', label: '选一套预设…' }, ...Object.entries(PRESETS).map(([k, p]) => ({ value: k, label: p.name }))] })),
-          NumRow({ label: '好奇分阈值', hint: '低于不立项；落选原因在「预览」里看', k: 'minCuriosity', min: 0, max: 1, step: 0.05 }),
-          NumRow({ label: '一轮最多立项', hint: '同样的方向不重复开坑', k: 'maxCandidates', min: 1, max: 5 }),
-          NumRow({ label: '同时进行的任务', hint: '到顶就不开新坑，在办的不受影响', k: 'maxTasksActive', min: 1, max: 16 }),
-          NumRow({ label: '单任务步数上限', hint: '失败 2 次也会卡住，不无限重试', k: 'maxSteps', min: 1, max: 32 }),
-          NumRow({ label: '动作数 / 小时', hint: '她动手的次数上限；超了这小时只想想', k: 'budgetActionsPerHour', min: 1, max: 120 }),
-          TimeRow({ label: '安静时段', kf: 'quietFrom', kt: 'quietTo', hint: '只禁打扰你，不禁她做事；清空 = 不启用', clearHint: '这段时间她不吵你' }),
-          NumRow({ label: '每日一页（几点）', hint: '她的自我总结时间', k: 'dailyReviewHour', min: 0, max: 23, suffix: '点' }),
-          NumRow({ label: '攒几件才评', hint: '攒够件数或到点，先到者为准', k: 'minBatchForReview', min: 1, max: 20, suffix: '件' }),
-          TimeRow({ label: '做梦窗口', kf: 'dreamFrom', kt: 'dreamTo', hint: '安静时段最深处做离线整理；清空 = 关闭做梦', clearHint: '到点她会做一次离线整理' }),
+            : pending.length === 0 ? h(Empty, { icon: '✅', text: '没有等你确认的行动。' })
+              : h('div', { className: 'ab-list' }, pending.map((p) => h('div', { key: p.ticketId, className: 'ab-li' },
+                h('div', { className: 'meta' },
+                  h('b', null, clipV(p.intent, 50)), ' ',
+                  h('span', { className: 'ab-badge' }, p.tag),
+                  h('div', null, '过期 ' + timeAgo(p.expiresAt))),
+                h('div', { className: 'body' },
+                  h('div', { className: 'ab-flex' },
+                    h(Btn, { small: true, kind: 'primary', disabled: busy === 'confirm-' + p.ticketId, onClick: () => doConfirm(p.ticketId) }, '放行'),
+                    h(Btn, { small: true, disabled: busy === 'cancel-' + p.ticketId, onClick: () => doCancel(p.ticketId) }, '取消'))))))),
+        // ---------- 卡 4：行动流水（账本） ----------
+        h(Card, { title: '行动流水', desc: '进行中 ' + (sm.active || 0) + ' · 办成 ' + (sm.done || 0) + ' · 卡住 ' + (sm.blocked || 0) + ' · 放弃 ' + (sm.abandoned || 0) + '。点行看这条的流水账。' },
+          !s ? h(Empty, { icon: '⏳', text: '加载中…' })
+            : tasks.length === 0 ? h(Empty, { icon: '📜', text: '账本还空着。她办过的事都会记在这。' })
+              : h('div', { className: 'ab-list' }, tasks.slice(0, 8).map(taskLine))),
+        // ---------- 卡 5：技能库三区 ----------
+        h(Card, { title: '技能库', desc: '本能（她是谁的附加段） / 技能（显式方法论） / 记忆（复盘片段）。熟练度只认行动的真实复用终态，她自评改不了分。' },
+          h(Row, { label: '看哪一层', hint: '本能=自动晋升的人格附加段；技能=提炼过的做法；记忆=还没成法的片段' },
+            h(Select, { value: skillLayer, width: 140, onChange: setSkillLayer, options: [{ value: 'instinct', label: '本能' }, { value: 'skills', label: '技能' }, { value: 'memory', label: '记忆片段' }, { value: 'archive', label: '归档' }] }),
+            h('span', { className: 'ab-muted ab-small' }, layerItems.length + ' 条')),
+          !sk ? h(Empty, { icon: '⏳', text: '加载中…' })
+            : layerItems.length === 0 ? h(Empty, { icon: '🧰', text: '这一层还空着。她办完事复盘会自己攒。' })
+              : h('div', { className: 'ab-list' }, layerItems.slice(0, 10).map(skillLine)),
+          staleList.length ? h('div', { className: 'ab-note', style: { marginTop: 8 } },
+            h('div', { className: 'ab-small ab-muted' }, '建议修订/归档（练不出成绩的）：'),
+            staleList.slice(0, 5).map((d, i) => h('div', { key: i, className: 'ab-small' }, '· ' + d.id + '（score ' + Number(d.score).toFixed(2) + ' / ' + d.uses + ' 次）'))) : null,
+          snapshots.length ? h('div', { style: { marginTop: 8, paddingTop: 8, borderTop: '1px dashed var(--ab-line, #dbe5ea)' } },
+            h('div', { className: 'ab-small ab-muted', style: { cursor: 'pointer' }, onClick: () => setOpenSnap(!openSnap) },
+              '快照 ' + snapshots.length + ' 份（每次晋升/修订前自动留底）· ' + (openSnap ? '▲ 收起' : '▼ 展开')),
+            openSnap ? h('div', { className: 'ab-list', style: { marginTop: 6 } }, snapshots.slice(0, 6).map(snapLine)) : null,
+            h('div', { className: 'ab-small ab-muted', style: { marginTop: 4 } }, '她长歪了就回滚——不用求她，直接铺回去。')) : null),
+        // ---------- 卡 6：反馈回路 ----------
+        h(Card, { title: '反馈回路', desc: '你的一句「别做了」和你的已读不回都会喂回她的取舍：被抑制的方向不再立项，被冷落的自动降温。' },
+          !fb ? h(Empty, { icon: '⏳', text: '加载中…' })
+            : h('div', null,
+              h(Row, { label: '抑制表', hint: '你说过「别做」的方向，跨轮硬排除；点清除=面板解封' },
+                suppressTags.length ? h('div', { className: 'ab-flex', style: { flexWrap: 'wrap', gap: 6 } },
+                  suppressTags.map((tag) => h(Btn, { key: tag, small: true, disabled: busy === 'resume-' + tag, onClick: () => doResume(tag) }, '解除 ' + tag)))
+                  : h('span', { className: 'ab-muted ab-small' }, '空（没有被抑制的方向）')),
+              h(Row, { label: '偏好表', hint: '你说过「多干这种」的方向，立项权重抬升' },
+                preferTags.length ? h('span', { className: 'ab-small' }, preferTags.map((t) => t + '×' + ((fb.prefer[t] || {}).count || 0)).join('、')) : h('span', { className: 'ab-muted ab-small' }, '空')),
+              h(Row, { label: '冷却中（park）', hint: '连续被冷落到阈值的方向，90 天不主动触发；主人提及相关话题会自动解封' },
+                parkTags.length ? h('div', { className: 'ab-flex', style: { flexWrap: 'wrap', gap: 6 } },
+                  parkTags.map((tag) => {
+                    const p = fb.park[tag] || {}
+                    return h(Btn, { key: tag, small: true, disabled: busy === 'resume-' + tag, title: p.why || '', onClick: () => doResume(tag) }, '解封 ' + tag)
+                  }))
+                  : h('span', { className: 'ab-muted ab-small' }, '空（没有方向被冷落到位）')),
+              fbk && fbk.needsReview ? h('div', { className: 'ab-note err', style: { marginTop: 8 } },
+                h('div', { className: 'ab-small' }, '⚠ 连续跑偏触发了熔断，她在静默期只积累不立项。看完她的决策日志后：'),
+                h(Btn, { small: true, style: { marginTop: 6 }, disabled: busy === 'clear-review', onClick: doClearReview }, '我检视完了，让她继续')) : null,
+              h(Row, { label: '回应观察窗', hint: '主动投递后这么多小时内你没回应 = ignored（最响亮的负反馈）' }, NumInline(dv('responseWindowHours'), (v) => ap({ responseWindowHours: v }), 1, 168, '小时')),
+              h(Row, { label: '冷度半衰', hint: '被冷落的程度按这个周期自然消退' }, NumInline(dv('chillHalfLifeDays'), (v) => ap({ chillHalfLifeDays: v }), 1, 90, '天')),
+              h(Row, { label: '自动 park 阈值', hint: '冷度到这个值就 90 天不主动触发' }, NumInline(dv('chillParkThreshold'), (v) => ap({ chillParkThreshold: v }), 1, 10, '度'))),
         ),
-        // ---------- 卡 4：她的手 ----------
-        h(Card, { title: '她的手', desc: '框架代码（src/）对她锁死；Python 和用户模块是她攒本事的两条路。' },
+        // ---------- 卡 7：强制约束规则（主人的缰绳） ----------
+        h(Card, { title: '强制约束规则（主人制定）', desc: '不是建议是物理边界：触犯的念头直接打回、在路上的行动立刻停；改了她会知道，被拦的经历照常沉淀成记忆。' },
+          h('textarea', {
+            className: 'ab-textarea', style: { minHeight: 90 },
+            placeholder: '一行一条，例如：\n不许半夜给主人发消息\n[钱] 不许任何花钱的操作',
+            value: getPath(draft, A + 'constraintRules') ?? '',
+            onChange: (e) => setDraft(setPath(draft, A + 'constraintRules', e.target.value)),
+          }),
+          h('div', { className: 'ab-small ab-muted', style: { marginTop: 6 } }, '逐行一条；# 开头的行是注释。改完点右下角「保存设置」才生效。'),
+          h(Row, { label: '发言类行动免确认', hint: '默认全要确认；开了之后靠发言自查与 24h 频控兜底' }, f.sw('ext.autotelic.autoConfirmOwner')),
+          NumRow({ label: '确认等待时长', hint: '超时自动取消，不攒着烦你', k: 'confirmWindowMinutes', min: 5, max: 10080, step: 5, suffix: '分钟' }),
+        ),
+        // ---------- 卡 8：她的手 + 预算（折叠） ----------
+        more('她的手与预算', [
           h(Row, { label: 'Python', hint: '留空自动探测（滤商店假货）；探测不到时手填全路径（会先验真再存）' },
-            s && s.env && (s.env.pythonBin || s.env.bin) ? h('span', { className: 'ab-small', style: { color: 'var(--ab-ok)' } }, '✓ ' + (s.env.pythonBin || s.env.bin) + '（' + s.env.version + '）' + (s.env.source === 'configured' ? ' · 手填' : ' · 自动探测，已持久化')) : h('span', { className: 'ab-muted ab-small' }, '没探测到'),
-            f.text('ext.autotelic.pythonBin', { placeholder: '留空自动探测' }),
-            h(Btn, { small: true, disabled: busy === 'env', onClick: async () => {
-              setBusy('env')
-              try { const r = await post('/autotelic/env', { probe: true }); toast(r.hint || (r.ok ? '检测完了' : '没检测到'), r.ok && r.env && r.env.pythonBin ? 'ok' : 'err'); load() }
-              catch (e) { toast(e.message, 'err') } finally { setBusy('') }
-            } }, busy === 'env' ? '检测中…' : '重新检测')),
+            s && s.env && (s.env.pythonBin || s.env.bin) ? h('span', { className: 'ab-small', style: { color: 'var(--ab-ok)' } }, '✓ ' + (s.env.pythonBin || s.env.bin) + '（' + s.env.version + '）' + (s.env.source === 'configured' ? ' · 手填' : ' · 自动探测')) : h('span', { className: 'ab-muted ab-small' }, '没探测到'),
+            f.text('ext.autotelic.pythonBin', { placeholder: '留空自动探测' })),
           h(Row, { label: '允许跑 Python' }, f.sw('ext.autotelic.allowPython')),
-          NumRow({ label: '脚本超时', hint: '到点强杀，不悬挂', k: 'scriptTimeoutMs', min: 5000, max: 600000, step: 5000, suffix: '毫秒' }),
+          NumRow({ label: '脚本超时', hint: '到点强杀，不悬挂', k: 'scriptTimeoutMs', min: 1000, max: 600000, step: 1000, suffix: '毫秒' }),
           h(Row, { label: '允许写用户模块', hint: '只能写她自己的 modules/<id>/，写不到框架' }, f.sw('ext.autotelic.allowUserModules')),
+          NumRow({ label: '单行动单步数上限', k: 'maxSteps', min: 1, max: 32 }),
+          NumRow({ label: '同时进行的行动单', k: 'maxTasksActive', min: 1, max: 16 }),
+          NumRow({ label: '动作数 / 小时', hint: '她动手的次数上限', k: 'budgetActionsPerHour', min: 1, max: 120 }),
+          h(Row, { label: '意图生成输入预算', hint: '§9.3 token 硬预算：超了先裁背景历史再裁证据，人格锚与约束永不裁' }, NumInline(dv('intentMaxInputTokens'), (v) => ap({ intentMaxInputTokens: v }), 512, 65536, 'token')),
+          h(Row, { label: '把关输入预算' }, NumInline(dv('gateMaxInputTokens'), (v) => ap({ gateMaxInputTokens: v }), 512, 65536, 'token')),
+          h(Row, { label: '复盘输入预算' }, NumInline(dv('reviewMaxInputTokens'), (v) => ap({ reviewMaxInputTokens: v }), 512, 65536, 'token')),
           h('div', { className: 'ab-small ab-muted', style: { margin: '6px 0 2px 2px' } },
-            '提案 ' + (s && s.proposals || 0) + ' 篇 · 攒着没说 ' + (s && s.sayPending || 0) + ' 句' + (s && s.sayPending ? '（安静时段她先把话攒下了）' : '')),
-          s && (s.skills || []).length ? h('div', { className: 'ab-list', style: { marginTop: 6 } }, s.skills.map((k) => h('div', { key: k.id, className: 'ab-li' },
-            h('div', { className: 'meta' }, h('b', null, k.id), ' ', h('span', { className: 'ab-badge' }, k.status === 'learned' ? '已学会' : k.status === 'retired' ? '已退役' : '候选'),
-              ' · 连胜 ' + (k.streak && k.streak.ok || 0) + ' / 连败 ' + (k.streak && k.streak.fail || 0)),
-            h('div', { className: 'body ab-small ab-muted' }, k.title)))) : null,
-        ),
-        // ---------- 卡 5：复盘与做梦 ----------
-        h(Card, { title: '复盘与做梦', desc: '每日一页必有一段「今天没敢说的」（段落在，内容不约束）；真实性靠账本对账。点条目展开全文。' },
+            '提案 ' + (s && s.proposals || 0) + ' 篇 · 攒着没说 ' + (s && s.sayPending || 0) + ' 句'),
+        ]),
+        // ---------- 卡 9：复盘刊物 ----------
+        h(Card, { title: '复盘刊物', desc: '每日一页必有一段「今天没敢说的」；点条目展开全文。' },
           !jr ? h(Empty, { icon: '⏳', text: '加载中…' })
             : jAll && jAll.length ? h('div', { className: 'ab-list' }, jAll)
-              : h(Empty, { icon: '🌙', text: '还没有复盘。攒够几件完结、或到了每日一页的点儿，她会自己写。' })),
+              : h(Empty, { icon: '🌙', text: '还没有复盘刊物。' })),
         dayModal,
       )
+    }
+    /** 行内小数字输入（反馈回路卡用：比滑块省地方）。 */
+    function NumInline(value, onChange, min, max, suffix) {
+      return h('div', { className: 'ab-flex', style: { alignItems: 'center', gap: 8 } },
+        h('input', { className: 'ab-input', type: 'number', min, max, style: { width: '84px' }, value: Number(value), onChange: (e) => { const v = Number(e.target.value); if (Number.isFinite(v)) onChange(v) } }),
+        suffix ? h('span', { className: 'ab-muted ab-small', style: { whiteSpace: 'nowrap' } }, suffix) : null)
     }
 
     // 「这条任务的流水账」弹窗正文：单任务详情 + 它生命周期内的审计流水。
@@ -4448,9 +4557,9 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
     }
     // 「目的机制」状态卡：链路计数、驱力条、目标假设、载体与节奏。数据走 /panel/purpose/* 代理（模块缺新接口时降级提示）。
     const DRIVE_LABELS = { play: '玩闹', learn: '学习', install: '安装', connect: '陪伴', care: '关心', share: '分享', identity: '自我', create: '创作', consume: '体验' }
-    // 情绪图标：与 engine.js 的 EMOTION_LABELS 十种一一对应（面板只做展示，不重复翻译）
+    // 情绪图标：只为「上一轮的情绪」这一行做展示兜底。真正的图标/名字来自用户配的心情项
+    // （st.mood.emotionsItems 与 status.lastEmotionLabel），这里只是没配图标时的形状提示。
     const EMOTION_ICONS = { curious: '🤔', excited: '🤩', lonely: '😔', envious: '😒', worried: '😟', proud: '😌', affectionate: '🥰', bored: '😐', amused: '😄', content: '😊' }
-    const EMOTION_LABELS = { curious: '好奇', excited: '兴奋', lonely: '寂寞', envious: '羡慕', worried: '担心', proud: '得意', affectionate: '亲近', bored: '无聊', amused: '好笑', content: '平静' }
     const GOAL_OWNER_LABELS = { self: '自己', owner: '主人', member: '群友', media: '媒体' }
     const PACING_PRESETS = [{ value: 'conservative', label: '保守' }, { value: 'default', label: '默认' }, { value: 'active', label: '活跃' }]
     function PurposeStatus({ toast, part }) {
@@ -4472,7 +4581,6 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       if (!p) return null
       const s = p.status || {}
       const drives = Object.entries(s.drives || {}).sort((a, b) => (b[1] || 0) - (a[1] || 0)).slice(0, 5)
-      const moods = Object.keys(EMOTION_LABELS).map((k) => [k, Number((s.moods || {})[k]) || 0]).sort((a, b) => (b[1] || 0) - (a[1] || 0))
       const goals = (s.goals || []).slice(0, 3)
       const chain = [
         ['素材', s.materialCount], ['观察', s.observationCount], ['目标假设', s.goalCount], ['候选', s.candidateCount], ['今日', (s.countToday ?? p.count) + '/' + (s.dailyMax ?? p.dailyMax ?? '?')],
@@ -4515,15 +4623,10 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
             h('span', { className: 'ab-small', style: { width: 42, flexShrink: 0 } }, DRIVE_LABELS[k] || k),
             h('div', { className: 'ab-mood', style: { flex: 1 } }, h('i', { style: { width: Math.round((v || 0) * 100) + '%' } })),
             h('span', { className: 'ab-muted ab-small', style: { width: 34, textAlign: 'right' } }, Math.round((v || 0) * 100) + '%'))))) : null,
-        // 心情进度条：与驱力同款的每维一条（数据是引擎里的心情向量，随时间衰减、被最近行动抬升）。
-        // 十种情绪全部固定显示，0% 也占一条——一眼看清「现在有什么心情、没什么心情」。
-        p.enabled ? h(Row, { label: '心情', hint: '各种心情现在的强弱；会随时间淡去，最近一次行动的心情最明显' },
-          h('div', { style: { flex: 1, minWidth: 180 } }, moods.map(([k, v]) => h('div', { key: k, className: 'ab-flex', style: { marginBottom: 3, opacity: v > 0.02 ? 1 : 0.45 } },
-            h('span', { className: 'ab-small', style: { width: 42, flexShrink: 0 } }, (EMOTION_ICONS[k] || '💭') + (EMOTION_LABELS[k] || k)),
-            h('div', { className: 'ab-mood', style: { flex: 1 } }, h('i', { style: { width: Math.round((v || 0) * 100) + '%' } })),
-            h('span', { className: 'ab-muted ab-small', style: { width: 34, textAlign: 'right' } }, Math.round((v || 0) * 100) + '%'))))) : null,
-        // 心情状态文字：她上次行动后记下的那一句（保留原有显示）
-        p.enabled ? h(Row, { label: '心情状态', hint: '她上次行动后记下的心情；还没主动找过你时是空的' },
+        // 心情进度条 2026-11-17 搬到「心情」页（数据源也换成了心情模块的 emotionsItems）：
+        // 它是她此刻的心情，不是这一轮的目的；目的引擎关掉时心情照常要显示。
+        // 这里只留「上一轮的情绪」这一个本回合的瞬时结果。
+        p.enabled ? h(Row, { label: '上一轮的情绪', hint: '这轮主动搭话时她的情绪（强弱措辞、桌宠气泡辉光用它）；跨轮的心情在「心情」页' },
           h('span', { className: 'ab-muted ab-small' },
             s.lastEmotionLabel ? (EMOTION_ICONS[s.lastEmotion] || '💭') + ' ' + s.lastEmotionLabel + (s.lastEmotionText ? ' · ' + s.lastEmotionText : '') : '还没有记录')) : null,
         p.enabled && s.lastText ? h('div', { className: 'ab-note', style: { marginTop: -6 } }, '上次说：「' + s.lastText + '」') : null,
@@ -5187,6 +5290,91 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
     }
 
     const SOURCE = { tool: 'ta自己记的', auto: '每日整理', diary: '空间日记', panel: '你加的', event: 'ta的经历', import: '导入的', abstract: '长期印象' }
+    // 心情项默认十项（与 src/features/mood-emotions.js 的 DEFAULT_EMOTIONS 对齐）：
+    // 只在草稿里还没有这个键时用来画「出厂长什么样」，真正的默认值由后端 normalize 补。
+    const EMOTION_DEFAULTS = [
+      { key: 'curious', label: '好奇', icon: '🤔', valence: 0.3, arousal: 0.6 },
+      { key: 'excited', label: '兴奋', icon: '🤩', valence: 0.8, arousal: 0.9 },
+      { key: 'lonely', label: '寂寞', icon: '😔', valence: -0.6, arousal: 0.3 },
+      { key: 'envious', label: '羡慕', icon: '😒', valence: -0.4, arousal: 0.5 },
+      { key: 'worried', label: '担心', icon: '😟', valence: -0.5, arousal: 0.6 },
+      { key: 'proud', label: '得意', icon: '😌', valence: 0.6, arousal: 0.5 },
+      { key: 'affectionate', label: '亲近', icon: '🥰', valence: 0.7, arousal: 0.4 },
+      { key: 'bored', label: '无聊', icon: '😐', valence: -0.2, arousal: 0.2 },
+      { key: 'amused', label: '好笑', icon: '😄', valence: 0.6, arousal: 0.7 },
+      { key: 'content', label: '平静', icon: '😊', valence: 0.2, arousal: 0.3 },
+    ]
+    // 心情项的键名规则与后端 EMOTION_KEY_RE 一致：小写字母开头，2~24 位
+    const EMOTION_KEY_RE = /^[a-z][a-z0-9_-]{1,23}$/
+
+    /**
+     * 心情项编辑器：增删项、改名字/图标、调正负倾向与强弱。
+     *
+     * 为什么不用 ListArea：心情项是「对象数组」，不是一行一个字符串——
+     * 名字、图标、正负、强弱都要能改，用 textarea 表达不出来（用户也分不清哪个字段是什么）。
+     * 交互照「生图备用接口」那套对象数组编辑（imageGen.fallbacks）：卡片 + 上下移 + 删除 + 添加。
+     */
+    function EmotionEditor({ value, onChange, disabled }) {
+      const list = Array.isArray(value) && value.length ? value : EMOTION_DEFAULTS
+      const setItem = (i, patch) => onChange(list.map((item, j) => (j === i ? { ...item, ...patch } : item)))
+      const remove = (i) => onChange(list.filter((_, j) => j !== i))
+      const move = (i, step) => {
+        const j = i + step
+        if (j < 0 || j >= list.length) return
+        const next = list.slice()
+        ;[next[i], next[j]] = [next[j], next[i]]
+        onChange(next)
+      }
+      // 新项的键必须唯一且合规：给个确定不会撞的默认键，用户想改再改（键是模型对齐用的，一般不用动）
+      const add = () => {
+        const used = new Set(list.map((item) => item.key))
+        let n = list.length + 1
+        while (used.has('emotion' + n)) n += 1
+        onChange([...list, { key: 'emotion' + n, label: '新心情', icon: '💭', valence: 0.2, arousal: 0.5 }])
+      }
+      return h('div', null,
+        h('div', { className: 'ab-small ab-muted', style: { marginBottom: 8 } },
+          '这些就是她「能有的情绪」。删掉某项后她不会再出现这种心情；改名字只影响显示与措辞，不影响已经记下的数据。正负（-1 难过 ~ +1 开心）和强弱（0 平淡 ~ 1 强烈）决定怎么说这句话。'),
+        list.map((item, i) => h('div', { key: item.key || ('e' + i), className: 'ab-note', style: { marginBottom: 8 } },
+          h('div', { className: 'ab-flex', style: { gap: 6, marginBottom: 6, alignItems: 'center' } },
+            h('span', { className: 'ab-muted ab-small', style: { width: 22, flexShrink: 0 } }, String(i + 1)),
+            h('input', {
+              className: 'ab-input sm', style: { width: 56, textAlign: 'center' }, value: item.icon || '', maxLength: 4,
+              title: '图标（可留空）', disabled,
+              onChange: (e) => setItem(i, { icon: e.target.value }),
+            }),
+            h('input', {
+              className: 'ab-input sm', style: { flex: 1, minWidth: 80 }, value: item.label || '', maxLength: 8,
+              title: '显示名字，最多 8 个字', disabled,
+              onChange: (e) => setItem(i, { label: e.target.value }),
+            }),
+            h(Btn, { small: true, disabled: disabled || i === 0, onClick: () => move(i, -1) }, '上移'),
+            h(Btn, { small: true, disabled: disabled || i === list.length - 1, onClick: () => move(i, 1) }, '下移'),
+            h(Btn, { small: true, kind: 'ghost', disabled: disabled || list.length <= 1, onClick: () => remove(i) }, '删除')),
+          h('div', { className: 'ab-flex', style: { gap: 10, alignItems: 'center', flexWrap: 'wrap' } },
+            h('span', { className: 'ab-muted ab-small', style: { width: 60, flexShrink: 0 } }, '正负'),
+            h('input', {
+              type: 'range', min: -1, max: 1, step: 0.1, style: { flex: 1, minWidth: 90 }, value: Number(item.valence) || 0, disabled,
+              onChange: (e) => setItem(i, { valence: Number(e.target.value) }),
+            }),
+            h('span', { className: 'ab-muted ab-small', style: { width: 34, textAlign: 'right' } }, (Number(item.valence) || 0).toFixed(1)),
+            h('span', { className: 'ab-muted ab-small', style: { width: 60, flexShrink: 0 } }, '强弱'),
+            h('input', {
+              type: 'range', min: 0, max: 1, step: 0.1, style: { flex: 1, minWidth: 90 }, value: Number(item.arousal) || 0, disabled,
+              onChange: (e) => setItem(i, { arousal: Number(e.target.value) }),
+            }),
+            h('span', { className: 'ab-muted ab-small', style: { width: 34, textAlign: 'right' } }, (Number(item.arousal) || 0).toFixed(1))),
+          h('div', { className: 'ab-muted ab-small', style: { marginTop: 4 } }, '键名（模型对齐用，一般不用改）：' + (item.key || '—'))))
+        ,
+        h('div', { className: 'ab-flex', style: { gap: 8, marginTop: 4 } },
+          h(Btn, { small: true, disabled: disabled || list.length >= 24, onClick: add }, '＋ 添加一项'),
+          h(Btn, { small: true, kind: 'ghost', disabled, onClick: () => onChange(EMOTION_DEFAULTS.map((item) => ({ ...item }))) }, '恢复出厂十项')),
+      )
+    }
+
+    // 心情页：单标量心情（打分/半衰期/模型判定）+ 情绪向量（心情项可配）+ ta自己的说话方式。
+    // 情绪向量 2026-11-17 从目的引擎页搬来这里：它是「她此刻的心情」，不是「这一轮的目的」，
+    // 目的引擎关掉时心情也要照常显示；两处各画一套进度条只会让人以为有两份心情。
     function Mood({ st, draft, setDraft, toast }) {
       const f = useField(draft, setDraft)
       // 「ta自己的说话方式」跟着心情页走：那是聊久了养成的说话习惯（人格/心情一部分），
@@ -5197,22 +5385,57 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       const stylesCard = h(Card, { title: 'ta自己的说话方式', desc: '聊久了慢慢养成的说法。不会变成另一个人，只是越来越像「你们的」大肥鱼。对每个人和每个群的相处经验、说话习惯在「人物记忆」页。' },
         h(Row, { label: '使用学来的语气与相处建议', hint: '对所有群和私聊生效。关闭后不带入回复；学习和存档继续，事实记忆不受影响。改完请保存设置。' }, f.sw('memory.adaptStyle', { title: '使用学来的语气与相处建议' })),
         h(StyleEditor, { k: 'self', label: 'ta自己养成的说法', list: styles.self || [], toast, onSaved: loadIns }))
+      // 心情历史：/state 只带摘要（history 被剥掉，e2e 锁着这个行为），
+      // 所以过去这段「因为…」列表一直渲染不出来。改从模块自带的 /mood/history 按需拉。
+      const [history, setHistory] = useState([])
+      useEffect(() => {
+        if (!modOn(st, 'mood')) return
+        get('/mood/history').then((r) => setHistory(Array.isArray(r.history) ? r.history : [])).catch(() => {})
+      }, [modOn(st, 'mood')])
+      const historyBlock = history.length ? h('div', { className: 'ab-list', style: { marginTop: 8 } }, history.slice(0, 6).map((x, i) => h('div', { key: i, className: 'ab-li' },        h('div', { className: 'meta' }, timeAgo(x.at)),
+        h('div', { className: 'body' }, (x.to >= x.from ? '↑ ' : '↓ ') + x.from + ' → ' + x.to, h('span', { className: 'ab-muted ab-small' }, '  ' + x.reason))))) : null
+      // 此刻的情绪（十项进度条）：数据来自 /state.mood.emotionsItems（心情模块下发），
+      // 不再读目的引擎的 status.moods——那是旧的两份心情，2026-11-17 已合并。
+      // st.mood 可能只有摘要（心情模块没跑时 /state 给的是空壳 {value,label,reason}），
+      // 取值一律走可选链：面板任何一页都不该因为「某个模块没跑」整页崩掉（同类坑见 pitfalls 2026-11-17）。
+      const emotionSource = st.mood || {}
+      const emotionItems = Array.isArray(emotionSource.emotionsItems) ? emotionSource.emotionsItems : []
+      const topEmotion = emotionSource.emotionTop || null
+      const emotionCard = !modOn(st, 'mood') ? null : h(Card, {
+        title: '此刻的情绪',
+        desc: '每种心情现在的强弱；会随时间淡去（下面「多久回到平常」就是它的半衰期），最近发生的事最明显。这一栏和上面的心情数值是同一份状态：数值是她整体高不高兴，这些是她具体在为什么情绪起伏。',
+      },
+        topEmotion
+          ? h('div', { className: 'ab-small', style: { marginBottom: 8 } }, h('b', null, (topEmotion.icon || '💭') + ' ' + topEmotion.label), h('span', { className: 'ab-muted' }, ' · 现在最明显'))
+          : h('div', { className: 'ab-small ab-muted', style: { marginBottom: 8 } }, '现在没什么明显的情绪（平平常常）。'),
+        emotionItems.map((item) => h('div', { key: item.key, className: 'ab-flex', style: { marginBottom: 3, opacity: (item.value || 0) > 0.02 ? 1 : 0.45 } },
+          h('span', { className: 'ab-small', style: { width: 84, flexShrink: 0 } }, (item.icon || '💭') + (item.label || item.key)),
+          h('div', { className: 'ab-mood', style: { flex: 1 } }, h('i', { style: { width: Math.round((item.value || 0) * 100) + '%' } })),
+          h('span', { className: 'ab-muted ab-small', style: { width: 34, textAlign: 'right' } }, Math.round((item.value || 0) * 100) + '%'))),
+        // 心情项（情绪表）跟着心情页走：增删改都是「她有哪些心情」，不是目的引擎的参数。
+        h(Card, { title: '心情项', collapsible: true, defaultOpen: false, className: 'ab-fold-sub', desc: '她有哪些情绪、各叫什么、偏正还是偏负、强还是弱。目的引擎判素材情绪、提示词里的措辞强弱，都按这张表走。' },
+          h(EmotionEditor, {
+            // 草稿里没这个键时按出厂十项显示（后端 normalize 也会补同样的默认值）
+            value: (draft.mood && Array.isArray(draft.mood.emotions) && draft.mood.emotions.length) ? draft.mood.emotions : EMOTION_DEFAULTS,
+            disabled: !modOn(st, 'mood'),
+            onChange: (list) => setDraft(setPath(draft, 'mood.emotions', list)),
+          })),
+      )
       const moodCard = !modOn(st, 'mood') ? h(ModOff, { name: '心情' }) : h(Card, { title: '心情', right: f.sw('mood.enabled'), desc: '被夸、被哄、被凶都会影响ta的心情（对ta说的话、主人的话影响更大），过一阵子慢慢回到平常。心情好时ta话多、更爱发表情和语音、回得快、群里更爱插话；心情差时话少、回得慢、少发表情，还会带点小脾气。' },
-          h('div', { className: 'ab-flex', style: { marginBottom: 8 } }, h('b', null, st.mood.label), h('span', { className: 'ab-muted' }, st.mood.value + ' / 100'), st.mood.reason ? h('span', { className: 'ab-muted ab-small' }, '· 因为' + st.mood.reason) : null),
-          h('div', { className: 'ab-mood' }, h('i', { style: { width: Math.max(4, st.mood.value) + '%' } })),
-          h('div', { style: { marginTop: 10 } },
-            h(Row, { label: '多久回到平常', hint: '半衰期' }, f.range('mood.halfLifeHours', 0.5, 24, 0.5, (v) => v + ' 小时')),
-            h(Row, { label: '平常是多少', hint: '基线：没人说话时心情会慢慢往这个值靠（默认 60）' }, f.range('mood.base', 10, 90, 1, (v) => v + ' / 100')),
-            h(Row, { label: '聊天流水留多久', hint: '默认留 7 天，刚说过的话靠它想起来；0 = 整理完就删；-1 = 永久保留；其他数字 = 留这么多天。留得越久，本机存的聊天原文越多' }, f.num('memory.keepChatlogDays', { min: -1, max: 3650 })),
-            h(Row, { label: '整理时合并重复记忆', hint: '同一个人名下说的是一件事的条目并成一条。每个人多一次模型调用，默认关' }, f.sw('memory.mergeGroups')),
-            h(Row, { label: '用模型判断心情', hint: '每轮聊完用模型判一次（能分清开玩笑和真骂、ta主动找你时的心意），更准；每轮多一次很短的模型调用。关着就按关键词' }, f.sw('mood.judge'))),
-          (st.mood.history || []).length ? h('div', { className: 'ab-list', style: { marginTop: 8 } }, st.mood.history.slice(0, 6).map((x, i) => h('div', { key: i, className: 'ab-li' },
-            h('div', { className: 'meta' }, timeAgo(x.at)),
-            h('div', { className: 'body' }, (x.to >= x.from ? '↑ ' : '↓ ') + x.from + ' → ' + x.to, h('span', { className: 'ab-muted ab-small' }, '  ' + x.reason))))) : null,
-        )
-      // 心情页：心情数值 + ta自己的说话方式（说话方式是心情/人格养成的，不属于记忆库设置）
+        h('div', { className: 'ab-flex', style: { marginBottom: 8 } }, h('b', null, emotionSource.label || '平平常常'), h('span', { className: 'ab-muted' }, (emotionSource.value ?? 60) + ' / 100'), emotionSource.reason ? h('span', { className: 'ab-muted ab-small' }, '· 因为' + emotionSource.reason) : null),
+        h('div', { className: 'ab-mood' }, h('i', { style: { width: Math.max(4, emotionSource.value ?? 60) + '%' } })),
+        h('div', { style: { marginTop: 10 } },
+          h(Row, { label: '多久回到平常', hint: '半衰期，心情数值和下面每种情绪都用它' }, f.range('mood.halfLifeHours', 0.5, 24, 0.5, (v) => v + ' 小时')),
+          h(Row, { label: '平常是多少', hint: '基线：没人说话时心情会慢慢往这个值靠（默认 60）' }, f.range('mood.base', 10, 90, 1, (v) => v + ' / 100')),
+          h(Row, { label: '聊天流水留多久', hint: '默认留 7 天，刚说过的话靠它想起来；0 = 整理完就删；-1 = 永久保留；其他数字 = 留这么多天。留得越久，本机存的聊天原文越多' }, f.num('memory.keepChatlogDays', { min: -1, max: 3650 })),
+          h(Row, { label: '整理时合并重复记忆', hint: '同一个人名下说的是一件事的条目并成一条。每个人多一次模型调用，默认关' }, f.sw('memory.mergeGroups')),
+          h(Row, { label: '用模型判断心情', hint: '每轮聊完用模型判一次（能分清开玩笑和真骂、ta主动找你时的心意），更准；每轮多一次很短的模型调用。关着就按关键词' }, f.sw('mood.judge'))),
+        historyBlock,
+      )
+      // 心情页：心情数值 + 此刻的情绪 + ta自己的说话方式
       return h('div', { className: 'ab-grid' },
         moodCard,
+        emotionCard,
         stylesCard,
       )
     }
