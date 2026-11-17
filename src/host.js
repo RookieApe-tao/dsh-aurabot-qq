@@ -62,7 +62,9 @@ import { createAuditor } from './autotelic/audit.js'
 import { setSsrpMode, assertPublicUrl, fetchGuarded } from './core/net.js'
 import { BUILTINS } from './modules/index.js'
 import { createOutboundPolicy } from './chat/outbound-policy.js'
-import { createPurposePolicy, createSpeakupPolicy, createSharedBudget } from './features/proactive-policy.js'
+// 融合：createSpeakupPolicy 不再导入（迁移线 speakup 退场，proactive-policy 已删该策略源）；
+// 其余 imports 全为本机独有（多平台网关/身份库/工具管理/交接等）。
+import { createPurposePolicy, createSharedBudget } from './features/proactive-policy.js'
 import { parseChatId } from './gateway/address.js'
 import { createIdentity } from './gateway/identity.js'
 import { createGateway } from './gateway/index.js'
@@ -1134,10 +1136,10 @@ export function apply(ctx) {
     const ownerChats = () => ownerPrivateChatIds(identity)
     const budget = createSharedBudget({ owner: ownerPerson, dataDir: dir, log: say })
     try {
-      // 目的引擎（默认关）：模块在跑且配置开着才注册。引擎未启用 / 未 ready 时不注册，
-      // 服务自己会处理 managed=false 与 deny 语义（设计稿故障语义：不得静默 pass）。
+      // 目的引擎（P1/Q1 拍板默认开）：模块在跑且配置未显式关才注册。键缺省=开、显式 false 不注册；
+      // 引擎未 ready 时不注册，服务自己会处理 managed=false 与 deny 语义（设计稿故障语义：不得静默 pass）。
       const pu = use('purpose')
-      if (cfg.ext?.purpose?.enabled === true && pu) {
+      if (cfg.ext?.purpose?.enabled !== false && pu) {
         const policy = createPurposePolicy({
           getConfig, engine: pu, state: () => pu.state?.() || null,
           dataDir: dir, log: say, identity, owner: ownerPerson, ownerChat: ownerChats, defaultPlatform, budget,
@@ -1152,29 +1154,18 @@ export function apply(ctx) {
         enginePolicies.delete('purpose')
         use('purpose')?.setEnginePolicySource?.(null) // 策略源撤了，凭据一并撤
       }
-      // 主动搭话（现行默认）：speakup 模块在跑就注册
-      const sp = use('speakup')
-      if (cfg.speakUp?.enabled !== false && sp) {
-        const policy = createSpeakupPolicy({
-          getConfig, speakup: sp,
-          // 与 companion.js 同口径：私聊「最近一次来往」= max(主人最后说话, 她最后发给主人)。
-          // 注意不能把 hub.lastPrivateAt 直接传进来：那个函数按 QQ 号查，策略源调用时不带参数。
-          lastPrivateAt: () => Math.max(hub.lastOwnerChatAt || 0, hub.lastBotToOwner?.at || 0),
-          // 策略源传进来的是完整 chatId（如 'qq:private:...' / 'private:...'），直接问 mutes 即可
-          isMuted: (chatId) => { try { return Boolean(mutes?.muted?.(chatId)) } catch { return false } },
-          dataDir: dir, log: say, identity, owner: ownerPerson, ownerChat: ownerChats, defaultPlatform, budget,
-        })
-        outbound.registerPolicySource(policy)
-        enginePolicies.set('speakup', policy)
-      } else {
-        outbound.unregisterPolicySource('speakup')
-        enginePolicies.delete('speakup')
-      }
-      // 主人换人/换号：旧 pending 一律作废（设计稿「接收人固定」）
+      // 主动搭话策略源（P3 收拢，迁移语义）：不再注册 speakup 源——主动搭话已并入目的引擎（P1），
+      // 出站治理只认 purpose。proactive-policy.js 的 createSpeakupPolicy 已随本次融合删除；
+      // 存量账本 speakup-policy.json 保留原文不合并（两套口径不同，见方案 §6）。
+      outbound.unregisterPolicySource('speakup')
+      enginePolicies.delete('speakup')
+      // 主人换人/换号：旧 pending 一律作废（设计稿「接收人固定」）；
+      // 本机身份库口径：ownerPerson（PersonId）而非旧配置里的主人 QQ 号（多平台主人）。
       outbound.syncOwner?.(ownerPerson)
-      // 面板存过的 activePolicy 要在重启后重新生效（否则配置写了却只有服务实例的默认值在跑）
-      const active = (cfg.ext?.outboundPolicy && cfg.ext.outboundPolicy.activePolicy) || 'auto'
-      outbound.setActivePolicy?.(active)
+      // 面板存过的 activePolicy 要在重启后重新生效（否则配置写了却只有服务实例的默认值在跑）；
+      // P3 存量归一化：老配置里存的 'speakup' 生效为 'purpose'（服务侧 setActivePolicy 也兜一层）
+      const rawActive = (cfg.ext?.outboundPolicy && cfg.ext.outboundPolicy.activePolicy) || 'auto'
+      outbound.setActivePolicy?.(rawActive === 'speakup' ? 'purpose' : rawActive)
     } catch (error) {
       // 装配失败不能拖垮宿主启动：服务会因「无 ready 策略源」拒绝并显示原因
       logger.child('出站策略').warn('策略源装配失败：', error && error.message)
@@ -1520,7 +1511,8 @@ export function apply(ctx) {
       stickers: { count: stickers.library().items.length },
       diary: diary ? { next: diary.nextTime(), last: diary.history()[0] || null } : { next: 0, last: null },
       qzoneSocial: use('qzone-social')?.state?.() ?? null,
-      speakUp: use('speakup')?.state?.() ?? { count: 0 },
+      // P3：今日次数改读目的引擎（主动搭话已并入 purpose；speakup 策略源不再注册）
+      speakUp: use('purpose')?.state?.() ?? { count: 0 },
       purpose: purposeOverview(),
       pet: petStatus(),
       memory: { lastConsolidate: memory?.lastConsolidate?.() ?? 0 },
@@ -1554,12 +1546,14 @@ export function apply(ctx) {
     const pu = use('purpose')
     const ext = (cfg.ext && cfg.ext.purpose) || {}
     const sp = cfg.speakUp || {}
-    const awakeFrom = Number.isFinite(sp.awakeFrom) ? sp.awakeFrom : 8
-    const awakeTo = Number.isFinite(sp.awakeTo) ? sp.awakeTo : 23
+    // P3：醒着窗口的读法与 purposeConfig 对齐（ext.purpose 覆写位优先、speakUp 兜底），
+    // 键仍冻结在 speakUp.awake*（Q3 拍板），只是概览展示别再绕过覆写位。
+    const awakeFrom = Number.isFinite(ext.awakeFrom) ? ext.awakeFrom : (Number.isFinite(sp.awakeFrom) ? sp.awakeFrom : 8)
+    const awakeTo = Number.isFinite(ext.awakeTo) ? ext.awakeTo : (Number.isFinite(sp.awakeTo) ? sp.awakeTo : 23)
     const quiet = quietWindowOf(awakeFrom, awakeTo)
     return {
       available: typeof pu?.status === 'function',
-      enabled: ext.enabled === true,
+      enabled: ext.enabled !== false, // P1/Q1 默认开：键缺省=开，显式 false 才算关（与 purposeConfig 同口径）
       status: pu?.status?.() ?? null,
       count: pu?.state?.().count ?? 0,
       carrier: ext.carrier === 'pet' ? 'pet' : 'qq',
@@ -1570,7 +1564,7 @@ export function apply(ctx) {
         : null,
       quietStart: quiet.quietStart,
       quietEnd: quiet.quietEnd,
-      dailyMax: Number.isFinite(sp.maxPerDay) ? sp.maxPerDay : null,
+      dailyMax: Number.isFinite(ext.maxPerDay) ? ext.maxPerDay : (Number.isFinite(sp.maxPerDay) ? sp.maxPerDay : null),
       awakeFrom,
       awakeTo,
     }
@@ -1756,6 +1750,8 @@ export function apply(ctx) {
     const patch = {}
     const extPatch = {}
     if (typeof b.enabled === 'boolean') extPatch.enabled = b.enabled
+    // 追问开关（P1 翻键）：写入口从 speakUp.nudge 翻到 ext.purpose.nudge（读侧 purposeConfig 双层兼容）。
+    if (typeof b.nudge === 'boolean') extPatch.nudge = b.nudge
     if (b.carrier === 'qq' || b.carrier === 'pet') extPatch.carrier = b.carrier
     if (typeof b.petFallbackToQQ === 'boolean') extPatch.petFallbackToQQ = b.petFallbackToQQ
     if (['conservative', 'default', 'active'].includes(b.pacing)) extPatch.pacing = b.pacing
@@ -1787,8 +1783,10 @@ export function apply(ctx) {
     return readBody(req).then((b) => {
       const patch = {}
       if (['pass', 'gate', 'broker'].includes(b.tier)) patch.tier = b.tier
-      if (['auto', 'purpose', 'speakup'].includes(b.activePolicy)) patch.activePolicy = b.activePolicy
-      if (!Object.keys(patch).length) return { ok: false, message: '没有可保存的字段（tier 只认 pass/gate/broker，activePolicy 只认 auto/purpose/speakup）', outbound: outboundView().outbound }
+      // P3 存量归一化：老面板/老配置提交的 'speakup' 落盘为 'purpose'（不弹错、行为等价）
+      const wantActive = b.activePolicy === 'speakup' ? 'purpose' : b.activePolicy
+      if (['auto', 'purpose'].includes(wantActive)) patch.activePolicy = wantActive
+      if (!Object.keys(patch).length) return { ok: false, message: '没有可保存的字段（tier 只认 pass/gate/broker，activePolicy 只认 auto/purpose）', outbound: outboundView().outbound }
       const now = getConfig()
       const cur = (now.ext && now.ext.outboundPolicy) || {}
       setConfig({ ...now, ext: { ...now.ext, outboundPolicy: { ...cur, ...patch } } })
@@ -1817,8 +1815,10 @@ export function apply(ctx) {
     ready: { label: '就绪', tone: 'ok' },
     error: { label: '出错', tone: 'bad' },
   }
-  const ACTIVE_VIEW = { auto: '自动（挑就绪的那个）', purpose: '目的引擎', speakup: '主动搭话' }
-  const POLICY_NAME_VIEW = { purpose: '目的引擎', speakup: '主动搭话' }
+  // P3：活跃策略下拉收拢为 purpose/auto（speakup 档已从服务与面板两侧移除；
+  // 存量 'speakup' 由服务 setActivePolicy 与 /panel/outbound-policy 写入口归一化为 'purpose'）
+  const ACTIVE_VIEW = { auto: '自动（挑就绪的那个）', purpose: '目的引擎' }
+  const POLICY_NAME_VIEW = { purpose: '目的引擎' }
   const LEDGER_STATE_VIEW = {
     pending: '待投递', sending: '发送中', sent: '已送达', dropped: '已丢弃',
     failed: '失败', uncertain: '结果未明', expired: '已过期', 'transport-queued': '已交由网关',

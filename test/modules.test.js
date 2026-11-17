@@ -190,7 +190,8 @@ test('安全模式：自己写的一个都不加载，内置的回来', async ()
 })
 
 test('复制内置模块来改：复制出来的能直接跑（连翻唱这种带数据文件的）', async () => {
-  for (const id of ['speakup', 'song']) {
+  // P4：speakup 模块已退场（能力并入 purpose），fork 用例不再覆盖它
+  for (const id of ['song']) {
     const r = (await fake.call('/modules/fork', { id })).json()
     assert.equal(r.ok, true, r.message)
     const code = readdirSync(modDir(id), { withFileTypes: true }).filter((e) => e.isFile()).map((e) => readFileSync(join(modDir(id), e.name), 'utf8')).join('\n')

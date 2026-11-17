@@ -1,8 +1,10 @@
 // I3 主人身份清扫验收测试：
 // 1) src/ 中 ownerQQ 仅允许存在于 config.js（旧字段兼容）与 host.js（启动迁移）；
 // 2) 安全闸门（access / approval / danger）四用例全覆盖：平台 A 主人、平台 B 主人、非主人（含跨平台同名账号 '10001'）、无 QQ 的 p-... 主人；
-// 3) 无 QQ 账号的 p-... 主人在假网关平台端全链路（私聊、命令、授权确认、主动搭话、断路由兜底）；
+// 3) 无 QQ 账号的 p-... 主人在假网关平台端全链路（私聊、命令、目的引擎主动搭话、断路由兜底）；
 // 4) 双平台同一主人（QQ + 飞书）：两边私聊都认主人、共享同一按 PersonId 的每日主动发言预算。
+// （P5 融合：原用例 3/4 走 companion.fire 与 createSpeakupPolicy——两者已随 speakup 退场删除，
+//   主动搭话语义由目的引擎承担，改为经 createPurpose 注入；策略源共用 createPurposePolicy。）
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -19,8 +21,8 @@ import { normalize } from '../src/core/config.js'
 import { isOwner, isOwnerPrivateChat, resolveConfirmChat } from '../src/chat/access.js'
 import { createApprovalRelay } from '../src/security/approval.js'
 import { createDangerGuard } from '../src/security/danger.js'
-import { createSpeakUp } from '../src/features/companion.js'
-import { createPurposePolicy, createSpeakupPolicy, createSharedBudget } from '../src/features/proactive-policy.js'
+import { createPurpose } from '../src/purpose/module.js'
+import { createPurposePolicy, createSharedBudget } from '../src/features/proactive-policy.js'
 import { parseCommand } from '../src/chat/commands.js'
 
 const REPO = join(fileURLToPath(import.meta.url), '..', '..')
@@ -225,7 +227,7 @@ test('I3 安全闸门四用例（access / approval / danger）：平台 A 主人
   })
 })
 
-test('I3 无 QQ 账号的 p-... 主人（假网关平台端）：私聊、命令、授权确认、主动搭话与 null 兜底全部正常', async (t) => {
+test('I3 无 QQ 账号的 p-... 主人（假网关平台端）：私聊、命令、目的引擎主动搭话与 null 兜底全部正常', async (t) => {
   const dataDir = mkdtempSync(join(root, 'noqq-e2e-'))
   process.env.AURABOT_DATA_DIR = dataDir
   const identity = createIdentity({ dataDir: join(dataDir, 'gw'), log: noopLog })
@@ -236,7 +238,8 @@ test('I3 无 QQ 账号的 p-... 主人（假网关平台端）：私聊、命令
   let cfg = normalize({
     enabled: true, dryRun: false, setupDone: true, botQQ: '', ownerQQ: '',
     voice: { enabled: false }, merge: { enabled: false }, stickers: { enabled: false, collect: false },
-    speakUp: { enabled: true, awakeFrom: 0, awakeTo: 24, maxPerDay: 5, minIntervalMinutes: 1, maxIntervalMinutes: 1 },
+    speakUp: { enabled: false, nudge: false },
+    ext: { purpose: { enabled: true, initialDelayMinutes: 1, minMaterials: 0 } },
     platforms: { feishu: { enabled: true, default: true } },
   })
   const gw = createGateway({ config: cfg, dataDir: (...p) => join(dataDir, ...p), identity, log: noopLog })
@@ -256,8 +259,12 @@ test('I3 无 QQ 账号的 p-... 主人（假网关平台端）：私聊、命令
     defaultPlatform: 'qq',
   })
   const offEvt = fake.ctx.on('session/event', hub.onSessionEvent)
+  // 宿主装配同款：网关入站 → hub（原用例 companion.fire 走 pushToSession 不需要这条；
+  // 目的引擎经 hub.runSystemTurn/deliver 链路需要事件桥 + 网关消息桥才能真正落地投递）
+  const offGwMsg = gw.onMessage((m) => { hub.onGatewayMessage(m).catch(() => {}) })
   t.after(async () => {
     offEvt()
+    offGwMsg()
     hub.dispose()
     await gw.stopAll()
     fake.dispose()
@@ -271,10 +278,20 @@ test('I3 无 QQ 账号的 p-... 主人（假网关平台端）：私聊、命令
     }
   }
 
-  // 1. 主动找 p-... 主人（没有 QQ 账号，routeOwner 选到飞书；发送经过网关回到飞书平台端）
+  // 1. 目的引擎主动找 p-... 主人（没有 QQ 账号，routeOwner 选到飞书；发送经过网关回到飞书平台端）
   assert.equal(routeOwner(), 'feishu:private:ou_only_owner')
-  const speakUp = createSpeakUp({ getConfig: () => cfg, hub, log: noopLog, identity, routeOwner })
-  await speakUp.fire('test-noqq')
+  // P5：目的引擎在有 runTurnInChat 的 hub 上会迁进私聊会话生成（#446）——那套挂载链路在
+  // 假宿主里跑不完（等不到 turn/end）。这里给 createPurpose 一个没有 runTurnInChat 的 hub
+  // 视图（Object.create 保住原型链），让它回落到系统会话路径（与退场的 companion.fire 同款），
+  // 投递仍走真 hub.deliver → 网关 → 飞书假平台端。
+  const purposeHub = Object.create(hub)
+  purposeHub.runTurnInChat = undefined
+  const purpose = createPurpose({
+    getConfig: () => cfg, hub: purposeHub, log: noopLog, identity, routeOwner,
+    isMuted: () => false, memory: () => ({ list: () => [] }), personaText: () => '你是一只活泼的伙伴，喜欢主动找主人聊天。',
+  })
+  const purposeFire = await purpose.fire('test-noqq')
+  assert.equal(purposeFire.outcome, 'sent', `目的引擎应发出：${JSON.stringify(purposeFire)}`)
   await waitFor(() => adapter.sent.some((r) => r.payload?.chat?.id === 'ou_only_owner' && r.payload?.parts?.some((p) => /收到非QQ回复/.test(p.text || ''))))
   assert.ok(adapter.sent.some((r) => r.payload?.chat?.id === 'ou_only_owner' && r.payload?.parts?.some((p) => /收到非QQ回复/.test(p.text || ''))))
 
@@ -282,15 +299,20 @@ test('I3 无 QQ 账号的 p-... 主人（假网关平台端）：私聊、命令
   adapter.disconnect()
   assert.equal(routeOwner(), null)
   const outCountBefore = adapter.sent.length
-  await speakUp.fire('test-null-route')
+  const outcomeNoRoute = await purpose.fire('test-null-route')
+  assert.ok(['no-owner', 'silent', 'skipped-materials', 'skipped-no-candidate', 'skipped-cooldown'].includes(outcomeNoRoute.outcome),
+    `null 路由不抛错、不投递：${JSON.stringify(outcomeNoRoute)}`)
   assert.equal(adapter.sent.length, outCountBefore)
   adapter.reconnect()
   assert.equal(routeOwner(), 'feishu:private:ou_only_owner')
 
   // 3. p-... 主人通过非 QQ 私聊发消息 + 命令解析
   assert.equal(parseCommand('/silent', [{ name: '/silent' }])?.name, 'silent')
+  // receiveOwnerMessage 是「外部已验证主人」入口，要求主人私聊会话已存在（map().chats 里有
+  // sessionId）。退场的 companion.fire 经 pushToSession 顺手建了这条会话；目的引擎走系统会话
+  // 路径不会。这里用真入站（网关 → hub.onGatewayMessage）替代——主人从飞书私聊说话，与生产链路一致。
+  adapter.pushInbound({ chat: { kind: 'private', id: 'ou_only_owner' }, sender: { account: 'ou_only_owner', name: '主人' }, parts: [{ type: 'text', text: '在吗p主人' }] })
   const prevCount = adapter.sent.length
-  await hub.receiveOwnerMessage('feishu:private:ou_only_owner', { text: '在吗p主人', via: 'feishu' })
   await waitFor(() => adapter.sent.length > prevCount)
   assert.ok(adapter.sent.length > prevCount)
   assert.equal(adapter.sent.at(-1).payload?.chat?.id, 'ou_only_owner')
@@ -306,7 +328,7 @@ test('I3 双平台同一主人（QQ + 飞书）：共用同一按 PersonId 的�
   let tNow = new Date(2026, 2, 10, 12, 0, 0, 0).getTime()
   const cfg = {
     enabled: true,
-    speakUp: { enabled: true, awakeFrom: 0, awakeTo: 24, idleMinutes: 0, minIntervalMinutes: 1, maxIntervalMinutes: 1, maxPerDay: 5 },
+    speakUp: { enabled: false, nudge: false },
     ext: { purpose: { enabled: true, awakeFrom: 0, awakeTo: 24, maxPerDay: 5, minIntervalMinutes: 1, maxIntervalMinutes: 1 } },
   }
   // 同一 ownerPerson 的共享预算，硬上限 2 次/天
@@ -314,20 +336,7 @@ test('I3 双平台同一主人（QQ + 飞书）：共用同一按 PersonId 的�
   const ownerChat = () => ownerChatsOf(identity)
   assert.deepEqual(ownerChat(), ['qq:private:10001', 'feishu:private:ou_owner_b'])
 
-  const speakup = createSpeakupPolicy({
-    getConfig: () => cfg,
-    speakup: { state: () => ({ day: new Date(tNow).toDateString(), count: 0, nextAt: 0, last: 0 }) },
-    now: () => tNow,
-    dataDir: polDir,
-    log: noopLog,
-    lastPrivateAt: () => 0,
-    isMuted: () => false,
-    identity,
-    owner: ownerPerson,
-    ownerChat,
-    budget,
-  })
-  const purpose = createPurposePolicy({
+  const makePolicy = (extra = {}) => createPurposePolicy({
     getConfig: () => cfg,
     engine: { running: () => false },
     state: () => ({ countToday: 0, nextFireAt: 0, lastAttemptAt: 0, desires: [{ status: 'pending', trigger: 't1' }] }),
@@ -338,28 +347,32 @@ test('I3 双平台同一主人（QQ + 飞书）：共用同一按 PersonId 的�
     owner: ownerPerson,
     ownerChat,
     budget,
+    ...extra,
   })
+  // P5：speakup 策略源已删，双源共享预算改用两个 purpose 策略源实例验证（同一 budget 域）
+  const purposeA = makePolicy()
+  const purposeB = makePolicy()
 
   // 第 1 次：向 QQ 主人私聊发送并结算
-  const r1 = speakup.reserve({ to: 'qq:private:10001', at: tNow })
+  const r1 = purposeA.reserve({ to: 'qq:private:10001', at: tNow })
   assert.equal(r1.ok, true)
-  speakup.commit(r1.reserveId, { deliveryId: 'd1', outcome: 'sent' })
+  purposeA.commit(r1.reserveId, { deliveryId: 'd1', outcome: 'sent' })
 
   // 经过 minGapMs 后，第 2 次：向飞书主人私聊发送并结算（与 QQ 共享同一预算）
   tNow += 2 * 60_000
-  const r2 = purpose.reserve({ to: 'feishu:private:ou_owner_b', at: tNow })
+  const r2 = purposeB.reserve({ to: 'feishu:private:ou_owner_b', at: tNow })
   assert.equal(r2.ok, true)
-  purpose.commit(r2.reserveId, { deliveryId: 'd2', outcome: 'sent' })
+  purposeB.commit(r2.reserveId, { deliveryId: 'd2', outcome: 'sent' })
 
   // 经过足够长时间后尝试第 3 次（无论发到 QQ 还是飞书）：共享日上限 2 已满，统一返回 budget 拒绝
   tNow += 10 * 60_000
-  const r3qq = speakup.reserve({ to: 'qq:private:10001', at: tNow })
-  const r3fs = purpose.reserve({ to: 'feishu:private:ou_owner_b', at: tNow })
+  const r3qq = purposeA.reserve({ to: 'qq:private:10001', at: tNow })
+  const r3fs = purposeB.reserve({ to: 'feishu:private:ou_owner_b', at: tNow })
   assert.equal(r3qq.ok, false)
   assert.equal(r3qq.reason, 'budget')
   assert.equal(r3fs.ok, false)
   assert.equal(r3fs.reason, 'budget')
 
   // 陌生人私聊仍不在主人策略域内
-  assert.equal(speakup.reserve({ to: 'feishu:private:10001', at: tNow }).reason, 'out-of-scope')
+  assert.equal(purposeA.reserve({ to: 'feishu:private:10001', at: tNow }).reason, 'out-of-scope')
 })

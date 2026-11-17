@@ -966,7 +966,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       { id: 'imagegen', label: '生图', flag: 'imageGen.enabled' },
       { id: 'video', label: '视频', flagFn: (cfg) => { const v = cfg.video || {}; const p = v.provider || 'local'; return p === 'local' ? Boolean(cfg.local && cfg.local.video) : p === 'minimax' ? Boolean(v.minimax && v.minimax.apiKeySet) : Boolean(v.custom && v.custom.createUrl && v.custom.queryUrl) } },
       { id: 'diary', label: '空间日记', flag: 'diary.enabled' },
-      { id: 'speakup', label: '主动搭话', flag: 'speakUp.enabled' },
+      { id: 'speakup', label: '目的引擎', flag: 'ext.purpose.enabled' },
       { id: 'autotelic', label: '自驱引擎', flag: 'ext.autotelic.enabled' },
       { id: 'pet', label: '桌宠' },
       { id: 'mood', label: '心情', flag: 'mood.enabled' },
@@ -1289,7 +1289,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
           h(Card, { title: '快捷操作', desc: '试一试ta是不是活着。这些操作会真的发到 QQ（试运行时只写日志）。' },
             h('div', { className: 'ab-flex' },
               h(Btn, { kind: 'primary', onClick: quick('/test-send') }, '给主人发一条自测'),
-              h(Btn, { onClick: quick('/speakup/fire') }, '让ta现在来找你'),
+              h(Btn, { onClick: quick('/purpose/fire') }, '让ta现在来找你'),
               h(Btn, { onClick: quick('/diary/run', { visibility: 'self' }) }, '写一篇日记（仅自己可见）'),
             ),
             h('p', { className: 'ab-muted ab-small', style: { marginTop: 12, marginBottom: 0 } }, '想看ta和每个人聊了什么、调了什么工具：点 DSH 侧栏「Aurabot · QQ」工作区里对应的会话，也可以直接在会话里插话。'),
@@ -1315,7 +1315,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       { key: 'pet', label: '桌宠', desc: '桌面上的悬浮窗形象，和 QQ 里是同一个她。', tab: 'pet', cli: 'pet' },
       { key: 'diary', label: '空间日记', desc: '自己写日记、发到空间说说。', tab: 'diary', flag: 'diary.enabled', cli: 'diary' },
       { key: 'platform', label: '内容平台', desc: '逛 B站 / 抖音 / 小黑盒，看内容也能互动。', tab: 'bili', cli: ['bili', 'douyin', 'heybox'] },
-      { key: 'speakup', label: '主动搭话', desc: '闲着的时候主动来找你说话。', tab: 'speakup', flag: 'speakUp.enabled', cli: 'speakup' },
+      { key: 'purpose', label: '目的引擎', desc: '像人一样主动找你说话：攒素材 → 立目标 → 到点来找你。', tab: 'speakup', flag: 'ext.purpose.enabled', cli: 'purpose' },
       { key: 'autotelic', label: '自驱引擎', desc: '后台自己立项、做事、记账。', tab: 'autotelic', flag: 'ext.autotelic.enabled', cli: 'autotelic' },
     ]
 
@@ -4120,7 +4120,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         h(Row, { label: '好友说说互动概率', hint: '每条说说只判断一次' }, f.percent('qzoneSocial.friendChance')),
         h(Row, { label: '你的说说互动概率' }, f.percent('qzoneSocial.ownerChance')),
         h(Row, { label: '每天最多评论', hint: '点赞不算' }, f.range('qzoneSocial.maxPerDay', 0, 30, 1, (v) => v + ' 条')),
-        h(Row, { label: '多久逛一次', hint: '只在「主动搭话」里设的醒着时间内' }, f.range('qzoneSocial.intervalMin', 10, 240, 10, (v) => v + ' 分钟')),
+        h(Row, { label: '多久逛一次', hint: '只在「目的引擎」里设的醒着时间内' }, f.range('qzoneSocial.intervalMin', 10, 240, 10, (v) => v + ' 分钟')),
         h('div', { className: 'ab-flex', style: { marginTop: 10 } },
           h('span', { className: 'ab-muted ab-small' }, s ? '今天评论了 ' + s.count + ' 条' + (s.lastRun ? '，上次逛是 ' + timeAgo(s.lastRun) : '') : ''),
           h('div', { className: 'ab-spacer' }),
@@ -4131,40 +4131,68 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       )
     }
 
+    /**
+     * 目的引擎页（tab 'speakup'）。2026-11-17 按面板统一口径重构：
+     *  - 可见区 2~3 个高频组行（行内项自由流式排版 ab-grp-row，≤10 项）
+     *  - 其余收进「更多设置（N 项）」折叠卡（collapsible + defaultOpen=false + ab-fold-sub）
+     *  - 冻结键（speakUp.awakeFrom、awakeTo、allow、reminder 系列、idleMinutes、间隔、maxPerDay、nudge）一个不丢，仅调整呈现位置
+     */
     function SpeakUp({ st, draft, setDraft, toast }) {
       const f = useField(draft, setDraft)
+      // 「更多设置（N 项）」折叠子卡：与聊天页/记忆页同口径
+      const more = (title, items) => (items.length ? h(Card, { title: (title || '更多设置') + '（' + items.length + ' 项）', collapsible: true, defaultOpen: false, className: 'ab-fold-sub' }, items) : null)
       const [closedReminders, setClosedReminders] = useState(() => new Set())
       const reminders = (st.speakUp?.reminders || []).filter((r) => !closedReminders.has(r.id))
       const closeReminder = async (id) => {
-        const r = await post('/speakup/reminder/close', { id }).catch(() => ({ ok: false, message: '关闭失败' }))
+        const r = await post('/purpose/reminder/close', { id }).catch(() => ({ ok: false, message: '关闭失败' }))
         toast(r.message, r.ok === false ? 'err' : 'ok')
         if (r.ok) setClosedReminders((prev) => new Set(prev).add(id))
       }
       return h('div', { className: 'ab-grid' },
-        h(Card, { title: '主动搭话', right: f.sw('speakUp.enabled'), desc: '只在和你的私聊里：你一阵子没理ta，ta会主动来找你说一句——每次由头不一样（分享小事、接着上次的话题、想起你的事、按时间问候……），内容是ta现想的，不是模板。群里不会这样。' },
-          h(Row, { label: '她的小闹钟', hint: '开着她可以在和你的私聊里自己定时间，到点由主动搭话的系统提醒叫醒她' }, f.sw('speakUp.reminderEnabled')),
-          h(Row, { label: '最多保留', hint: '未过期、未关闭的提醒；最多 10 条' }, f.num('speakUp.reminderLimit', { min: 1, max: 10 }), h('span', { className: 'ab-muted' }, '条')),
-          h(Row, { label: '触发失败时保留提醒', hint: '网络波动或模型调用失败时保留 15 分钟，每 5 分钟重试一次；关掉则失败即丢弃' }, f.sw('speakUp.reminderRetry')),
-          h(Row, { label: '追问', hint: 'ta问了你一句、你 15~40 分钟没回，偶尔轻轻追一句（「人呢」之类），每句最多追一次' }, f.sw('speakUp.nudge')),
-          h(Row, { label: '多久没聊才找你' }, f.num('speakUp.idleMinutes', { min: 5 }), h('span', { className: 'ab-muted' }, '分钟')),
-          h(Row, { label: '两次之间隔', hint: '在这个范围里随机' }, f.num('speakUp.minIntervalMinutes', { min: 5 }), h('span', { className: 'ab-muted' }, '到'), f.num('speakUp.maxIntervalMinutes', { min: 5 }), h('span', { className: 'ab-muted' }, '分钟')),
-          h(Row, { label: '主动搭话白名单', hint: '除了你，还会主动找这些人，每人单独算次数。目的引擎开着时也按这份名单找人，只用和对方的私聊和关于对方的记忆。也可以在 QQ 里发 /speak add QQ 号。名单里的人要在私聊白名单里，才能回ta' }, f.list('speakUp.allow', { placeholder: '每行一个 QQ 号', numbers: true })),
-          h(Row, { label: '每天最多', hint: '每个人单独算；留空就是 20，不封顶' }, f.num('speakUp.maxPerDay', { min: 0 }), h('span', { className: 'ab-muted' }, '次')),
-          h(Row, { label: 'ta醒着的时间', hint: '这段时间外不打扰你；小闹钟按她定的时间触发，不受这里限制' }, f.num('speakUp.awakeFrom', { min: 0, max: 23 }), h('span', { className: 'ab-muted' }, '点到'), f.num('speakUp.awakeTo', { min: 1, max: 24 }), h('span', { className: 'ab-muted' }, '点')),
+        // ===== 可见组行 ① 什么时候来找你（4 项核心节奏）=====
+        h(Card, { title: '什么时候来找你',
+          desc: '只在和你的私聊里：闲的时候主动来找你说一句——每次由头不一样（分享小事、接着上次的话题、想起你的事、按时间问候……），内容是ta现想的，不是模板。群里不会这样。' },
+          h('div', { className: 'ab-grp-row' },
+            h(Row, { label: '多久没聊才找你' }, f.num('speakUp.idleMinutes', { min: 5 }), h('span', { className: 'ab-muted' }, '分钟')),
+            h(Row, { label: '两次之间隔', hint: '在这个范围里随机' }, f.num('speakUp.minIntervalMinutes', { min: 5 }), h('span', { className: 'ab-muted' }, '到'), f.num('speakUp.maxIntervalMinutes', { min: 5 }), h('span', { className: 'ab-muted' }, '分钟')),
+            h(Row, { label: '每天最多', hint: '每个人单独算；留空就是 20，不封顶' }, f.num('speakUp.maxPerDay', { min: 0 }), h('span', { className: 'ab-muted' }, '次')),
+            h(Row, { label: 'ta醒着的时间', hint: '这段时间外不打扰你；小闹钟按她定的时间触发，不受这里限制' }, f.num('speakUp.awakeFrom', { min: 0, max: 23 }), h('span', { className: 'ab-muted' }, '点到'), f.num('speakUp.awakeTo', { min: 1, max: 24 }), h('span', { className: 'ab-muted' }, '点')),
+          ),
           h('div', { className: 'ab-flex', style: { marginTop: 10 } },
             h('span', { className: 'ab-muted ab-small' }, '今天已经找过你 ' + (st.speakUp.count || 0) + ' 次'),
             h('div', { className: 'ab-spacer' }),
-            h(Btn, { small: true, onClick: async () => { const r = await post('/speakup/fire'); toast(r.message) } }, '现在就让ta来找我')),
+            h(Btn, { small: true, onClick: async () => { const r = await post('/panel/purpose/run'); toast(r.message) } }, '现在就让ta来找我')),
         ),
-        h(Card, { title: '她的小闹钟', desc: '她自己在对话里定的一次性提醒；到点会触发主动搭话，让她按当时说好的内容来找你。过期或触发成功后会自动消失。' },
+
+        // ===== 可见组行 ② 找谁（白名单，单项但高频且重要）=====
+        h(Card, { title: '找谁',
+          desc: '除了你，还会主动找这些人，每人单独算次数。目的引擎开着时也按这份名单找人，只用和对方的私聊和关于对方的记忆。' },
+          h('div', { className: 'ab-grp-row' },
+            h(Row, { label: '白名单', hint: '每行一个 QQ 号；也可以在 QQ 里发 /speak add QQ 号。名单里的人要在私聊白名单里，才能回ta' }, f.list('speakUp.allow', { placeholder: '每行一个 QQ 号', numbers: true })),
+          ),
+        ),
+
+        // ===== 可见组行 ③ 小闹钟与追问（3 项）=====
+        h(Card, { title: '小闹钟与追问',
+          desc: '她自己在对话里定的一次性提醒；到点会触发主动搭话，让她按当时说好的内容来找你。过期或触发成功后会自动消失。' },
+          h('div', { className: 'ab-grp-row' },
+            h(Row, { label: '她的小闹钟', hint: '开着她可以在和你的私聊里自己定时间，到点由目的引擎的系统提醒叫醒她' }, f.sw('speakUp.reminderEnabled')),
+            h(Row, { label: '追问', hint: 'ta问了你一句、你 15~40 分钟没回，偶尔轻轻追一句（「人呢」之类），每句最多追一次' }, f.sw('speakUp.nudge')),
+            h(Row, { label: '最多保留', hint: '未过期、未关闭的提醒；最多 10 条' }, f.num('speakUp.reminderLimit', { min: 1, max: 10 }), h('span', { className: 'ab-muted' }, '条')),
+          ),
+          more('更多设置', [
+            h(Row, { key: 'rr', label: '触发失败时保留提醒', hint: '网络波动或模型调用失败时保留 15 分钟，每 5 分钟重试一次；关掉则失败即丢弃' }, f.sw('speakUp.reminderRetry')),
+          ]),
+          // 待触发列表
           reminders.length
-            ? h('div', null, reminders.map((r) => h('div', { key: r.id, className: 'ab-flex', style: { alignItems: 'flex-start', gap: 12, padding: '9px 0', borderTop: '1px solid var(--ab-line)' } },
+            ? h('div', { style: { marginTop: 10 } }, reminders.map((r) => h('div', { key: r.id, className: 'ab-flex', style: { alignItems: 'flex-start', gap: 12, padding: '9px 0', borderTop: '1px solid var(--ab-line)' } },
               h('div', { style: { flex: 1, minWidth: 0 } },
                 h('b', null, r.atText),
                 h('div', { className: 'ab-small', style: { marginTop: 3, whiteSpace: 'pre-wrap', wordBreak: 'break-word' } }, r.note)),
               h(Btn, { small: true, kind: 'ghost', onClick: () => closeReminder(r.id) }, '关闭'))))
-            : h('div', { className: 'ab-muted ab-small' }, '还没有待触发的小闹钟。'),
+            : h('div', { className: 'ab-muted ab-small', style: { marginTop: 10 } }, '还没有待触发的小闹钟。'),
         ),
+
         h(PurposeStatus, { st, toast }),
         h(OutboundPolicy, { toast }),
       )
@@ -8334,7 +8362,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
             h(Btn, { small: true, onClick: async () => { await get('/bili/account'); load() } }, '检查登录'),
             acct ? h('span', { className: 'ab-small', style: { color: acct.isLogin ? 'var(--ab-ok)' : 'var(--ab-warn)' } }, acct.isLogin ? '已登录：' + acct.uname : '没登录（只能看，不能评论）') : null),
         ),
-        h(Card, { title: '怎么刷', desc: '只在「主动搭话」里设的醒着时间内刷。' },
+        h(Card, { title: '怎么刷', desc: '只在「目的引擎」里设的醒着时间内刷。' },
           h(Row, { label: '定时自己去刷' }, f.sw('bili.autoBrowse')),
           h(Row, { label: '只在谷时刷', hint: '避开 DeepSeek 峰时（北京时间工作日 9-12、14-18）；峰时跳过定时刷和看回复，等谷时再跑，周末和法定节假日全天可刷' }, f.sw('bili.offpeak')),
           (draft.bili && draft.bili.offpeak && s && s.lastSkipReason) ? h(Row, { label: '上次跳过' }, h('span', { className: 'ab-small', style: { color: 'var(--ab-warn)' } }, s.lastSkipReason)) : null,
@@ -8528,11 +8556,11 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
             h(Btn, { small: true, kind: 'primary', onClick: act('/douyin/confirm-owner', 'confirm', { input: ((draft.douyin || {}).owner || {}).input || '' }), disabled: !!busy }, busy === 'confirm' ? '核对中…' : '核对'),
             s && s.owner ? h('span', { className: 'ab-small', style: { color: 'var(--ab-ok)' } }, '已核对：' + s.owner.nickname) : h('span', { className: 'ab-small ab-muted' }, '还没核对（不核对就不会 @你）')),
         ),
-        h(Card, { title: '抖音私信', desc: '你在抖音上私信ta，ta会用自己的口气回（只认上面核对过的你，别人的私信不理）。让ta找视频的话，ta会尝试刷一轮再私信分享给你；这条流程仍需实际环境验证。只在「主动搭话」里设的醒着时间内回。' },
+        h(Card, { title: '抖音私信', desc: '你在抖音上私信ta，ta会用自己的口气回（只认上面核对过的你，别人的私信不理）。让ta找视频的话，ta会尝试刷一轮再私信分享给你；这条流程仍需实际环境验证。只在「目的引擎」里设的醒着时间内回。' },
           h(Row, { label: '回你的抖音私信' }, f.sw('douyin.ownerDm')),
           h(Row, { label: '多久看一次' }, f.num('douyin.dmPollMinutes', { min: 1, max: 60 }), h('span', { className: 'ab-muted' }, '分钟'), h(Btn, { small: true, onClick: act('/douyin/dms', 'dms'), disabled: !!busy }, busy === 'dms' ? '正在看…' : '现在看一次')),
         ),
-        h(Card, { title: '怎么刷', desc: '只在「主动搭话」里设的醒着时间内自己刷。主人在 QQ 里让ta「去刷会儿抖音」也行。' },
+        h(Card, { title: '怎么刷', desc: '只在「目的引擎」里设的醒着时间内自己刷。主人在 QQ 里让ta「去刷会儿抖音」也行。' },
           h(Row, { label: '定时自己去刷' }, f.sw('douyin.autoBrowse')),
           h(Row, { label: '多久刷一轮' }, f.range('douyin.intervalHours', 1, 24, 1, (v) => v + ' 小时')),
           h(Row, { label: '每天最多刷' }, f.range('douyin.maxRunsPerDay', 0, 12, 1, (v) => v + ' 轮')),
@@ -8814,7 +8842,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         ),
         riskCard(),
         h(Card, {
-          title: 'ta的逛法', desc: '只在「主动搭话」里设的醒着时间内自己逛。主人在 QQ 里让ta「去逛逛小黑盒」也行。逛是只读的，不会乱点赞评论。',
+          title: 'ta的逛法', desc: '只在「目的引擎」里设的醒着时间内自己逛。主人在 QQ 里让ta「去逛逛小黑盒」也行。逛是只读的，不会乱点赞评论。',
         },
           h(Row, { label: '定时自己去逛' }, f.sw('heybox.autoBrowse')),
           h(Row, { label: '只在谷时逛', hint: '避开工作日 9-12、14-18 两个高峰（那会儿模型排队久、单价高，逛一轮很费 token）。峰时ta会等，不占额度' },

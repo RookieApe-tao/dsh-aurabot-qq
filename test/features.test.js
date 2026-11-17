@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { planDiaryTimes } from '../src/features/qzone.js'
-import { moodLabel, scoreText, decayed } from '../src/features/companion.js'
+import { moodLabel, scoreText, decayed } from '../src/features/mood.js'
 import { matchSticker, pickForReply } from '../src/features/stickers.js'
 import { pickBotProcess, readOneBotEndpoint } from '../src/snowluma/manager.js'
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
@@ -131,7 +131,7 @@ test('心情：对她说的话、主人的话影响更大；心情明显时每�
   const prev = process.env.AURABOT_DATA_DIR
   process.env.AURABOT_DATA_DIR = mkdtempSync(join(tmpdir(), 'aurabot-mood-'))
   try {
-    const { createMood, moodEffects } = await import('../src/features/companion.js')
+    const { createMood, moodEffects } = await import('../src/features/mood.js')
     const { normalize } = await import('../src/core/config.js')
     const m = createMood({ getConfig: () => normalize({}) })
     const v0 = m.current()
@@ -179,7 +179,7 @@ test('模型判心情：解析结果，没把握的不算，开了就不再按�
   const prev = process.env.AURABOT_DATA_DIR
   process.env.AURABOT_DATA_DIR = mkdtempSync(join(tmpdir(), 'aurabot-judge-'))
   try {
-    const { createMood, parseMoodJudge } = await import('../src/features/companion.js')
+    const { createMood, parseMoodJudge } = await import('../src/features/mood.js')
     const { normalize } = await import('../src/core/config.js')
     assert.deepEqual(parseMoodJudge('好的 {"delta": 30, "reason": "被夸了", "confidence": 0.9}'), { delta: 15, reason: '被夸了', confidence: 0.9 })
     assert.equal(parseMoodJudge('不是 JSON'), null)

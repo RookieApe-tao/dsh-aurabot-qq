@@ -1,7 +1,9 @@
 // 内置模块：心情。聊天让她开心或低落，心情影响她发表情、发语音的频率和回复快慢，也会写进她的上下文。
 // 导出 createMood 的返回值：nudge(变化, 原因, chatId?)、label()、state()、effects()、contextLine(chat)、observe()、judge()。
 
-import { createMood } from '../../features/companion.js'
+// 融合：createMood 取 beta（迁移线把心情实现从 companion.js 拆到 mood.js，companion 随主动搭话退场）；
+// isOwnerPrivateChat/parseChatId 保留本机身份库判主人逻辑（L51 的 who 判定在用）。
+import { createMood } from '../../features/mood.js'
 import { isOwnerPrivateChat } from '../../chat/access.js'
 import { parseChatId } from '../../gateway/address.js'
 
@@ -25,7 +27,7 @@ export default {
   platforms: ['*'],
   description: '她的心情：会随聊天起伏，影响表情 / 语音频率和回复快慢',
   tab: 'mood',
-  files: ['features/companion.js', 'features/mood-context.js'],
+  files: ['features/mood.js', 'features/mood-context.js'],
   setup(api) {
     const mood = createMood({ getConfig: api.config, dsh: api.dsh, log: api.log })
     // 理由的相对时间每轮变化，和相关记忆一样放进本轮消息，避免上下文快照膨胀（#79）。

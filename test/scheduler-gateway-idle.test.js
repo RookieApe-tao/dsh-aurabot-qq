@@ -1,10 +1,10 @@
-// 后台定时任务不该在网关没连上时空跑：B 站刷视频、空间日记/互动、主动搭话都会调 OneBot，
-// 没连上时跑了只会白白触发请求和日志。这里锁住「调度入口带网关判断」这个行为。
+// 后台定时任务不该在网关没连上时空跑：B 站刷视频、空间日记/互动、主动搭话（P4 起由 purpose 承担）
+// 都会调 OneBot，没连上时跑了只会白白触发请求和日志。这里锁住「调度入口带网关判断」这个行为。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
-const MODULES = ['bili', 'diary', 'qzone-social', 'speakup']
+const MODULES = ['bili', 'diary', 'qzone-social', 'purpose']
 
 for (const id of MODULES) {
   test(`模块 ${id}：网关未连接时跳过定时任务`, () => {

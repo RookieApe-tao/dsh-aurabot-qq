@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createMood } from '../src/features/companion.js'
+import { createMood } from '../src/features/mood.js'
 import { normalize } from '../src/core/config.js'
 import moodModule from '../src/modules/mood/index.js'
 

@@ -123,7 +123,7 @@ test('API_VERSION = 2 且向后兼容 MIN_API_VERSION = 1；v1 模块默认 plat
 })
 
 test('内置模块平台声明完备，只开假平台时 QQ 模块跳过（「未启用对应平台」），[*] 模块全部正常运行', async (t) => {
-  const expectedUniversal = ['memory', 'mood', 'purpose', 'autotelic', 'song', 'speakup', 'bili', 'voice', 'imagegen', 'video']
+  const expectedUniversal = ['memory', 'mood', 'purpose', 'autotelic', 'song', 'bili', 'voice', 'imagegen', 'video']
   const expectedQq = ['qq-api', 'qq-tools', 'qzone-social', 'diary', 'contacts', 'profile', 'stickers']
   for (const def of BUILTINS) {
     if (expectedUniversal.includes(def.id)) {
@@ -149,7 +149,7 @@ test('内置模块平台声明完备，只开假平台时 QQ 模块跳过（「�
     assert.equal(item.skipReason, '未启用对应平台', `${id} 应标明未启用对应平台`)
   }
   assert.equal(list.find((m) => m.id === 'mood').running, 'builtin', 'platform=["*"] 模块 mood 应照常启动')
-  assert.equal(list.find((m) => m.id === 'speakup').running, 'builtin', 'platform=["*"] 模块 speakup 应照常启动')
+  assert.equal(list.find((m) => m.id === 'purpose').running, 'builtin', 'platform=["*"] 模块 purpose 应照常启动')
   assert.equal(list.find((m) => m.id === 'voice').running, 'builtin', 'platform=["*"] 模块 voice 应照常启动')
 })
 

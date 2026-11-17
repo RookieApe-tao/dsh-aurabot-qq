@@ -326,18 +326,21 @@ export const DEFAULTS = {
     intervalMin: 30, // 多久逛一次空间
   },
   speakUp: {
+    // ⚠ 语义归属（Q3/Q4 拍板，P5 注记）：主动搭话已并入目的引擎（ext.purpose，P1 起默认开），
+    // speakup 模块已退场，但本段的醒着窗口/白名单/小闹钟等键**冻结在 speakUp.* 命名空间**，
+    // 由目的引擎维护——qzone-social/bili/douyin/heybox/xhs/phone/pet 等多处直读，改键会连坐。
     enabled: true, // 只在和主人的私聊里主动找你，群里不会
     idleMinutes: 40,
     minIntervalMinutes: 60,
     maxIntervalMinutes: 180,
     maxPerDay: 20, // 每个人每天最多几次；留空就是 20
-    allow: [], // 主动搭话白名单：除主人外还会主动找谁（QQ 号）
-    nudge: true, // 她问了你一句、你一直没回时，偶尔轻轻追一句
-    reminderEnabled: false, // 允许她在主人私聊里给自己设小闹钟
+    allow: [], // 主动搭话白名单：除主人外还会主动找谁（QQ 号）——目的引擎 friends 线与 memory 相识判定同读此键
+    nudge: true, // 她问了你一句、你一直没回时，偶尔轻轻追一句（purpose 侧读 ext.purpose.nudge ?? speakUp.nudge）
+    reminderEnabled: false, // 允许她在主人私聊里给自己设小闹钟（小闹钟 P2b 起由 purpose 承接）
     reminderLimit: 5, // 最多同时保留几条未过期的提醒（硬上限 10）
     reminderRetry: true, // 触发失败后 15 分钟内每 5 分钟重试
-    awakeFrom: 8,
-    awakeTo: 23,
+    awakeFrom: 8, // 醒着窗口起点（全天自动任务共用的作息真相；终点 awakeTo 默认 23）
+    awakeTo: 23, // 醒着窗口终点：可设 24 = 到当天结束；from===to 视为全天（不启用安静时段）
   },
   mood: { enabled: true, halfLifeHours: 3, judge: false, base: 60 }, // base：心情基线（0~100 里算「平常」的那个值）；judge：每轮聊完用模型判一次心情（更准，每轮多一次很短的调用）；关着用关键词
   // seedHistory：新会话第一次说话时先补最近几条历史（默认关）
