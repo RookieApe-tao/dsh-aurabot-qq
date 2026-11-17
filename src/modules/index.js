@@ -3,6 +3,10 @@
 import stickers from './stickers/index.js'
 import voice from './voice/index.js'
 import mood from './mood/index.js'
+// 每轮回复人格运行时（docs/design/persona-runtime/00-design.md）：管「她在每条消息里是谁」，
+// 与自驱引擎并列、共享本能层人格锚。排在 mood 之后（它只读 mood 的情绪真相）
+// 、autotelic 之前（它经 api.use('autotelic') 用对方的 observe/schedule/exec 导出面）。
+import personaRuntime from './persona-runtime/index.js'
 import memory from './memory/index.js'
 import qqTools from './qq-tools/index.js'
 import qqApi from './qq-api/index.js'
@@ -20,4 +24,4 @@ import contacts from './contacts/index.js'
 import video from './video/index.js'
 import imageRecovery from './image-recovery/index.js'
 
-export const BUILTINS = [stickers, voice, mood, memory, qqTools, qqApi, imagegen, diary, qzoneSocial, purpose, autotelic, bili, song, profile, contacts, video, imageRecovery]
+export const BUILTINS = [stickers, voice, mood, personaRuntime, memory, qqTools, qqApi, imagegen, diary, qzoneSocial, purpose, autotelic, bili, song, profile, contacts, video, imageRecovery]
