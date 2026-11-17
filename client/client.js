@@ -4139,6 +4139,8 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
      */
     function SpeakUp({ st, draft, setDraft, toast }) {
       const f = useField(draft, setDraft)
+      // 页内子视图 tab：状态（默认）/ 设置。局部 useState 即可，不要求持久化。
+      const [tab, setTab] = useState('状态')
       // 「更多设置（N 项）」折叠子卡：与聊天页/记忆页同口径
       const more = (title, items) => (items.length ? h(Card, { title: (title || '更多设置') + '（' + items.length + ' 项）', collapsible: true, defaultOpen: false, className: 'ab-fold-sub' }, items) : null)
       const [closedReminders, setClosedReminders] = useState(() => new Set())
@@ -4161,49 +4163,58 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
           h('span', { style: { flexShrink: 0 } }, f.sw('ext.purpose.enabled', { title: '目的引擎总开关' }))),
         ),
 
-        // ===== 组一：什么时候来找你（全部行式：label 左、控件右）=====
-        h(Card, { title: '什么时候来找你',
-          desc: '闲下来多久才来找你、两次之间隔多久、每天上限，以及只在哪个时段打扰你。' },
-          h(Row, { label: '多久没聊才找你' }, f.num('speakUp.idleMinutes', { min: 5 }), h('span', { className: 'ab-muted' }, '分钟')),
-          h(Row, { label: '两次之间隔', hint: '在这个范围里随机' }, f.num('speakUp.minIntervalMinutes', { min: 5 }), h('span', { className: 'ab-muted' }, '到'), f.num('speakUp.maxIntervalMinutes', { min: 5 }), h('span', { className: 'ab-muted' }, '分钟')),
-          h(Row, { label: '每天最多', hint: '每个人单独算；留空就是 20，不封顶' }, f.num('speakUp.maxPerDay', { min: 0 }), h('span', { className: 'ab-muted' }, '次')),
-          h(Row, { label: 'ta醒着的时间', hint: '这段时间外不打扰你；终点填 24 表示醒到午夜（比如 7 到 24 = 早上 7 点到当天结束，0 点到 7 点不打扰）；起止相同 = 全天不打扰关闭；小闹钟按她定的时间触发，不受这里限制' }, f.num('speakUp.awakeFrom', { min: 0, max: 23 }), h('span', { className: 'ab-muted' }, '点到'), f.num('speakUp.awakeTo', { min: 1, max: 24 }), h('span', { className: 'ab-muted' }, '点')),
-        ),
+        // ===== 页内子视图 tab 条：状态（默认）/ 设置（照 MemoryTab 的 ab-seg + role:tab 模式）=====
+        h('div', null, h('div', { className: 'ab-seg', role: 'tablist', 'aria-label': '目的引擎子视图' },
+          h('button', { key: 'st', type: 'button', role: 'tab', 'aria-selected': tab === '状态', className: cx(tab === '状态' && 'on'), onClick: () => setTab('状态') }, '状态'),
+          h('button', { key: 'cfg', type: 'button', role: 'tab', 'aria-selected': tab === '设置', className: cx(tab === '设置' && 'on'), onClick: () => setTab('设置') }, '设置'))),
 
-        // ===== 组二：找谁 =====
-        h(Card, { title: '找谁',
-          desc: '除了你，还会主动找这些人，每人单独算次数。目的引擎开着时也按这份名单找人，只用和对方的私聊和关于对方的记忆。' },
-          h(Row, { label: '白名单', hint: '每行一个 QQ 号；也可以在 QQ 里发 /speak add QQ 号。名单里的人要在私聊白名单里，才能回ta' }, f.list('speakUp.allow', { placeholder: '每行一个 QQ 号', numbers: true })),
-        ),
+        // ===== 状态 tab：待触发小闹钟 + 引擎状态展示 + 出站策略 =====
+        ...(tab === '设置' ? [] : [
+          // 功能块：待触发小闹钟列表 + 立刻触发（不折叠）
+          h(Card, { title: '待触发的小闹钟' },
+            h('div', { className: 'ab-flex', style: { marginBottom: 10 } },
+              h('span', { className: 'ab-muted ab-small' }, '今天已经找过你 ' + (st.speakUp.count || 0) + ' 次'),
+              h('div', { className: 'ab-spacer' }),
+              h(Btn, { small: true, onClick: async () => { const r = await post('/panel/purpose/run'); toast(r.message) } }, '现在就让ta来找我')),
+            reminders.length
+              ? h('div', null, reminders.map((r) => h('div', { key: r.id, className: 'ab-flex', style: { alignItems: 'flex-start', gap: 12, padding: '9px 0', borderTop: '1px solid var(--ab-line)' } },
+                h('div', { style: { flex: 1, minWidth: 0 } },
+                  h('b', null, r.atText),
+                  h('div', { className: 'ab-small', style: { marginTop: 3, whiteSpace: 'pre-wrap', wordBreak: 'break-word' } }, r.note)),
+                h(Btn, { small: true, kind: 'ghost', onClick: () => closeReminder(r.id) }, '关闭'))))
+              : h('div', { className: 'ab-muted ab-small' }, '还没有待触发的小闹钟。'),
+          ),
+          h(PurposeStatus, { st, toast, part: 'view' }),
+          h(OutboundPolicy, { toast }),
+        ]),
 
-        // ===== 组三：小闹钟与追问 =====
-        h(Card, { title: '小闹钟与追问',
-          desc: '她自己在对话里定的一次性提醒；到点会触发主动搭话，让她按当时说好的内容来找你。过期或触发成功后会自动消失。' },
-          h(Row, { label: '她的小闹钟', hint: '开着她可以在和你的私聊里自己定时间，到点由目的引擎的系统提醒叫醒她' }, f.sw('speakUp.reminderEnabled')),
-          h(Row, { label: '追问', hint: 'ta问了你一句、你 15~40 分钟没回，偶尔轻轻追一句（「人呢」之类），每句最多追一次' }, f.sw('speakUp.nudge')),
-          h(Row, { label: '最多保留', hint: '未过期、未关闭的提醒；最多 10 条' }, f.num('speakUp.reminderLimit', { min: 1, max: 10 }), h('span', { className: 'ab-muted' }, '条')),
-          more('更多设置', [
-            h(Row, { key: 'rr', label: '触发失败时保留提醒', hint: '网络波动或模型调用失败时保留 15 分钟，每 5 分钟重试一次；关掉则失败即丢弃' }, f.sw('speakUp.reminderRetry')),
-          ]),
-        ),
-
-        // ===== 功能块：待触发小闹钟列表 + 立刻触发（不折叠）=====
-        h(Card, { title: '待触发的小闹钟' },
-          h('div', { className: 'ab-flex', style: { marginBottom: 10 } },
-            h('span', { className: 'ab-muted ab-small' }, '今天已经找过你 ' + (st.speakUp.count || 0) + ' 次'),
-            h('div', { className: 'ab-spacer' }),
-            h(Btn, { small: true, onClick: async () => { const r = await post('/panel/purpose/run'); toast(r.message) } }, '现在就让ta来找我')),
-          reminders.length
-            ? h('div', null, reminders.map((r) => h('div', { key: r.id, className: 'ab-flex', style: { alignItems: 'flex-start', gap: 12, padding: '9px 0', borderTop: '1px solid var(--ab-line)' } },
-              h('div', { style: { flex: 1, minWidth: 0 } },
-                h('b', null, r.atText),
-                h('div', { className: 'ab-small', style: { marginTop: 3, whiteSpace: 'pre-wrap', wordBreak: 'break-word' } }, r.note)),
-              h(Btn, { small: true, kind: 'ghost', onClick: () => closeReminder(r.id) }, '关闭'))))
-            : h('div', { className: 'ab-muted ab-small' }, '还没有待触发的小闹钟。'),
-        ),
-
-        h(PurposeStatus, { st, toast }),
-        h(OutboundPolicy, { toast }),
+        // ===== 设置 tab：什么时候来找你 / 找谁 / 小闹钟与追问 / 引擎参数 =====
+        ...(tab === '设置' ? [
+          // 组一：什么时候来找你（全部行式：label 左、控件右）
+          h(Card, { title: '什么时候来找你',
+            desc: '闲下来多久才来找你、两次之间隔多久、每天上限，以及只在哪个时段打扰你。' },
+            h(Row, { label: '多久没聊才找你' }, f.num('speakUp.idleMinutes', { min: 5 }), h('span', { className: 'ab-muted' }, '分钟')),
+            h(Row, { label: '两次之间隔', hint: '在这个范围里随机' }, f.num('speakUp.minIntervalMinutes', { min: 5 }), h('span', { className: 'ab-muted' }, '到'), f.num('speakUp.maxIntervalMinutes', { min: 5 }), h('span', { className: 'ab-muted' }, '分钟')),
+            h(Row, { label: '每天最多', hint: '每个人单独算；留空就是 20，不封顶' }, f.num('speakUp.maxPerDay', { min: 0 }), h('span', { className: 'ab-muted' }, '次')),
+            h(Row, { label: 'ta醒着的时间', hint: '这段时间外不打扰你；终点填 24 表示醒到午夜（比如 7 到 24 = 早上 7 点到当天结束，0 点到 7 点不打扰）；起止相同 = 全天不打扰关闭；小闹钟按她定的时间触发，不受这里限制' }, f.num('speakUp.awakeFrom', { min: 0, max: 23 }), h('span', { className: 'ab-muted' }, '点到'), f.num('speakUp.awakeTo', { min: 1, max: 24 }), h('span', { className: 'ab-muted' }, '点')),
+          ),
+          // 组二：找谁
+          h(Card, { title: '找谁',
+            desc: '除了你，还会主动找这些人，每人单独算次数。目的引擎开着时也按这份名单找人，只用和对方的私聊和关于对方的记忆。' },
+            h(Row, { label: '白名单', hint: '每行一个 QQ 号；也可以在 QQ 里发 /speak add QQ 号。名单里的人要在私聊白名单里，才能回ta' }, f.list('speakUp.allow', { placeholder: '每行一个 QQ 号', numbers: true })),
+          ),
+          // 组三：小闹钟与追问
+          h(Card, { title: '小闹钟与追问',
+            desc: '她自己在对话里定的一次性提醒；到点会触发主动搭话，让她按当时说好的内容来找你。过期或触发成功后会自动消失。' },
+            h(Row, { label: '她的小闹钟', hint: '开着她可以在和你的私聊里自己定时间，到点由目的引擎的系统提醒叫醒她' }, f.sw('speakUp.reminderEnabled')),
+            h(Row, { label: '追问', hint: 'ta问了你一句、你 15~40 分钟没回，偶尔轻轻追一句（「人呢」之类），每句最多追一次' }, f.sw('speakUp.nudge')),
+            h(Row, { label: '最多保留', hint: '未过期、未关闭的提醒；最多 10 条' }, f.num('speakUp.reminderLimit', { min: 1, max: 10 }), h('span', { className: 'ab-muted' }, '条')),
+            more('更多设置', [
+              h(Row, { key: 'rr', label: '触发失败时保留提醒', hint: '网络波动或模型调用失败时保留 15 分钟，每 5 分钟重试一次；关掉则失败即丢弃' }, f.sw('speakUp.reminderRetry')),
+            ]),
+          ),
+          h(PurposeStatus, { st, toast, part: 'settings' }),
+        ] : []),
       )
     }
 
@@ -4446,7 +4457,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
     const EMOTION_LABELS = { curious: '好奇', excited: '兴奋', lonely: '寂寞', envious: '羡慕', worried: '担心', proud: '得意', affectionate: '亲近', bored: '无聊', amused: '好笑', content: '平静' }
     const GOAL_OWNER_LABELS = { self: '自己', owner: '主人', member: '群友', media: '媒体' }
     const PACING_PRESETS = [{ value: 'conservative', label: '保守' }, { value: 'default', label: '默认' }, { value: 'active', label: '活跃' }]
-    function PurposeStatus({ toast }) {
+    function PurposeStatus({ toast, part }) {
       const [d, setD] = useState(null)
       const [awakeFrom, setAwakeFrom] = useState('')
       const [awakeTo, setAwakeTo] = useState('')
@@ -4475,10 +4486,31 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         try { const r = await post('/panel/purpose/config', patch); if (!r.ok) toast(r.message || '没成功', 'err'); else { setD(r); toast('保存好了', 'ok') } }
         catch (e) { toast(e.message) } finally { setBusy('') }
       }
-      return h(Card, { title: '目的引擎（实验）', desc: '可选的新引擎，默认关：ta会自己从聊天和记忆里找「想跟你说的事」——攒素材 → 记观察 → 立目标假设 → 挑一个候选，到点了才来找你。开着的话建议关掉上方「主动搭话」总开关，两套别同时开。' },
-        !p.available ? h('div', { className: 'ab-note' }, '目的引擎模块没在跑。到「已安装」页页看看模块状态。') : null,
-        h(Row, { label: '启用目的引擎', hint: '默认关。这是「主动搭话」的替代引擎，两套同时开会重复打扰' },
-          h(Switch, { on: p.enabled, disabled: !p.available, onChange: save({ enabled: !p.enabled, __k: 'enabled' }) })),
+      // 页内拆 tab 后本组件按 part 出两块卡：'settings' 只渲染 legacy 参数键（投递载体/桌宠回落/节奏预设/每日上限），
+      // 其余（默认）渲染状态展示（链路计数/驱力/心情/目标/下次上轮）。save() 与 /panel/purpose/config 接口一字不动。
+      // 2026-11-17：删掉原先重复的「启用目的引擎」开关行——页首 SpeakUp 卡的 ext.purpose.enabled 是唯一总开关（Q1 拍板默认开启）。
+      if (part === 'settings') return h(Card, { title: '目的引擎参数', desc: '投递载体、桌宠回落、节奏预设与每日上限，改动即时保存。' },
+        !p.available ? h('div', { className: 'ab-note' }, '目的引擎模块没在跑。到「已安装」页看看模块状态。') : null,
+        h(Row, { label: '安静时段', hint: '由「醒着时间」推算：' + p.quietStart + ' 到 ' + p.quietEnd + ' 不打扰。醒着时间在「什么时候来找你」卡里改' },
+          h('span', { className: 'ab-muted ab-small' }, '醒着 ' + p.awakeFrom + ' 点到 ' + p.awakeTo + ' 点（安静 ' + p.quietStart + '~' + p.quietEnd + '）')),
+        h(Row, { label: '投递载体', hint: 'pet = 走桌宠气泡（桌宠离线时可按下面开关回落 QQ）' },
+          h(Select, { value: p.carrier, options: [{ value: 'qq', label: 'QQ 私聊' }, { value: 'pet', label: '桌宠' }], onChange: (v) => save({ carrier: v, __k: 'carrier' })() })),
+        h(Row, { label: '桌宠离线时回落 QQ' }, h(Switch, { on: p.petFallbackToQQ, onChange: save({ petFallbackToQQ: !p.petFallbackToQQ, __k: 'fb' }) })),
+        h(Row, { label: '节奏预设' },
+          h(Select, { value: p.pacing, options: PACING_PRESETS, onChange: (v) => save({ pacing: v, __k: 'pacing' })() })),
+        h(Row, { label: '每日上限' },
+          h('input', { className: 'ab-input sm', type: 'number', min: 0, value: maxN, onChange: (e) => setMaxN(e.target.value) }),
+          h('span', { className: 'ab-muted' }, '次/天'),
+          h(Btn, { small: true, disabled: busy === 'save', onClick: () => {
+            const patch = { __k: 'save' }
+            const af = Number(awakeFrom); const at = Number(awakeTo)
+            if (Number.isFinite(af) && Number.isFinite(at) && af >= 0 && at <= 24) { patch.awakeFrom = af; patch.awakeTo = at }
+            if (maxN !== '' && Number.isFinite(Number(maxN))) patch.maxPerDay = Number(maxN)
+            save(patch)()
+          } }, '应用')),
+      )
+      return h(Card, { title: '目的引擎状态', desc: 'ta会自己从聊天和记忆里找「想跟你说的事」——攒素材 → 记观察 → 立目标假设 → 挑一个候选，到点了才来找你。总开关在页首；开着时建议关掉「主动搭话」总开关，两套别同时开。' },
+        !p.available ? h('div', { className: 'ab-note' }, '目的引擎模块没在跑。到「已安装」页看看模块状态。') : null,
         p.enabled ? h('div', { className: 'ab-flex', style: { gap: 8, flexWrap: 'wrap', margin: '4px 0 10px' } },
           chain.map(([l, n]) => h('div', { key: l, className: 'ab-card', style: { flex: '1 1 90px', padding: '8px 10px' } },
             h('div', { className: 'ab-muted ab-small' }, l), h('b', null, n == null ? '—' : n)))) : null,
@@ -4503,23 +4535,6 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
           h('div', { className: 'meta' }, (g.ownerLabel || GOAL_OWNER_LABELS[g.owner] || g.owner || '?') + ' · 置信 ' + Math.round((g.confidence || 0) * 100) + '% · 风险 ' + Math.round((g.risk || 0) * 100) + '%' + (g.status ? ' · ' + g.status : '')),
           h('div', { className: 'body' }, g.intent || g.object || '（没写意图）')))) : null,
         p.enabled && (s.nextFireText || s.lastOutcome) ? h(Row, { label: '下次 / 上轮', hint: '上轮结果：' + (s.lastOutcome || '—') + (s.lastPurpose ? '（' + s.lastPurpose + '）' : '') }, h('span', { className: 'ab-muted ab-small' }, s.nextFireText || '待排')) : null,
-        h(Row, { label: '投递载体', hint: 'pet = 走桌宠气泡（桌宠离线时可按下面开关回落 QQ）' },
-          h(Select, { value: p.carrier, options: [{ value: 'qq', label: 'QQ 私聊' }, { value: 'pet', label: '桌宠' }], onChange: (v) => save({ carrier: v, __k: 'carrier' })() })),
-        h(Row, { label: '桌宠离线时回落 QQ' }, h(Switch, { on: p.petFallbackToQQ, onChange: save({ petFallbackToQQ: !p.petFallbackToQQ, __k: 'fb' }) })),
-        h(Row, { label: '节奏预设' },
-          h(Select, { value: p.pacing, options: PACING_PRESETS, onChange: (v) => save({ pacing: v, __k: 'pacing' })() })),
-        h(Row, { label: '安静时段', hint: '由「醒着时间」推算：' + p.quietStart + ' 到 ' + p.quietEnd + ' 不打扰。醒着时间在上方「主动搭话」卡里改' },
-          h('span', { className: 'ab-muted ab-small' }, '醒着 ' + p.awakeFrom + ' 点到 ' + p.awakeTo + ' 点（安静 ' + p.quietStart + '~' + p.quietEnd + '）')),
-        h(Row, { label: '每日上限' },
-          h('input', { className: 'ab-input sm', type: 'number', min: 0, value: maxN, onChange: (e) => setMaxN(e.target.value) }),
-          h('span', { className: 'ab-muted' }, '次/天'),
-          h(Btn, { small: true, disabled: busy === 'save', onClick: () => {
-            const patch = { __k: 'save' }
-            const af = Number(awakeFrom); const at = Number(awakeTo)
-            if (Number.isFinite(af) && Number.isFinite(at) && af >= 0 && at <= 24) { patch.awakeFrom = af; patch.awakeTo = at }
-            if (maxN !== '' && Number.isFinite(Number(maxN))) patch.maxPerDay = Number(maxN)
-            save(patch)()
-          } }, '应用')),
         h('div', { className: 'ab-flex', style: { marginTop: 10 } },
           h(Btn, { small: true, disabled: !p.available || !p.enabled, onClick: async () => { setBusy('preview'); setPreview(null); try { const r = await post('/panel/purpose/preview'); setPreview(r); if (!r.ok) toast(r.message || '没成功', 'err') } catch (e) { toast(e.message) } finally { setBusy('') } } }, busy === 'preview' ? '预览中…' : '预览这一轮（零副作用）'),
           h(Btn, { small: true, kind: 'primary', disabled: !p.available || !p.enabled, onClick: async () => { setBusy('run'); try { const r = await post('/panel/purpose/run'); toast(r.ok ? '发出去了，去 QQ 看看' : (r.message || '没成功'), r.ok ? 'ok' : 'err') } catch (e) { toast(e.message) } finally { setBusy('') } } }, busy === 'run' ? '在试…' : '立即试一次')),
