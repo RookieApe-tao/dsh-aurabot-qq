@@ -52,3 +52,4 @@ ode --test "test/replay/**/*.test.js"。
 - 解决：①冲突按「共同部分取上游官方版、本机独有保留、测试冲突取并集」逐块裁决，`git add` 消 UU；②bridge 的 scope 改为经 `identity` 注入解析主人（host.js L223 注入，identity L197 已建好），注释里也别写字面 `ownerQQ`（审计扫字面量）；③receipts.js 语义属网关层，`git mv` 到 `src/gateway/` 并改 3 处 import（hub.js/bridge/module-chat-api.test.js），去注释平台词——**不要往 layering 白名单加文件（规矩只许缩短）**。
 - 教训：同步 beta 前先确认哪些测试/文件是本机独有（本机超集口径）；静态审计类失败优先怀疑「上游新代码违反本机契约」，别急着改断言。全量测试里的 `连发合并` 是并发计时 flaky（单独跑通过），别误判为回归。
 - 涉及文件/命令：`git diff --name-only --diff-filter=U` 盘点、`git diff --numstat HEAD/origin/beta` 看两侧差异量、`git show origin/beta:<file>` 判断文件是否上游存在、`node --test <单文件>` 隔离 flaky。
+- 附带结论（#493 口径校正）：上游 beta 的 client.js 已含 `chatlogRow`(2) 与 `StarMap/MemoryTab`(4/2)，仍缺 `ab-manage-grid`(0) 与 `OwnerBriefGroups`(0)——#493 现只需恢复 2 批而非交接总结里的 4 批。判存在性按签名/键级计数，别按 hash。
