@@ -9,6 +9,7 @@
 // 薄壳只做注册；引擎在 src/purpose/engine.js（纯函数），接线在 src/purpose/module.js。
 
 import { createPurpose } from '../../purpose/module.js'
+// 本机身份库判主人（小闹钟工具只出现在主人私聊；多平台口径）
 import { isOwnerPrivateChat } from '../../chat/access.js'
 import { defineTool, str } from '../../tools/tools.js'
 
@@ -133,8 +134,13 @@ export default {
     // （createPurpose 返回的对象方法都走闭包，无 this 依赖，直接透传即可。）
     // 引擎自发发言的 §5.3 私有凭据注入点：宿主把 purpose 策略源对象交给引擎，
     // 引擎投递时经 deliver 的 enginePolicy 路径 reserve/commit，不再被包装层门闸二次拦。
-    // 驱动向量 → 提示层：把「最近比较想要什么」轻描淡写地写进每一轮的上下文（引擎关着时返回空）
-    api.rule(() => purpose.drivesRule())
+    // 驱动向量 → 提示层：把「最近比较想要什么」轻描淡写地附在本轮消息末尾（引擎关着时返回空）。
+    // 和心情一样不进系统提示词：它会随驱动变化，放在开头一变就让整段历史的前缀缓存失效。
+    api.on('prompt', (content, { chat }) => {
+      if (chat.kind === 'system') return content
+      const line = purpose.drivesRule()
+      return line ? [...content, { type: 'text', text: line }] : content
+    })
     return purpose
   },
 }

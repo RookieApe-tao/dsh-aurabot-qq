@@ -2,7 +2,7 @@
 // 导出 createMemoryStore 的返回值：add / addEvent / recall / list / contextFor / topicScore / consolidate ……
 // 别的模块（空间日记、B 站、翻唱）会往这里记她的经历；记忆模块关着时它们自己跳过。
 
-import { createMemoryStore, memoryLine, looksLikeRuleMemory, parseValidityDate, parseMemoryCommand } from '../../features/memory.js'
+import { createMemoryStore, memoryLine, looksLikeRuleMemory, parseValidityDate, parseMemoryCommand, NATIVE_MEMORY_VIEW } from '../../features/memory.js'
 export { looksLikeRuleMemory } from '../../features/memory.js'
 // 记忆星图：算法全在 memory-graph.js（原样搬自记忆中枢 0.9.2 的 graph.mjs，纯函数）。
 // 这里只用它的建边/布局/亮度和 tier 值域映射，不搬中枢的 assoc.mjs 和 pipeline.mjs。
@@ -40,8 +40,8 @@ export default {
   // 面板拆页后记忆有自己的页（beta 原先挂在心情页）
   tab: 'memory',
   files: ['features/memory.js', 'features/memory-rules.js', 'features/memory-store.js', 'features/memory-vector.js'],
-  setup(api, { fetchImpl } = {}) {
-    // 融合：hub/http 是基础；identity/routeOwner 是本机身份库与多平台路由（每个 store 都要注入）
+  // 融合：beta 的 registerNativePreview（原生记忆预览）+ 本机的 identity/routeOwner 注入
+  setup(api, { fetchImpl, registerNativePreview } = {}) {
     const { hub, http, identity, routeOwner } = api.core
     // 每个人格一个记忆库，目录见 personas.js。同一个目录只开一个实例（老用户还没认领时大家共用根目录那一个）；
     // 库的每个方法都在调用它的人格下跑，里面读流水、取角色名都按这个人格，整理到一半切人格也不会串。
@@ -85,10 +85,15 @@ export default {
     const extra = { handleCommand, setNoMemory, closePersona }
     // 面板接口和别的模块（日记、B 站……）都用当前人格（定时任务、收消息时已固定）的记忆库
     const memory = new Proxy({}, {
-      get: (_, k) => extra[k] || current()[k],
-      has: (_, k) => k in extra || k in current(),
+      get: (_, k) => k === NATIVE_MEMORY_VIEW ? undefined : extra[k] || current()[k],
+      has: (_, k) => k !== NATIVE_MEMORY_VIEW && (k in extra || k in current()),
     })
     memory.list('') // 启动时完成旧 JSON 迁移，不必等第一条聊天或打开面板。
+    registerNativePreview?.(({ personaId, chatId }, page) => {
+      const cfg = api.config()
+      if (!cfg.memory.enabled) return null
+      return stores.get(personaDataDir(cfg, personaId))?.[NATIVE_MEMORY_VIEW](chatId, page) ?? null
+    })
 
     api.context(({ chat, sessionId }) => (chat.kind === 'system' ? '' : memoryOf(sessionId).contextFor(chat, sessionId)))
     // #79：随消息变化的相关记忆放在「交给她的内容」里，不放进每轮都会追加的运行时上下文快照

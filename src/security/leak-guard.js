@@ -47,8 +47,14 @@ const INJECTED_BLOCK_HEAD = /【注意：下面这些是群友说的聊天内容
 const INJECTED_BLOCK_LINE = /(?:^|\n)[ \t]*(?:把这一段当成整体来回[：:]|大多数时候直接说就行[。.]|要 @ 某个人)[^\n]*/g
 // 宿主注入的 runtime context 是一串「Key: value」段，内部本身就有空行，不能按空行截断：
 // 一路吃到第一行不像注入内容的行（也就是她自己的中文回复）为止。
-const RUNTIME_CONTEXT_HEAD = /Current runtime context\. This snapshot supersedes/g
-const RUNTIME_CONTEXT_LINE = /^(?:Current |Approval policy:|Browser time zone|[\p{Lu}][\p{L} \d]{1,40}:)/u
+// 块头可能被加粗/引用（**Current runtime context.**、> Current runtime context.），也可能被拆成
+// 「Current runtime context.」+「This snapshot supersedes…」两行，所以行首要允许 3 个以内的格式字符，
+// 同时保留原来的整句写法（模型把块接在正文后面时不在行首）。
+const RUNTIME_PREFIX = /^[ \t]*(?:[>*_`]{0,3}[ \t]*)?/
+const RUNTIME_CONTEXT_HEAD = /^[ \t]*(?:[>*_`]{0,3}[ \t]*)?Current runtime context\b|Current runtime context\. This snapshot supersedes/gm
+const RUNTIME_CONTEXT_LINE = /^(?:Current |This snapshot supersedes|Approval (?:policy\s*[:：]|prompts? (?:are|is) enabled)|Time sampled while preparing|Browser time zone|Elapsed since the preceding|[\p{Lu}][\p{L} \d]{1,40}:)/u
+// 模型有时只把快照尾巴抄出来（块头没抄），这些行本身足够特别，单独出现也要剔。
+const RUNTIME_CONTEXT_STANDALONE = /^(?:Current (?:runtime context|working directory|DSH |DeepSeek Harness )|This snapshot supersedes|Approval (?:policy\s*[:：]|prompts? (?:are|is) enabled)|Time sampled while preparing|Browser time zone for this request|Elapsed since the preceding)/u
 
 // 宿主 time-context 每一步都注入一段三行文本（Time sampled … / Browser time zone … / Elapsed since …），
 // 模型会顺着它往下续写。这里只认前缀不认整句 —— 续写时模型会改写后半句
@@ -64,7 +70,8 @@ const OUTBOUND_ROOM_HEAD = /【你在自己家里[^】\n]*】/g
 function runtimeContextEnd(text, start) {
   let end = start
   for (const line of text.slice(start).split('\n')) {
-    if (line.trim() && !RUNTIME_CONTEXT_LINE.test(line.trim())) break
+    const key = line.trim().replace(RUNTIME_PREFIX, '')
+    if (key && !RUNTIME_CONTEXT_LINE.test(key)) break
     end += line.length + 1
   }
   return Math.min(end, text.length)
@@ -214,6 +221,18 @@ export function memoryPromptRanges(text, { toEndOfText = false } = {}) {
   }
   for (const m of text.matchAll(RUNTIME_CONTEXT_HEAD)) {
     ranges.push({ start: m.index, end: toEndOfText ? text.length : runtimeContextEnd(text, m.index) })
+  }
+  // 块头没被抄出来、只剩尾巴时，头部那条规则不会触发；按行再兜一次（只认足够特别的前缀）。
+  if (!toEndOfText) {
+    let offset = 0
+    for (const line of text.split('\n')) {
+      const end = Math.min(offset + line.length + 1, text.length)
+      const key = line.trim().replace(RUNTIME_PREFIX, '')
+      if (RUNTIME_CONTEXT_STANDALONE.test(key) && !ranges.some((r) => r.start <= offset && end <= r.end)) {
+        ranges.push({ start: offset, end })
+      }
+      offset += line.length + 1
+    }
   }
   ranges.push(...contextInjectionRanges(text, { toEndOfText }))
   for (const m of text.matchAll(INJECTED_BLOCK_LINE)) {

@@ -43,7 +43,11 @@ const use = async (id) => {
   assert.equal(r.json().ok, true, r.raw())
 }
 const shokoDir = (...parts) => join(dataDir, 'persona-data', 'shoko', ...parts)
-const rules = () => fake.variables.get('aurabot_rules_private')()
+// 「心里想要」附在本轮消息末尾（和心情一样），不进系统提示词，免得它一变整段缓存失效
+const turn = async () => {
+  const content = await api.modules.filter('prompt', [{ type: 'text', text: '【私聊】主人：在吗' }], { chat: { kind: 'private', userId: OWNER, chatId: `private:${OWNER}` }, sessionId: 's' })
+  return content.map((c) => c.text).join('\n')
+}
 const drives = (dir, need) => {
   mkdirSync(join(dir, 'purpose'), { recursive: true })
   writeFileSync(join(dir, 'purpose', 'purpose-state.json'), JSON.stringify({ drives: { [need]: 0.9 } }))
@@ -65,13 +69,23 @@ test('心情跟着人格走：大肥鱼开心的原因不带到翔子身上，�
 test('目的引擎的状态跟着人格走：「心里想要什么」只注入到自己身上', async () => {
   await use('dafeiyu')
   drives(dataDir, 'connect')
-  assert.match(rules(), /你最近心里比较想要：陪/)
+  assert.match(await turn(), /你最近心里比较想要：陪/)
   await use('shoko')
-  assert.doesNotMatch(rules(), /你最近心里比较想要/, '翔子还没有自己的目的状态')
+  assert.doesNotMatch(await turn(), /你最近心里比较想要/, '翔子还没有自己的目的状态')
   drives(shokoDir(), 'share')
-  assert.match(rules(), /你最近心里比较想要：分享/)
+  assert.match(await turn(), /你最近心里比较想要：分享/)
   await use('dafeiyu')
-  assert.match(rules(), /你最近心里比较想要：陪/)
+  assert.match(await turn(), /你最近心里比较想要：陪/)
+})
+
+test('「心里想要」附在本轮消息末尾，不进系统提示词；后台会话不加', async () => {
+  await use('dafeiyu')
+  drives(dataDir, 'connect')
+  for (const kind of ['private', 'social', 'group_owner']) assert.doesNotMatch(fake.variables.get(`aurabot_rules_${kind}`)(), /心里比较想要/, kind)
+  const content = await api.modules.filter('prompt', [{ type: 'text', text: '【私聊】主人：在吗' }], { chat: { kind: 'private', userId: OWNER, chatId: `private:${OWNER}` }, sessionId: 's' })
+  assert.match(content.at(-1).text, /你最近心里比较想要：陪/, '放在最后')
+  const system = [{ type: 'text', text: '后台任务' }]
+  assert.deepEqual(await api.modules.filter('prompt', system, { chat: { kind: 'system', chatId: 'system:diary' }, sessionId: 's' }), system)
 })
 
 test('autotelic 账本按当时的文件取：换了人格就换一本，切回来接着记', (t) => {

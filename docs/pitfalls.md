@@ -45,3 +45,10 @@ ode --test "test/replay/**/*.test.js"。
 - 现象：qa-tests 预写 test/panel-stage3.test.js 时 L37 中文引号被截断（`'…要跟着改?)`），整文件 Invalid or unexpected token，实现成员差点把它当实现 bug 排查。
 - 原因：编辑器/工具对含中文标点的行做流式写入时截断（与 MEMORY.md §3.12 pwsh Get-Content/Set-Content 转写毁 UTF-8 同族）。
 - 解决：编辑工具统一用 read/edit/write 而非 pwsh 转写；文件损坏先 `node --check` 分清「语法坏」还是「逻辑坏」，语法坏的先修语法再谈对齐。qa 已在该测试文件头加禁用 pwsh 转写提醒注释。
+
+## 2026-11-17 同步 beta 触发「本机独有审计 × 上游新增代码」口径碰撞（16 文件冲突 + 2 个静态审计挂）
+- 现象：`local/runtime` 拖了 19 个提交没同步、`git merge origin/beta` 报 16 文件 28 处 UU；全量测试除既有 4 个环境失败外，新增 `i3-owner-identity.test.js`（ownerQQ 静态审计）与 `layering.test.js`（中枢层平台词）2 挂。
+- 原因：迁移主线（#486）两边各合一次 → 大量同功能伪冲突；两个审计测试是**本机独有**（`git cat-file -e origin/beta:test/layering.test.js` 为不存在），上游 #465 新加的 `src/core/persona-memory-bridge.js`（直读 `cfg.ownerQQ`）与 `src/chat/receipts.js`（注释含 OneBot、代码含 `platform: 'qq'`）不知道本机 I3/G3 契约。巨型合并派单个成员硬啃会中途失败（client.js 万余行压死成员），改为 lead 逐个裁决 + 只派「小块」。
+- 解决：①冲突按「共同部分取上游官方版、本机独有保留、测试冲突取并集」逐块裁决，`git add` 消 UU；②bridge 的 scope 改为经 `identity` 注入解析主人（host.js L223 注入，identity L197 已建好），注释里也别写字面 `ownerQQ`（审计扫字面量）；③receipts.js 语义属网关层，`git mv` 到 `src/gateway/` 并改 3 处 import（hub.js/bridge/module-chat-api.test.js），去注释平台词——**不要往 layering 白名单加文件（规矩只许缩短）**。
+- 教训：同步 beta 前先确认哪些测试/文件是本机独有（本机超集口径）；静态审计类失败优先怀疑「上游新代码违反本机契约」，别急着改断言。全量测试里的 `连发合并` 是并发计时 flaky（单独跑通过），别误判为回归。
+- 涉及文件/命令：`git diff --name-only --diff-filter=U` 盘点、`git diff --numstat HEAD/origin/beta` 看两侧差异量、`git show origin/beta:<file>` 判断文件是否上游存在、`node --test <单文件>` 隔离 flaky。

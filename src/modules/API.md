@@ -193,6 +193,14 @@ QQ 主人命令的参数或回执涉及隐私时，可用 `api.command({ name: '
 | `logger` | 插件的日志器（`logger.child('名字')` 拿一个分类） |
 | `root` | 插件自己的安装目录 |
 
+### 人设记忆桥接预览（仅 `persona-memory`）
+
+`api.core.personaMemoryBridge` 的 `state` 为 `preview`，能力为 `native-memory-view` 和 `confirmed-delivery`。原生记忆仍处理互动。市场模块的正式启用另需记忆交接、角色会话归属与 DSH 请求前投影等接口。
+
+- `readNativeMemory(chatId, { limit?, offset? })` 只预览当前已确认数据归属的人格与主人的私聊，`chatId` 必须为 `private:<主人QQ>`。只从运行中的原生记忆读取已保存、有效的同一聊天条目。返回只读 `{ items: [{ id, text, at }], nextOffset }`，每页最多 100 条。原生库未载入时返回 `null`。原话流水、无归属条目、其他聊天的内容及文件路径不在此接口的范围内。
+- `onDelivery(chatId, fn)` 为同一私聊订阅 OneBot 确认送达的回执 `{ originId, chatId, platform, messageId, status: 'confirmed', at }`，返回取消订阅函数。每个模块实例只开一个有效订阅。模块停止时自动撤销，安全模式隐藏桥接。回执通过订阅直接交付，不进入模块事件总线。
+- 网关以有效的 `message_id` 确认实际发送后才发回执，排队、模拟、调试、敏感命令和失败均不发。补发成功沿用入队时的订阅与身份，旧实例撤销后的队列项按原规则补发。订阅内的近期重复回执按稳定的 `originId` 合并。
+
 ### 已有聊天的外部主人入口（1.3.0 起）
 
 `api.core.hub.sessions()` 返回现有聊天映射（含 `sessionId/title`）；`chatLogDays()` 返回已有流水日期，按 `YYYY-MM-DD` 升序排列；`chatLogOf(day)` 返回当天流水。这些查询复用原数据，不创建平台专用的会话或历史副本。流水可能含系统、已忘记的条目；模块展示时必须过滤 `forgottenAt`、系统与记忆提示，不把管理视角给未验证身份的人。
@@ -248,6 +256,8 @@ api.on('reply/items', (items) => [...items, { kind: 'text', value: '—— 大�
 | 你自己 `api.emit` 的 | 随你 | 模块之间互相通知 |
 
 `chat/log` 跟随原流水的记账边界：正常模型回复和 `api.send()` 由 `hub.deliver()` 统一记账；底层 `sendText()` / `sendSegments()` 仅负责发送，不自动新增流水或此事件。分条、语音等出口不另行重复记账。验证回复通知时，应走 `deliver()` 并核对实际发送与落盘记录。
+
+带有效 QQ 消息 ID 的入站流水会在通知中提供稳定的 `originId`。请把入站通知与桥接回执的 `originId` 当作不透明标识符。
 唯一的显式例外：`sendText()` / `sendImage()` 传 `opts.proactive = true`（可带 `proactiveCause` 标明来路）时，**真发出去之后**补一条带 `proactive` 标记的流水，用于「别处说过」桥接和重启后回捞。这是调用方主动要求记流水，不是底层自动记账；不发、试运行、补发队列里都不记。
 
 `msg` 长这样（`text` 是纯文字：@ 她的那段去掉了，@ 别人的写成「@昵称」，图片 / 表情 / 文件写成「[图片]」这类占位；引用的那条消息的文字**不在**里面，要的话用 `replyId` 去 `api.onebot('get_msg', { message_id })` 拿）：

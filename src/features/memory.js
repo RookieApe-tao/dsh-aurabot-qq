@@ -43,6 +43,8 @@ import { shouldDeferBackground } from '../core/offpeak.js'
 import { selfName, selfNames, isSelfName } from '../persona/personas.js'
 import { FACT_TIERS, isFactTier, isPermanentTier, followUpTier, tierDays, factTiers, strongerTier, memoryPlatforms } from './memory-rules.js'
 
+export const NATIVE_MEMORY_VIEW = Symbol('nativeMemoryView')
+
 /** 自己不能变成第三人的档案；无主语字段时也挡住模型补出的「有个叫…的人」。 */
 function isSelfFact(fact, cfg) {
   if ([fact.about, fact.aboutName, fact.about_qq].some((name) => isSelfName(name, cfg))) return true
@@ -3890,6 +3892,23 @@ export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl, setConf
     return raw.map(withBy)
   }
 
+  /** A read-only page of persisted notes. Do not open, migrate or resave a store for preview. */
+  function previewNativeNotes(chatId, options) {
+    const state = storage.snapshot()
+    if (!state) return null
+    const offset = Number.isSafeInteger(options?.offset) ? Math.max(0, options.offset) : 0
+    const limit = Number.isSafeInteger(options?.limit) ? Math.min(100, Math.max(1, options.limit)) : 100
+    const now = Date.now()
+    const owner = chatId.slice('private:'.length)
+    const items = state.items.filter(item => item.chatId === chatId && item.scope !== 'group' &&
+      !item.forgottenAt && isCurrent(item, now) &&
+      (!item.about || String(item.about) === owner) && (!item.speaker || String(item.speaker) === owner) &&
+      typeof item.id === 'string' && typeof item.text === 'string' && Number.isFinite(item.at))
+      .sort((a, b) => b.at - a.at || a.id.localeCompare(b.id))
+    const page = items.slice(offset, offset + limit).map(({ id, text, at }) => Object.freeze({ id, text, at }))
+    return Object.freeze({ items: Object.freeze(page), nextOffset: offset + page.length < items.length ? offset + page.length : null })
+  }
+
   /** 面板分页：先排序/搜索，再切片，只给当前页构造派生字段。 */
   function page(q, { limit = 60, offset = 0 } = {}, vectorHits) {
     const { raw, withBy } = prepare(q, vectorHits)
@@ -4005,6 +4024,7 @@ export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl, setConf
     // 只读向量接口，给「记忆中枢 / 星图」这类扩展用（没开向量检索时是 null）
     vector,
     add, addEvent, recentEvents, update, remove, restore, recall, recallAsync, contextFor, consolidate, tick, topicScore, compressDetails, importCandidates, importCommit,
+    [NATIVE_MEMORY_VIEW]: previewNativeNotes,
     deletePerson, resetPerson, setNoMemory, remembers, isAcquainted,
     enumeratePeople: () => enumeratePeopleFromState(load(), { isPersonId: (v) => Boolean(v) && (defaultIsPersonId(v) || isPersonId(v)) }),
     ownedBy: (person) => ownedByFromState(load(), person),

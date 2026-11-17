@@ -1165,7 +1165,7 @@ export function createPurpose({ getConfig, setConfig, hub, log, isMuted, mood, m
   }
   const pAction = (p) => p.action || ''
 
-  /** 每轮系统提示词里的驱动提示（零风险的提示层对接：只影响语气倾向，不改变工具与权限）。 */
+  /** 每轮附在消息末尾的驱动提示（零风险的提示层对接：只影响语气倾向，不改变工具与权限）。 */
   function drivesRule() {
     const cfg = getConfig()
     if (cfg.enabled === false) return ''

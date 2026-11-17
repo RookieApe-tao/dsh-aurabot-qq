@@ -25,7 +25,7 @@
 | `state()` | `() => { count, countToday, day, nextFireAt, lastOutcome, lastPurpose, reminders }` | **同步**，至少含 `count`（今日已投递次数）；`reminders` 为当前挂着的小闹钟列表 |
 | `status()` | `() => summary` | `summarizePurposeState` 包装：今日次数/上次结果/下次时间/驱动向量/topNeeds/前 5 条目标假设/pending/history 摘要 |
 | `preview()` | `() => preview` | **零副作用**预览：真收素材、真拼提示词，不写状态、不生成、不投递。`{ stats, materials, drives, goals, candidates, selected, prompt }` |
-| `drivesRule()` | `() => string` | 驱动提示层（已 `api.rule` 注册进每轮系统提示词），面板不用调；引擎关着时返回空串 |
+| `drivesRule()` | `() => string` | 驱动提示层（经 `prompt` 钩子附在每轮消息末尾，不进系统提示词），面板不用调；引擎关着时返回空串 |
 
 ## 2. HTTP 路由（内置模块 prefix=''，即 `/aurabot/api/...`）
 
@@ -66,7 +66,7 @@
   `affectionate/excited +5、proud/amused +4、lonely -3、bored/worried/envious -2、content 0`；silent 不推。
 - **心情判定兼容**：投递走 `hub.runSystemTurn` + `hub.deliver(text, { own:true, userText:'【系统提醒，…】' })`，
   userText 带前缀所以 mood.judge 的 `origin='speak-up'` 判定照常生效。
-- top2 驱动（≥0.35）经 `api.rule` 写进每轮上下文：「你最近心里比较想要：玩、陪」。
+- top2 驱动（≥0.35）附在每轮消息末尾（和心情一样，不进系统提示词，免得驱动一变整段前缀缓存失效）：「你最近心里比较想要：玩、陪」。
 - **情绪画像**：每个情绪标签带 `valence`（-1~1）与 `arousal`（0~1）二维数值
   （`emotionProfile()`），候选与面板摘要都会带；提示词的强弱措辞（强烈地/明显/隐约）跟 arousal 走，
   桌宠端表情/语气强度可以直接吃这两个数。

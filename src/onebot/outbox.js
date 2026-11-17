@@ -61,7 +61,7 @@ export function createOutbox ({ file = dataDir('outbox', 'queue.json'), log, now
    * 加入一条待发送消息。只接受 send_private_msg / send_group_msg；
    * 图片 base64 等过大内容不入队，避免队列文件失控。
    */
-  function add ({ action, params, chatId = '', note = '', kind = 'reply', ttlMs, incomingReply = false } = {}) {
+  function add ({ action, params, chatId = '', note = '', kind = 'reply', ttlMs, incomingReply = false, deliveryScope } = {}) {
     if (action !== 'send_private_msg' && action !== 'send_group_msg') {
       return { ok: false, message: '不是可补发的消息类型' }
     }
@@ -88,6 +88,7 @@ export function createOutbox ({ file = dataDir('outbox', 'queue.json'), log, now
       note: String(note || '').slice(0, 120),
       kind,
       ...(incomingReply ? { incomingReply: true } : {}),
+      ...(deliveryScope ? { deliveryScope } : {}),
       createdAt: at,
       expiresAt: at + Math.max(10_000, Number(ttlMs) || ttlForKind(kind)),
       attempts: 0,
@@ -107,9 +108,10 @@ export function createOutbox ({ file = dataDir('outbox', 'queue.json'), log, now
 
   /**
    * 连接后按顺序补发。call(action, params, { retries: 0 }) 由调用方提供。
+   * maySend(item) 返回 false 的条目丢弃（beta 的模式切换规则）；onFlushed(item, result) 在补发成功后回调送达回执。
    * 仅 transport 失败保留；uncertain / 业务错误丢弃，避免重复发或永远堵住队列。
    */
-  async function flush (call, maySend = () => true) {
+  async function flush (call, maySend = () => true, onFlushed) {
     load()
     let sent = 0
     let dropped = 0
@@ -128,10 +130,11 @@ export function createOutbox ({ file = dataDir('outbox', 'queue.json'), log, now
       }
       if (Number(item.nextAt) > at) continue
       try {
-        await call(item.action, item.params, { retries: 0, timeoutMs: 30_000 })
+        const result = await call(item.action, item.params, { retries: 0, timeoutMs: 30_000 })
         remove(item.id)
         sent++
         log?.info?.(`补发成功：${item.note || item.chatId || item.action}`)
+        try { onFlushed?.(item, result) } catch (error) { log?.warn?.('补发回执通知失败：', error?.message || error) }
       } catch (error) {
         if (error?.uncertain) {
           // 可能已经发出去了，宁可少发一次，不能重复。

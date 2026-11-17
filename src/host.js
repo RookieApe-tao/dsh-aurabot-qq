@@ -29,6 +29,7 @@ import { createOneBotClient } from './onebot/client.js'
 import { createOutbox } from './onebot/outbox.js'
 import { createSnowLumaManager, DOWNLOAD_PAGE } from './snowluma/manager.js'
 import { createHub, workspaceDirOf } from './chat/hub.js'
+import { createPersonaMemoryRuntime } from './core/persona-memory-bridge.js'
 import { normalizeSelection } from './chat/chat-model.js'
 import { grantOwner, moveWorkspace, realWorkspace } from './core/workspace-move.js'
 import { createLocal, fileOf, toImageBuffer } from './local/local.js'
@@ -219,6 +220,7 @@ export function apply(ctx) {
   // 已注册的策略源实例（name → policy），给 deliver 的 enginePolicy 解析用
   const enginePolicies = new Map()
   const getConfig = () => cfg
+  const personaMemoryRuntime = createPersonaMemoryRuntime({ getConfig, identity })
   setSsrpMode(() => (getConfig().security && getConfig().security.ssrfMode === 'loose' ? 'loose' : 'strict'))
   const secrets = () => { for (const k of ['webuiPassword', 'httpToken', 'wsToken']) registerSecret(cfg.snowluma[k]); registerSecret(cfg.imageGen.apiKey); for (const e of cfg.imageGen.fallbacks || []) registerSecret(e.apiKey); registerSecret(cfg.bridge.token); registerSecret(cfg.backup?.remote?.token); registerSecret(cfg.backup?.remote?.webdav?.password) } // backup 令牌/WebDAV 密码也按密钥脱敏（云备份）
   const setConfig = (next) => {
@@ -524,14 +526,23 @@ export function apply(ctx) {
       handleEvent(ev)
     },
   })
+  let flushingOutbox = false
   async function flushOutbox () {
-    if (onebotState !== 'connected' || !loginOk) return
+    if (flushingOutbox || onebotState !== 'connected' || !loginOk) return
+    flushingOutbox = true
     try {
       const r = await outbox.flush((action, params, opts) => onebot.call(action, params, { ...opts, retries: 0 }),
-        item => !item.incomingReply || item.action !== 'send_group_msg' || groupResponseMode(cfg, item.params?.group_id) === 'chat')
+        item => !item.incomingReply || item.action !== 'send_group_msg' || groupResponseMode(cfg, item.params?.group_id) === 'chat',
+        (item, result) => {
+          if (item.action !== 'send_private_msg' || item.chatId !== `private:${item.params?.user_id}` ||
+              item.deliveryScope?.botQQ !== loginSnapshot.uin || result?.queued) return
+          personaMemoryRuntime.confirmDelivery(item.chatId, result?.message_id, item.deliveryScope)
+        })
       if (r.sent || r.dropped || r.left) log.info(`补发队列：成功 ${r.sent}，丢弃 ${r.dropped}，剩余 ${r.left}`)
     } catch (error) {
       logger.child('onebot').warn('补发队列出错：', error.message)
+    } finally {
+      flushingOutbox = false
     }
   }
   // 连接后漏掉的、或补发中途又断网的，定时再试；没连接时直接返回。
@@ -689,6 +700,10 @@ export function apply(ctx) {
       model: (sel, chat) => mods.filterSync('model', sel, chat),
       poke: (ev) => mods.claim('poke', ev),
       journal: (row) => mods?.emit('chat/log', row),
+      deliveryScope: (chatId, personaId, botQQ) => loginOk && loginSnapshot.uin === botQQ
+        ? personaMemoryRuntime.captureDelivery(chatId, personaId, botQQ)
+        : null,
+      delivery: personaMemoryRuntime.confirmDelivery,
     },
   })
 
@@ -1008,7 +1023,8 @@ export function apply(ctx) {
     },
     getConfig,
   }
-  mods = createModules({ ctx, core, getConfig, setConfig, logger, version: VERSION, builtins: BUILTINS })
+  // 融合：createModules 加 beta 的 personaMemoryRuntime；bridge 保留本机的 identity/routeOwner 注入
+  mods = createModules({ ctx, core, getConfig, setConfig, logger, version: VERSION, builtins: BUILTINS, personaMemoryRuntime })
   bridge = createBridge({ ctx, getConfig, setConfig, hub, mods, identity, routeOwner, log: logger.child('bridge'), version: VERSION, apiVersion: API_VERSION, overview: () => overview() })
   core.bridge = bridge
   core.modules = mods

@@ -23,15 +23,19 @@ test('确定没发出去的消息入队，连上后补发并删除', async () =>
   assert.equal(q.status().count, 1)
 
   let calls = 0
-  const failed = await q.flush(async () => { calls++; throw Object.assign(new Error('ECONNREFUSED'), { transport: true }) })
+  const deliveries = []
+  const report = (item, result) => deliveries.push([item.chatId, result.message_id])
+  const failed = await q.flush(async () => { calls++; throw Object.assign(new Error('ECONNREFUSED'), { transport: true }) }, () => true, report)
   assert.equal(calls, 1)
   assert.equal(failed.left, 1, '网关还没好时留在队列里')
+  assert.deepEqual(deliveries, [])
   now += 2_000
 
-  const ok = await q.flush(async () => { calls++; return { message_id: 9 } })
+  const ok = await q.flush(async () => { calls++; return { message_id: 9 } }, () => true, report)
   assert.equal(calls, 2)
   assert.equal(ok.sent, 1)
   assert.equal(q.status().count, 0)
+  assert.deepEqual(deliveries, [['private:1', 9]])
 })
 
 test('超时/不确定的发送直接丢弃，避免重复', async () => {
