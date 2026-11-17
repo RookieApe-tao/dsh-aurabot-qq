@@ -74,3 +74,10 @@ ode --test "test/replay/**/*.test.js"。
 - 解决：记忆页三处组行（记忆开关与整理 / 每轮想起多少 / 记忆联想与加深）的 `ab-grp-row` 包裹全部去掉，`Row` 直接纵向排列（label 左、控件右）。聊天页 L2998/3006/3016 的用法保持不动（那边是用户验收过的流式排版）。
 - 教训：`.ab-grp-row` 不是「行容器」而是「网格碎片排版容器」，里面放标准 `Row` 会被 CSS 改写成竖排卡。判断面板设置项该用哪种：**标准参数行一律直接放 `Row`**；只有需要把多个小控件挤在一行内自由换行时才用 `ab-grp-row`。
 - 涉及文件/命令：`repo/client/client.js`（记忆页约 L5304-5378、CSS L727-729）；验证 `node --check` + `node --test test/panel-stage2.test.js test/panel-stage3.test.js test/group-panel-layout.test.js test/panel-root-render.test.js`（41/41）。
+
+## 2026-11-17 收紧：`.ab-grp-row` 这条全局样式整套删除（聊天页同病）
+- 现象：继记忆页之后，聊天页「被叫到时怎么回 / 没人叫时怎么接话 / 一条消息怎么变成回复」三组设置同样被渲染成竖排窄高卡，控件撑满整列。
+- 根因（用户判断准确）：不是各页面写错，而是**一条全局 CSS 规则**——`.ab-grp-row{display:grid;...}` + `.ab-grp-row>.ab-row{flex-direction:column;...}` + `.ab-grp-row>.ab-row>.ab-ctl{width:100%}`，任何 `Row` 放进这个容器都会被改写成竖排卡。本意是「组内自由流式排版」，实际把标准行式设置全毁了。
+- 解决：三处用法（聊天页 2998/3006/3016、记忆页三处）全部去掉包裹，`Row` 直接纵向排列；CSS 三行整段删除（无任何剩余使用者、无测试引用），原位留注释说明为什么移除，防止以后有人再引入。
+- 教训：**「容器类改写了子组件形状」是面板布局类 bug 的常见源**——看到某个 Row 变竖排/控件撑满，先查它父容器的 class 有没有针对 `.ab-row` 的覆盖规则，别去改 Row 组件本身。全局样式删除前先 `Select-String test/*.test.js` 确认无断言依赖。
+- 涉及文件/命令：`repo/client/client.js`（CSS L724-729 改注释、聊天页 L2996-3020 去包裹）；验证 47/47。

@@ -723,10 +723,8 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
 .ab-manage-acts{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:auto;padding-top:2px}
 /* 卡片内「更多设置（N 项）」子折叠卡：视觉上弱化一层，避免与父卡重复的实底边框 */
 .ab-fold-sub{background:transparent;border-style:dashed;box-shadow:none}
-/* 组行：一行放一组设置，行内项自由流式排版（按类型与宽度自然排，窄窗自动降列） */
-.ab-grp-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px 14px;align-items:start}
-.ab-grp-row>.ab-row{flex-direction:column;align-items:flex-start;gap:4px}
-.ab-grp-row>.ab-row>.ab-ctl{width:100%}
+/* 2026-11-17 移除 .ab-grp-row：这套网格会把内部 .ab-row 改写成竖排窄卡（控件撑满整列），
+   和标准行式设置不是一个节奏，聊天页/记忆页都已改回纯行式。设置项统一直接用 <Row>。 */
 .ab-code{font-family:ui-monospace,Consolas,monospace;font-size:11.5px;background:var(--ab-card-2);border:1px solid var(--ab-line);border-radius:8px;padding:8px 10px;white-space:pre-wrap;word-break:break-all;margin:6px 0 0}
 `
     function useStyle() {
@@ -2991,33 +2989,31 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         ) : null,
         section === 'all' ? h(Fragment, null,
 
-        // ===== 可见区：3 个组行（每组一行，行内自由流式排版）=====
+        // ===== 可见区：3 组设置，一律纯行式（label 左、控件右）
+        // 曾用 ab-grp-row 网格「流式排一行」，但那套 CSS 会把 Row 改写成竖排窄卡，
+        // 跟标准行式设置不是一个节奏，已统一去掉（2026-11-17）。
 
-        // 组行 ① 被叫到时怎么回：6 项流式排一行
+        // 组 ① 被叫到时怎么回
         h(Card, { title: '被叫到时怎么回', desc: '群模式为「允许 AI 聊天」时，被 @、引用回复或叫名字会触发回复，仍受总开关、暂停和次数限制。' },
-          h('div', { className: 'ab-grp-row' },
-            h(Row, { label: '用哪些称呼叫它', hint: '一行一个；群里提到这些称呼时，按被叫到的规则回应。' }, f.list('group.wakeWords', { placeholder: '大肥鱼\n肥鱼' })),
-            h(Row, { label: '@ 了别人不算叫ta', hint: '有人 @ 别人时顺口提到ta的名字，不算在叫ta；ta还是可以按平时的频率插话。默认关' }, f.sw('group.ignoreAtOthers')),
-            h(Row, { label: '每小时必回上限', hint: '一个群里一小时内因被 @、引用、叫名字而必回的次数最多这么多，超过就不回（主人说话不受限，也不计入）；小时一过自动恢复。0 = 不限' }, f.range('group.mustMaxPerHour', 0, 100, 5, (v) => (v === 0 ? '不限' : v + ' 次'))),
-          )),
+          h(Row, { label: '用哪些称呼叫它', hint: '一行一个；群里提到这些称呼时，按被叫到的规则回应。' }, f.list('group.wakeWords', { placeholder: '大肥鱼\n肥鱼' })),
+          h(Row, { label: '@ 了别人不算叫ta', hint: '有人 @ 别人时顺口提到ta的名字，不算在叫ta；ta还是可以按平时的频率插话。默认关' }, f.sw('group.ignoreAtOthers')),
+          h(Row, { label: '每小时必回上限', hint: '一个群里一小时内因被 @、引用、叫名字而必回的次数最多这么多，超过就不回（主人说话不受限，也不计入）；小时一过自动恢复。0 = 不限' }, f.range('group.mustMaxPerHour', 0, 100, 5, (v) => (v === 0 ? '不限' : v + ' 次'))),
+        ),
 
-        // 组行 ② 没人叫时怎么接话：核心 4 参数排一行（时段/话题/防刷屏进折叠）
+        // 组 ② 没人叫时怎么接话（时段/话题/防刷屏进折叠）
         h(Card, { title: '没人叫时怎么接话', desc: '控制没人叫它时的主动插话与继续接话；被叫到时仍按上一张卡的规则回复。' },
-          h('div', { className: 'ab-grp-row' },
-            h(Row, { label: '没人叫时主动插话', hint: '没人叫它、也没在聊天时，偶尔加入话题。' }, f.sw('group.proactiveEnabled', { on: draft.group.proactiveEnabled !== false, title: '没人叫时主动插话' })),
-            h(Row, { label: '聊起来后继续回应', hint: '最近 3 分钟聊过，可以继续接相关话题，不必每次 @。' }, f.sw('group.engagedEnabled', { on: typeof draft.group.engagedEnabled === 'boolean' ? draft.group.engagedEnabled : draft.group.interjectChance > 0, title: '聊起来后继续回应' })),
-            h(Row, { label: '主动插话概率', hint: '话题越相关，实际概率可能越高；0 表示不主动插话。' }, f.percent('group.interjectChance')),
-            h(Row, { label: '最多连续接话几次', hint: '聊起来后，没有人再次叫它时，最多继续回应几次。0 表示不继续接话。' }, f.range('group.engagedMax', 0, 10, 1, (v) => v + ' 次')),
-          ),
+          h(Row, { label: '没人叫时主动插话', hint: '没人叫它、也没在聊天时，偶尔加入话题。' }, f.sw('group.proactiveEnabled', { on: draft.group.proactiveEnabled !== false, title: '没人叫时主动插话' })),
+          h(Row, { label: '聊起来后继续回应', hint: '最近 3 分钟聊过，可以继续接相关话题，不必每次 @。' }, f.sw('group.engagedEnabled', { on: typeof draft.group.engagedEnabled === 'boolean' ? draft.group.engagedEnabled : draft.group.interjectChance > 0, title: '聊起来后继续回应' })),
+          h(Row, { label: '主动插话概率', hint: '话题越相关，实际概率可能越高；0 表示不主动插话。' }, f.percent('group.interjectChance')),
+          h(Row, { label: '最多连续接话几次', hint: '聊起来后，没有人再次叫它时，最多继续回应几次。0 表示不继续接话。' }, f.range('group.engagedMax', 0, 10, 1, (v) => v + ' 次')),
           draft.group.interjectChance === 0 ? h('div', { className: 'ab-note warn' }, '概率为 0，不会主动插话；想继续接话，可以单独打开「聊起来后继续回应」。') : null),
 
-        // 组行 ③ 一条消息怎么变成回复：3 个总开关排一行
+        // 组 ③ 一条消息怎么变成回复
         h(Card, { title: '一条消息怎么变成回复', desc: '连发合并、合并转发、发送节奏与超时。' },
-          h('div', { className: 'ab-grp-row' },
-            h(Row, { label: '连发合并', hint: '人常常一口气发好几句。打开后ta会等对方说完再一起回，而不是一句一回。' }, f.sw('merge.enabled')),
-            h(Row, { label: '合并转发', hint: '群里有人发合并转发时，她手上只有一个占位符，内容看不见。打开后消息一进来就展开存进上下文，代价是每条转发多调一次接口。' }, f.sw('forward.expandEarly')),
-            h(Row, { label: '每段都发', hint: '一轮里她分几段说，就发几条。关着只发最后一段。默认关' }, f.sw('chat.everyStep')),
-          )),
+          h(Row, { label: '连发合并', hint: '人常常一口气发好几句。打开后ta会等对方说完再一起回，而不是一句一回。' }, f.sw('merge.enabled')),
+          h(Row, { label: '合并转发', hint: '群里有人发合并转发时，她手上只有一个占位符，内容看不见。打开后消息一进来就展开存进上下文，代价是每条转发多调一次接口。' }, f.sw('forward.expandEarly')),
+          h(Row, { label: '每段都发', hint: '一轮里她分几段说，就发几条。关着只发最后一段。默认关' }, f.sw('chat.everyStep')),
+        ),
 
         // ===== 折叠区：其余所有组/设置项 =====
 
