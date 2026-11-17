@@ -8332,15 +8332,17 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
      */
     function ContentTab({ contentView, setContentView, boot, st, draft, setDraft, toast }) {
       const mods = (boot && boot.modules) || (st && st.modules) || []
-      const avail = CONTENT_PLATFORMS.filter((p) => mods.some((m) => m && m.id === p.mod && m.running))
-      const usable = avail.length ? avail.map((p) => p.id) : CONTENT_PLATFORMS.map((p) => p.id)
-      const picked = usable.includes(contentView) ? contentView : usable[0]
+      // 全部平台都可点（模块没在跑的也能进去看设置/登录状态）；running 只用于决定默认选中哪个。
+      const all = CONTENT_PLATFORMS.map((p) => p.id)
+      const defaultId = (CONTENT_PLATFORMS.find((p) => mods.some((m) => m && m.id === p.mod && m.running)) || CONTENT_PLATFORMS[0]).id
+      // 归一化：上次选择合法就沿用，否则回落默认——注意不能用「可用集合」判断，
+      // 否则模块没跑的平台点了会被立刻弹回，表现为「按钮点不动」。
+      const picked = all.includes(contentView) ? contentView : defaultId
       const seg = h('div', { className: 'ab-seg', role: 'tablist', 'aria-label': '内容平台子视图' },
         CONTENT_PLATFORMS.map((p) => h('button', {
           key: p.id, type: 'button', role: 'tab',
           'aria-selected': picked === p.id,
           className: cx(picked === p.id && 'on'),
-          // 模块没在跑的也允许点进去看设置/登录状态，只是默认不选它
           onClick: () => setContentView(p.id),
         }, p.label)))
       return h('div', null,

@@ -53,3 +53,10 @@ ode --test "test/replay/**/*.test.js"。
 - 教训：同步 beta 前先确认哪些测试/文件是本机独有（本机超集口径）；静态审计类失败优先怀疑「上游新代码违反本机契约」，别急着改断言。全量测试里的 `连发合并` 是并发计时 flaky（单独跑通过），别误判为回归。
 - 涉及文件/命令：`git diff --name-only --diff-filter=U` 盘点、`git diff --numstat HEAD/origin/beta` 看两侧差异量、`git show origin/beta:<file>` 判断文件是否上游存在、`node --test <单文件>` 隔离 flaky。
 - 附带结论（#493 口径校正）：上游 beta 的 client.js 已含 `chatlogRow`(2) 与 `StarMap/MemoryTab`(4/2)，仍缺 `ab-manage-grid`(0) 与 `OwnerBriefGroups`(0)——#493 现只需恢复 2 批而非交接总结里的 4 批。判存在性按签名/键级计数，别按 hash。
+
+## 2026-11-17 内容平台页「B站/抖音/小黑盒」三个按钮点了没反应
+- 现象：面板「内容平台」页，三个平台 tab 显示正常、B站高亮选中，但点抖音/小黑盒画面纹丝不动，用户报「无法点击」。
+- 原因：`ContentTab` 里用**可用集合**做选中归一化——`usable = avail.length ? avail.map(p=>p.id) : all`，`picked = usable.includes(contentView) ? contentView : usable[0]`。只要至少一个模块在跑（如只有 bili），`usable` 就只剩 `['bili']`；点抖音 → `setContentView('douyin')` → 重渲染时 `usable.includes('douyin')` 为 false → `picked` 立刻回落 `'bili'`，表现为「点了没反应」。而同处注释明写「模块没在跑的也允许点进去看设置」，实现与注释相反。
+- 解决：把「能不能点」和「默认选哪个」拆开——`all`（全部平台，用于校验并沿用上次选择）+ `defaultId`（running 的第一个，仅作默认值），`picked = all.includes(contentView) ? contentView : defaultId`。改 `repo/client/client.js` ContentTab。
+- 教训：**「可用集合」不能既当白名单又当选择校验**，否则未启用项的点击会被静默弹回；抓「点击后 setState 但渲染值来自过滤集合」的回流。面板交互问题优先读渲染函数本身，别先怀疑 CSS 遮挡/事件绑定。
+- 涉及文件/命令：`repo/client/client.js`（ContentTab，约 L8333-8353）；验证 `node --check`（拷 .mjs）+ `node --test test/panel-stage2.test.js test/group-panel-layout.test.js test/panel-root-render.test.js`。
