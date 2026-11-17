@@ -24,6 +24,7 @@ before(async () => {
 })
 
 after(() => {
+  usage.closeUsage()
   delete process.env.AURABOT_DATA_DIR
   try { rmSync(dir, { recursive: true, force: true }) } catch (error) {}
 })

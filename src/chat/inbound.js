@@ -40,6 +40,7 @@ export function parseMessageEvent(event, selfId, { faceName } = {}) {
   const sourceGroupId = kind === 'private' && event.sub_type === 'group' && /^\d+$/.test(String(sender.group_id ?? '')) && Number(sender.group_id) > 0 ? String(sender.group_id) : ''
   let mentioned = false
   let atOthers = false // 这一条 @ 了别人（既不是她，也不是全体）
+  const atTargets = [] // 被别人 @ 的账号，给群聊提示词标明「@的是谁」
   let replyId = ''
   const texts = []
   const atAllIndexes = new Set()
@@ -59,6 +60,7 @@ export function parseMessageEvent(event, selfId, { faceName } = {}) {
         else if (self && String(d.qq) === self) mentioned = true
         else {
           atOthers = true
+          atTargets.push({ qq: String(d.qq || ''), name: String(d.name || d.qq || '') })
           texts.push(`@${d.name || d.qq} `)
         }
         break
@@ -130,6 +132,7 @@ export function parseMessageEvent(event, selfId, { faceName } = {}) {
     wakeText,
     mentioned,
     atOthers,
+    atTargets,
     replyId,
     images,
     stickers,

@@ -3,6 +3,7 @@
 //   remote —— 把文字发给用户配置的兼容 OpenAI 的 embedding 服务
 // 向量本身都只存在本机；开关默认关闭，用户主动打开才生效。
 import { createHash } from 'node:crypto'
+import { join } from 'node:path'
 import { dataDir, readJson, writeJson } from '../core/store.js'
 import { createLocalVectorIndex } from './memory-vector-local.js'
 
@@ -42,9 +43,10 @@ function toVector(v) {
   } catch (error) { return v }
 }
 
-export function createVectorIndex({ getConfig, log, fetchImpl = globalThis.fetch }) {
-  const file = () => dataDir('memory-vectors.json')
-  const metaFile = () => dataDir('memory-vectors-meta.json')
+/** directory：索引文件放在哪个人格的数据目录（默认根目录）。 */
+export function createVectorIndex({ getConfig, log, fetchImpl = globalThis.fetch, directory = dataDir() }) {
+  const file = () => join(directory, 'memory-vectors.json')
+  const metaFile = () => join(directory, 'memory-vectors-meta.json')
   let data, meta
   let loaded = false
   let identity = ''
@@ -351,7 +353,7 @@ export function createVectorIndex({ getConfig, log, fetchImpl = globalThis.fetch
  *   mode 没写、但填了 baseUrl     → 老配置，按原来的在线服务跑（不然升级后向量直接断）
  *   mode 没写、也没填 baseUrl     → 新装用户，用本地模型
  */
-export function createVectorIndexByMode({ getConfig, log, fetchImpl = globalThis.fetch }) {
+export function createVectorIndexByMode({ getConfig, log, fetchImpl = globalThis.fetch, directory = dataDir() }) {
   const memory = getConfig()?.memory
   const c = memory?.vector
   if (memory?.enabled === false || c?.enabled !== true) return null
@@ -361,18 +363,19 @@ export function createVectorIndexByMode({ getConfig, log, fetchImpl = globalThis
     : (hasBase ? 'remote' : 'local')
   if (mode === 'local') {
     try {
-      const idx = createLocalVectorIndex({ dataDir: dataDir(), log })
+      // 模型文件所有人格共用（数据目录根下），向量索引跟着人格走
+      const idx = createLocalVectorIndex({ dataDir: dataDir(), indexDir: directory, log })
       if (!idx.ready || !idx.ready()) {
         // 本地模型还没装好时，如果老配置里有在线服务，就先用它，别把用户的向量检索弄没
-        if (hasBase) return createVectorIndex({ getConfig, log, fetchImpl })
+        if (hasBase) return createVectorIndex({ getConfig, log, fetchImpl, directory })
         log?.debug?.('本地向量不可用：' + (idx.error || '模型未就绪') + '，这次只走关键词')
         return null
       }
       return idx
     } catch (error) {
       log?.warn?.('本地向量初始化失败，退回关键词检索：' + error.message)
-      return hasBase ? createVectorIndex({ getConfig, log, fetchImpl }) : null
+      return hasBase ? createVectorIndex({ getConfig, log, fetchImpl, directory }) : null
     }
   }
-  return createVectorIndex({ getConfig, log, fetchImpl })
+  return createVectorIndex({ getConfig, log, fetchImpl, directory })
 }

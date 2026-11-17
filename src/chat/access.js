@@ -158,6 +158,29 @@ export function checkAllowed(cfg, msg, ownerRef = null) {
     : { allowed: false, reason: '不在群白名单' }
 }
 
+/** 群消息入口：白名单仍控制模块；仅模块名单只关闭群消息触发的 AI 接话。
+ * 融合：白名单条目可能是旧形态的裸群号（QQ）也可能是多平台的完整地址（平台:group:群id），
+ * 传入的 groupId 同样两种都有——按「完整地址等价 or 裸 id 等价」匹配。 */
+export function groupResponseMode(cfg, groupId) {
+  const id = String(groupId)
+  const bare = parseChatId(id)?.id || id
+  const hit = (list) => (list || []).map(String).some((entry) => {
+    const norm = normalizeChatId(entry)
+    if (norm && norm === normalizeChatId(id)) return true
+    return String(entry) === id || (parseChatId(entry)?.id || entry) === bare
+  })
+  if (!hit(cfg.allow?.groups)) return 'off'
+  return hit(cfg.group?.moduleOnlyGroups) ? 'modules' : 'chat'
+}
+export const GROUP_RESPONSE_LABELS = { off: '不响应群消息', modules: '仅模块', chat: '允许 AI 聊天' }
+
+/** 只旁听指定的非白名单群：不开放回复、命令、工具或媒体下载。 */
+export function shouldObserveGroup(cfg, msg) {
+  return cfg.enabled === true && !cfg.debug && cfg.memory?.enabled === true &&
+    msg.kind === 'group' && !checkAllowed(cfg, msg).allowed &&
+    Array.isArray(cfg.memory.passiveGroups) && cfg.memory.passiveGroups.includes(String(msg.groupId))
+}
+
 /** 群聊里给不给本机工具：off = 不给；owner = 只有主人说话那一轮给。
  * 没有「谁问都给」这一档——群里任何人都能驱动本机读写，权限面太大，明确不做。 */
 export const GROUP_OWNER_TOOLS = ['off', 'owner']

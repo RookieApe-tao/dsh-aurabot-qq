@@ -553,7 +553,17 @@ export async function textToSpeech(text, opt = {}, log) {
       file = await local(clean, opt[opt.engine] || {})
       engine = opt.engine
     } catch (error) {
-      log?.warn(`${opt.engine} 失败：${error.message} → 改用 Windows 语音`)
+      // 云端音色的调用方可显式选择 Edge 或文字回退，不能再悄悄降成系统机械声。
+      if (opt.engine === 'http' && opt.http?.fallback === 'edge') {
+        log?.warn(`http 失败：${error.message} → 改用 Edge 语音`)
+        if (!edgeInstalled()) throw new Error('HTTP 语音失败，Edge 语音组件未安装；不使用 Windows 语音', { cause: error })
+        file = await edgeSynth(clean, opt.voice || 'zh-CN-XiaoyiNeural', opt.rate, opt.pitch)
+        engine = 'edge'
+      } else if (opt.engine === 'http' && opt.http?.fallback === 'text') {
+        throw error
+      } else {
+        log?.warn(`${opt.engine} 失败：${error.message} → 改用 Windows 语音`)
+      }
     }
   } else if (opt.engine !== 'windows' && edgeInstalled()) {
     try {

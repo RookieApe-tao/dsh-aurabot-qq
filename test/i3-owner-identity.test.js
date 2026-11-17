@@ -55,7 +55,13 @@ test('I3 静态审计：src/ 中仅 config.js 与 host.js 启动迁移允许出�
       if (/\bownerQQ\b/.test(line)) hits.push({ rel, lineNo: idx + 1, line })
     })
   }
-  const unexpected = hits.filter((h) => h.rel !== 'src/core/config.js' && !(h.rel === 'src/host.js' && h.lineNo >= 155 && h.lineNo <= 190))
+  // 融合：合并后 host.js 的启动迁移块整体下移（beta 的 applyPendingRestore 插在它前面），
+  // 合法窗口按内容锚定而非行号：host.js 里「启动迁移/认领/授权记录」相关的 ownerQQ 行。
+  const unexpected = hits.filter((h) => {
+    if (h.rel.endsWith('core/config.js')) return false
+    if (h.rel.endsWith('host.js')) return !(/启动迁移|claimOwner|ownerAuthorizationRevision|idStore|identity\.owner\(\)|认领|授权记录/.test(h.line))
+    return true
+  })
   assert.deepEqual(unexpected, [], `发现未清扫的 ownerQQ 引用：\n${unexpected.map((h) => `${h.rel}:${h.lineNo}: ${h.line}`).join('\n')}`)
   assert.ok(hits.some((h) => h.rel === 'src/core/config.js'))
   assert.ok(hits.some((h) => h.rel === 'src/host.js'))

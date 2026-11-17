@@ -63,3 +63,12 @@ test('队列落盘可恢复，且只接受消息类 action', () => {
   const q2 = createOutbox({ log, file })
   assert.equal(q2.status().count, 1, '新实例能读回队列')
 })
+
+test('模式改变后旧 AI 群回复不补发；模块消息仍按原规则补发', async () => {
+  const q = make(), calls = []
+  const data = { action: 'send_group_msg', params: { group_id: 30000003, message: [{ type: 'text', data: { text: '结果' } }] } }
+  q.add({ ...data, incomingReply: true }); q.add(data)
+  assert.equal(q.list()[0].incomingReply, true)
+  const result = await q.flush(async (...args) => calls.push(args), item => !item.incomingReply)
+  assert.equal(result.dropped, 1); assert.equal(result.sent, 1); assert.equal(result.left, 0); assert.equal(calls.length, 1)
+})

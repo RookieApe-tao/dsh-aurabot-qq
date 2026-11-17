@@ -15,6 +15,8 @@ export default {
   files: ['features/companion.js'],
   setup(api) {
     const { hub, mutes } = api.core
+    // 融合：createSpeakUp 需要本机 identity/routeOwner（companion.js 签名依赖）+ 多平台 gatewayIdle 判定；
+    // beta 此处无额外能力（本机版是其超集）
     const speakUp = createSpeakUp({ getConfig: api.config, hub, log: api.log, isMuted: (chatId) => mutes.muted(chatId), memory: () => api.use('memory'), identity: api.core.identity, routeOwner: api.core.routeOwner })
     const gatewayIdle = () => {
       const insts = api.core.gateway?.instances?.()

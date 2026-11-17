@@ -387,7 +387,7 @@ test('跨聊天发消息：群里只有主人那一轮能发，别人私聊没�
   let owner = false
   let build
   mod.setup({
-    core: { hub: { turnSendersAllOwner: () => owner, deliver: async (id, text) => { sent.push([id, text]); return {} } }, onebot: { call: async () => ({}) } },
+    core: { hub: { turnSendersAllOwner: () => owner, deliver: async (id, text) => { sent.push([id, text]); return { sentTypes: ['text'], queuedTypes: [] } } }, onebot: { call: async () => ({}) } },
     config: () => ({ enabled: true, ownerQQ: '1', allow: { private: ['2'], groups: ['9', '8'] }, files: {} }),
     tool: (fn) => { build = fn },
   })

@@ -44,6 +44,7 @@ function setup({ remind = {}, onTurnEnd = () => ({ ok: true }), pushed = [] } = 
       await opts?.onTurnEnd?.(onTurnEnd())
     },
   }
+  // 本线 speakup 模块保留且 createSpeakUp 需要 identity/routeOwner（功能存在性：本机签名是其超集）
   const identity = { owner: () => OWNER, accountOn: () => OWNER }
   const s = createSpeakUp({ getConfig: () => cfg, hub, log: { info() {}, warn() {} }, identity, routeOwner: () => `private:${OWNER}` })
   return { s, cfg, pushed, hub }

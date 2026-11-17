@@ -38,8 +38,8 @@ export function resolveAssets(dataDir) {
   return null
 }
 
-export function createLocalVectorIndex({ dataDir, log }) {
-  const file = join(dataDir, 'local-vectors.json')
+export function createLocalVectorIndex({ dataDir, indexDir = dataDir, log }) {
+  const file = join(indexDir, 'local-vectors.json')
   const store = createVecStore(file, { model: LOCAL_MODEL })
   let assets = resolveAssets(dataDir)
   let embedder = assets ? createEmbedder(assets) : null

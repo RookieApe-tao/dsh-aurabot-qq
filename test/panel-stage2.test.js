@@ -144,7 +144,7 @@ test('TABS：有 manage 无 asr；manage 在 home 组、express 组没有 asr；
 test('语音页注册：curTab.voice 映射到 VoiceTab（不再是裸 Voice），TAB_KEYS 也没有 asr', () => {
   const src = CLIENT()
   assert.match(src, /voice: VoiceTab,/, '页面表里 voice 要映射到 VoiceTab 双视图外壳')
-  // 页面表里有 manage 即可（dev 线 manage 前后夹着 platforms/tools 等特有页，不与 overview 相邻）
+  // 页面表里有 manage 即可（本线 manage 前后夹着 platforms/tools 等特有页，不与 overview 相邻；契约声明取本机）
   assert.match(src, /manage: Manage,/, '页面表里要注册 manage')
   assert.ok(!/\basr: Asr\b/.test(src), '页面表里不能再有 asr: Asr')
   assert.ok(!/TAB_KEYS = \{[^}]*\basr\b/.test(src), 'TAB_KEYS 里不能有 asr')

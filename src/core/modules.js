@@ -15,7 +15,8 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { dataDir } from './store.js'
 import { registerSecretField } from './config.js'
 import { defineTool } from '../tools/tools.js'
-import { selfName } from '../persona/personas.js'
+// 融合：本机 selfName + 多平台地址/身份库；beta 的 personaScope/personaNow（多人格）
+import { selfName, personaScope, personaNow } from '../persona/personas.js'
 import { normalizeChatId, parseChatId } from '../gateway/address.js'
 import { isOwner as checkOwnerIdentity } from '../chat/access.js'
 
@@ -538,8 +539,8 @@ function governScopedCall(core, id, name, args, log, compat = null) {
       // sendVoiceFile(chatId, file, note)
       return governedSend(core, id, { chatId }, () => core.hub.sendVoiceFile(chatId, a, b), log)
     case 'deliver': {
-      // deliver(chatId, text, opts)：引擎路径（opts.enginePolicy）由 hub 自己 reserve，跳过主动门闸
-      const opts = c && typeof c === 'object' ? c : {}
+      // deliver(chatId, text, opts)：第三个参数是 b，不能丢掉 voice / enginePolicy 等发送选项
+      const opts = b && typeof b === 'object' ? b : {}
       if (opts.enginePolicy) return core.hub.deliver(chatId, a, opts)
       return governedSend(core, id, { chatId, text: a }, (extra) => core.hub.deliver(chatId, a, { ...opts, ...extra }), log)
     }
@@ -556,9 +557,14 @@ function governScopedCall(core, id, name, args, log, compat = null) {
  * - scopedCore：Proxy 转发 core 的其余属性（bridge / modules 后挂的也可见），
  *   但 getPrototypeOf 掐成 null —— Object.getPrototypeOf(api.core).hub 也绕不回去。
  */
-export function scopeCoreForModule(core, id, compat = null) {
-  if (!core) return {}
-  if (!compat && (!core.hub || typeof core.hub.subagentFor !== 'function')) return core
+// 融合签名：compat（本机多平台 QQ 兼容层）+ setCoreConfig（beta 让模块能改配置），两者都保留。
+export function scopeCoreForModule(core, id, compat = null, setCoreConfig = null) {
+  if (!core) return setCoreConfig ? { setConfig: setCoreConfig } : {}
+  // 没有 hub.subagentFor（非完整 core）时：按需补 setConfig，其余原样透传
+  if (!core.hub || typeof core.hub.subagentFor !== 'function') {
+    if (!compat && !setCoreConfig) return core
+    return setCoreConfig ? { ...core, setConfig: setCoreConfig } : core
+  }
   const obLog = outboundLogOf(core)
   let scopedHub = core.hub
   if (core.hub && typeof core.hub === 'object') {
@@ -636,8 +642,10 @@ export function scopeCoreForModule(core, id, compat = null) {
   return new Proxy(core, {
     get(target, key, recv) {
       if (key === 'hub') return scopedHub
+      // 融合：本机的多平台 onebot/snowluma 作用域 + beta 的 setConfig 注入
       if (key === 'onebot' && scopedOnebot) return scopedOnebot
       if (key === 'snowluma' && scopedSnowluma) return scopedSnowluma
+      if (key === 'setConfig' && setCoreConfig) return setCoreConfig
       // 出站治理服务不下发给模块：模块能拿到原始 svc 就能自己填 moduleId 冒充别人，
       // 也会绕过 api.proactive 的身份绑定。模块只能走 api.proactive（见 makeApi）。
       if (key === 'outbound') return undefined
@@ -701,8 +709,13 @@ export function createModules({ ctx, core, getConfig, setConfig, logger, version
         set.add(String(st.platform))
       }
     }
-    // 仅核心单测（既没配 platforms 也没注入网关）沿用 QQ 默认
-    if (!hasPlatMap && !core.gateway) set.add('qq')
+    // 融合：没有任何平台处于激活状态时回落 qq——
+    //  ① 没注入网关的核心单测（HEAD 的原回落条件，module-lifecycle 等测试依赖它）；
+    //  ② 旧式配置（gateway/snowluma 连接字段还在，且用户没手写过 platforms map——normalize 会
+    //     合成 platforms.qq 且 enabled 镜像总开关，总开关关着不能把 QQ 平台判成「未启用」而丢掉
+    //     内置模块）。用户明确手写了 platforms（qq 以外还有键）时以配置为准，全关就是全关。
+    const userWrotePlatforms = hasPlatMap && Object.keys(plats).some((k) => k !== 'qq')
+    if (!set.size && !userWrotePlatforms && (!core.gateway || cfg.gateway || cfg.snowluma?.httpUrl || cfg.snowluma?.wsUrl)) set.add('qq')
     return set
   }
   const qqEnabled = () => activePlatforms().has('qq')
@@ -846,8 +859,8 @@ export function createModules({ ctx, core, getConfig, setConfig, logger, version
   function makeApi(id, source, rec) {
     const mlog = logger.child(id)
     const active = () => !disposed && !rec.stopped && live.get(id) === rec
-    const writable = (label, fn) => (...args) => {
-      if (!active()) {
+    const writable = (label, fn, allowed = active) => (...args) => {
+      if (!allowed()) {
         const error = new Error(`模块「${id}」已停止，不能调用 ${label}`)
         mlog.warn(error.message)
         throw error
@@ -875,15 +888,22 @@ export function createModules({ ctx, core, getConfig, setConfig, logger, version
     // 内置模块和替换它的版本用原来的路径（内置的面板页照常能用）；新模块放在 /ext/模块id/ 下
     const prefix = routesAtRoot(id) ? '' : `/ext/${id}`
     const def = rec.def
+    const setModuleConfig = writable('setConfig', (patch) => setConfig(typeof patch === 'function' ? patch(getConfig()) : deepMerge(getConfig(), patch)))
+    // 兼容在同步收尾里恢复设置的模块；迟到的回调和旧实例不能再写。
+    const setCoreConfig = writable('core.setConfig', (patch) => {
+      if (!isObj(patch)) throw new TypeError('core.setConfig 需要配置对象')
+      return setConfig(deepMerge(getConfig(), patch))
+    }, () => active() || (rec.cleaning && !live.has(id)))
     // 模块拿到的 core：hub 换成「宿主按模块身份封装」的白名单副本（三审 #177：原型链斩断，
     // 模块摸不到原始 runSubagentTurn / subagentFor）；core 本体用 Proxy 转发，
     // getPrototypeOf 也掐断，防 getPrototypeOf(api.core).hub 绕回原始入口。
+    // 融合：compat 传本机多平台兼容层，第 4 参传 beta 的 setCoreConfig
     const scopedCore = scopeCoreForModule(core, id, {
       qqState: getQqState,
       requireQqNative: (label) => requireQqCompatFor(rec, id, label),
       requireQqSend: (chatId) => requireQqCompatFor(rec, id, 'api.core.hub.sendSegments', chatId),
       callQq: (action, params, opts) => nativeCall(rec, id, 'qq', action, params, opts),
-    })
+    }, setCoreConfig)
     // 出站治理的日志口（模块快捷发送层的判定/结算都往这里记；未注入服务时不会用到）
     const obLog = outboundLogOf(core)
     const api = {
@@ -896,7 +916,7 @@ export function createModules({ ctx, core, getConfig, setConfig, logger, version
       log: mlog,
       // ---- 配置 ----
       config: () => getConfig(),
-      setConfig: writable('setConfig', (patch) => setConfig(typeof patch === 'function' ? patch(getConfig()) : deepMerge(getConfig(), patch))),
+      setConfig: setModuleConfig,
       settings: () => ({ ...(def.defaults || {}), ...(getConfig().ext?.[id] || {}) }),
       saveSettings: writable('saveSettings', (patch) => {
         const cfg = getConfig()
@@ -936,17 +956,18 @@ export function createModules({ ctx, core, getConfig, setConfig, logger, version
         return off
       },
       emit: writable('emit', (event, ...args) => emit(event, ...args)),
+      // 每次触发都按当时的当前人格固定（不沿用 setup 时的上下文）：这一趟写的记忆、流水、会话都归这个人格
       every: (ms, fn, label = '定时任务') => {
         const t = setInterval(() => {
           // 调试模式不跑定时任务：刷 B 站、逛空间、主动搭话、整理记忆这些都别在调试里自己动
           if (!active() || getConfig().debug) return
-          Promise.resolve().then(() => { if (active()) return fn() }).catch((error) => note(id, label, error))
+          personaScope.run(personaNow(getConfig()), () => Promise.resolve().then(() => { if (active()) return fn() }).catch((error) => note(id, label, error)))
         }, Math.max(1000, Number(ms) || 60_000))
         t.unref?.()
         return track(() => clearInterval(t))
       },
       later: (ms, fn) => {
-        const t = setTimeout(() => { Promise.resolve().then(() => { if (active()) return fn() }).catch((error) => note(id, '延时任务', error)) }, Math.max(0, Number(ms) || 0))
+        const t = setTimeout(() => { personaScope.run(personaNow(getConfig()), () => Promise.resolve().then(() => { if (active()) return fn() }).catch((error) => note(id, '延时任务', error))) }, Math.max(0, Number(ms) || 0))
         t.unref?.()
         return track(() => clearTimeout(t))
       },
@@ -1152,8 +1173,13 @@ export function createModules({ ctx, core, getConfig, setConfig, logger, version
     generation++ // 停止或替换也使会话工具缓存失效
     bumpNavigation() // 模块停了/被替换：导航摘要可能变
     rec.stopped = true
-    for (const off of rec.offs.splice(0).reverse()) cleanup(off)
-    cleanup(() => rec.exports?.dispose?.())
+    rec.cleaning = true
+    try {
+      for (const off of rec.offs.splice(0).reverse()) cleanup(off)
+      cleanup(() => rec.exports?.dispose?.())
+    } finally {
+      rec.cleaning = false
+    }
     rec.exports = null
     // 路由和监听器由各自的 off 按实例撤销，清理期间可能已经启动了同名新实例。
     if (rec.dshTools.length) core.bridge?.refresh()
@@ -1325,8 +1351,8 @@ export function createModules({ ctx, core, getConfig, setConfig, logger, version
         if (back) { back.fallback = true; log.warn(`模块「${id}」：你的版本没加载成功，先用内置的`) }
       }
     }
-    // dev 侧清 userMeta/skipped（平台过滤缓存）；33c75e0 侧补 bumpNavigation（安装的模块被删了：导航摘要要变）
-    for (const id of [...userSeen.keys()]) if (!users.some((u) => u.id === id)) { userSeen.delete(id); userMeta.delete(id); skipped.delete(id); if (errors.get(id)?.source === 'user') errors.delete(id); bumpNavigation() }
+    // 融合：本机额外清 userMeta/skipped（平台过滤缓存）+ beta 的 bumpNavigation（导航摘要要变）
+    for (const id of [...userSeen.keys()]) if (!users.some((u) => u.id === id)) { userSeen.delete(id); userMeta.delete(id); skipped.delete(id); if (errors.get(id)?.source === 'user') errors.delete(id); bumpNavigation() /* 安装的模块被删了：导航摘要要变 */ }
   }
 
   function sync() {

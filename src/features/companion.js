@@ -5,11 +5,12 @@ import { dataDir, readJson, writeJson } from '../core/store.js'
 import { askModel } from '../core/llm.js'
 import { cleanText, clipText } from '../core/text.js'
 import { shouldDeferBackground } from '../core/offpeak.js'
+import { inHourWindow } from '../core/time-window.js'
 import { followUpHint } from './memory.js'
 import { isOwner, isOwnerChatMuted } from '../chat/access.js'
 import { parseChatId } from '../gateway/address.js'
 import { moodReason } from './mood-context.js'
-import { selfName } from '../persona/personas.js'
+import { selfName, personaDataDir, personaNow } from '../persona/personas.js'
 
 // ---------------- 心情 ----------------
 // 0~100，基线 60。聊天里的话按关键词推一推，随时间按半衰期回到基线。
@@ -77,7 +78,8 @@ export function parseMoodJudge(out) {
 
 export function createMood({ getConfig, dsh, log }) {
   let judgeDeferLogged = false
-  const file = () => dataDir('mood.json')
+  // 心情是她自己的，跟着人格走（根目录人格还是老位置，见 personas.js）；主动搭话的次数是对主人的打扰频率，仍共用
+  const file = () => personaDataDir(getConfig(), personaNow(getConfig()), 'mood.json')
   /** 当前配置的基线：衰减、初始值、兜底、判断提示词四处统一读它。 */
   const base = () => {
     const v = Number(getConfig().mood?.base)
@@ -89,8 +91,11 @@ export function createMood({ getConfig, dsh, log }) {
     const s = load()
     return Math.round(decayed(s.value, s.at, getConfig().mood.halfLifeHours, Date.now(), base()))
   }
-  /** 推一下心情（d 可正可负），记下原因。 */
-  function nudge(d, reason) {
+  /**
+   * 推一下心情（d 可正可负），记下原因和原因所属的聊天。
+   * chatId 用来防止别的私聊/群里的原因串进当前会话的上下文（issue #273）；不传时只做全局记录。
+   */
+  function nudge(d, reason, chatId = '') {
     if (getConfig().debug) return // 调试模式不动心情：心情是持久状态，调试不该留下痕迹
     if (!getConfig().mood.enabled || !d) return
     const s = load()
@@ -100,8 +105,9 @@ export function createMood({ getConfig, dsh, log }) {
     reason = cleanText(reason)
     s.reason = reason
     s.reasonAt = s.at
+    s.reasonChat = String(chatId || '')
     // 保留 200 条：20 条只够两小时，出问题查不到原因（实测需要回溯半天以上）
-    s.history = [{ at: Date.now(), from: before, to: Math.round(s.value), reason }, ...(s.history || [])].slice(0, 200)
+    s.history = [{ at: Date.now(), from: before, to: Math.round(s.value), reason, chatId: s.reasonChat }, ...(s.history || [])].slice(0, 200)
     save(s)
     try { log?.debug?.(`心情 ${before} → ${Math.round(s.value)}（${d > 0 ? '+' : ''}${d}）：${reason}`) } catch (error) {}
   }
@@ -114,21 +120,22 @@ export function createMood({ getConfig, dsh, log }) {
     /**
      * 聊天里的一句话。direct = 是对她说的（私聊、@她、叫她）；owner = 主人说的。
      * 不是对她说的群聊只算三成，主人的话算 1.5 倍。
+     * chatId = 这句话来自哪个聊天：心情原因只在同一个聊天里展示，避免串聊。
      */
-    observe(text, who, { direct = true, owner = false, silent = false } = {}) {
+    observe(text, who, { direct = true, owner = false, silent = false, chatId = '' } = {}) {
       // 开了模型判断就不用关键词；但峰时省钱模式会把模型判断推迟到谷时，这时退回关键词，心情照样有起伏
       const modelJudge = getConfig().mood.judge && dsh && !shouldDeferBackground(getConfig())
       if (silent ? !modelJudge : modelJudge) return
       const d0 = scoreText(text)
       if (!d0) return
       const d = Math.round(d0 * (direct ? 1 : 0.3) * (owner ? 1.5 : 1))
-      nudge(d, `${who || '有人'}说「${clipText(text, 20)}」`)
+      nudge(d, `${who || '有人'}说「${clipText(text, 20)}」`, chatId)
     },
     /**
      * 模型判心情（可选）：一轮聊完，看「对方说的 + 她回的」判断心情往哪走。没把握的（confidence < 0.6）不算。
      * origin：user = 有人在跟她说话；speak-up = 她自己主动找人（判她自己的心意，不是被叫来干活）。
      */
-    async judge({ userText, reply, who = '对方', origin = 'user' }) {
+    async judge({ userText, reply, who = '对方', origin = 'user', chatId = '' }) {
       const cfg = getConfig().mood
       if (getConfig().debug) return null // 调试模式不判心情（省一次模型调用，也不留下状态）
       if (!cfg.enabled || !cfg.judge || !dsh) return null
@@ -144,28 +151,33 @@ export function createMood({ getConfig, dsh, log }) {
         const out = await askModel(dsh, {
         module: 'mood',
           cfg: getConfig(),
-          system: `你在判断聊天角色「${selfName(getConfig())}」聊完一轮后的心情变化。她现在心情 ` + v + '/100（' + base() + ' 是平常）。' + scene + '。只看这一轮真正影响她心情的东西：被夸、被关心、被惦记会开心；被凶、被冷落、被嫌弃会难过；开玩笑的「讨厌~」「笨蛋」不算真骂。只输出 JSON：{"delta": -15~15 的整数, "reason": "十几个字的理由", "confidence": 0~1 你有多确定}。没什么影响就 delta 为 0。',
+          system: `你在判断聊天角色「${selfName(getConfig())}」聊完一轮后的心情变化。她现在心情 ` + v + '/100（' + base() + ' 是平常）。' + scene + '。只看这一轮真正影响她心情的东西：被夸、被关心、被惦记会开心；被凶、被冷落、被嫌弃会难过。对方明显是在开玩笑、调侃、傲娇或亲昵称呼时（例如「讨厌~」「笨蛋」「坏蛋」「哼」），即使字面带负面词，也不要判成被嘲讽/被嫌弃，按轻松互动给 0 或轻微正向；只有明确恶意、攻击、羞辱或刻意冷落才降心情。只输出 JSON：{"delta": -15~15 的整数, "reason": "十几个字的理由", "confidence": 0~1 你有多确定}。没什么影响就 delta 为 0。',
           text: `${origin === 'speak-up' ? '她主动说' : who + '说'}：${String(userText || '').slice(0, 600)}\n她回：${String(reply || '').slice(0, 600)}`,
           maxTokens: 400,
           temperature: 0.2,
         })
         const r = parseMoodJudge(out)
         if (!r) return null
-        if (r.confidence >= 0.6 && Math.abs(r.delta) >= 2) nudge(r.delta, r.reason || '刚才那一下')
+        if (r.confidence >= 0.6 && Math.abs(r.delta) >= 2) nudge(r.delta, r.reason || '刚才那一下', chatId)
         return r
       } catch (error) {
         return null
       }
     },
-    /** 给每一轮的上下文：心情明显偏离平常时，告诉她现在的状态和该怎么说话。 */
-    contextLine() {
+    /**
+     * 给每一轮的上下文：心情明显偏离平常时，告诉她现在的状态和该怎么说话。
+     * chat 传了聊天信息时，只有原因也来自这个聊天才带上「因为…」；旧存档没记来源就只报心情，不猜是谁。
+     */
+    contextLine(chat) {
       if (!getConfig().mood.enabled) return ''
       const s = load()
       const v = current()
       const label = moodLabel(v)
       const style = MOOD_STYLE[label]
       if (!style) return ''
-      return `（你现在${label}${moodReason(s, v, base())}。这会自然地影响你说话：${style}。不用说出来自己心情如何。）`
+      const chatId = typeof chat === 'string' ? chat : chat?.chatId
+      const reason = chatId && s.reasonChat !== String(chatId) ? '' : moodReason(s, v, base())
+      return `（你现在${label}${reason}。这会自然地影响你说话：${style}。不用说出来自己心情如何。）`
     },
   }
 }
@@ -400,8 +412,7 @@ export function createSpeakUp({ getConfig, hub, log, isMuted, memory, identity, 
   /** 白名单：每人单独算次数和间隔，一分钟最多找一个人，不一口气群发。 */
   async function tickFriends(cfg, s) {
     const c = cfg.speakUp
-    const h = new Date().getHours()
-    if (!(h >= c.awakeFrom && h < c.awakeTo)) return false
+    if (!inHourWindow(Date.now(), c.awakeFrom, c.awakeTo)) return false
     const today = new Date().toDateString()
     s.friends = s.friends || {}
     for (const qq of c.allow || []) {
@@ -437,8 +448,7 @@ export function createSpeakUp({ getConfig, hub, log, isMuted, memory, identity, 
     const today = new Date().toDateString()
     if (s.day !== today) Object.assign(s, { day: today, count: 0 })
     if (!s.nextAt) schedule(s, c)
-    const h = new Date().getHours()
-    const awake = h >= c.awakeFrom && h < c.awakeTo
+    const awake = inHourWindow(Date.now(), c.awakeFrom, c.awakeTo)
     const idleOk = Date.now() - lastPrivateAt() > c.idleMinutes * 60_000
     // 追问：她最后一句是在问主人、主人 15~40 分钟没回，有一半的机会轻轻追一句（每句最多追一次，不占每天的次数）
     const lb = hub.lastBotToOwner || { at: 0, text: '' }

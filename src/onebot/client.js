@@ -5,6 +5,18 @@ const RECONNECT_MIN = 2000
 const RECONNECT_MAX = 30000
 // 网关短暂不可用（SnowLuma 刚被重启、端口还没释放）时，发消息别直接丢：等一会儿再试
 const RETRY_DELAYS = [1000, 3000, 5000]
+// 同一个 message_id 在这个窗口内只处理一次：断开重连后网关重放、或旧 WS 还活着时，
+// 同一条消息会从两条连接各来一遍，不去重的话主人一条命令会被执行两次。
+const MESSAGE_DEDUPE_MS = 60_000
+
+/** 消息事件的去重键；message_id 为空 / 0（本地合成的戳一戳、群文件等）时返回空串，不参与去重。 */
+export function messageDedupeKey(event) {
+  if (!event || event.post_type !== 'message') return ''
+  const id = String(event.message_id ?? '')
+  if (!id || id === '0') return ''
+  const chat = event.message_type === 'group' ? `group:${event.group_id ?? ''}` : `private:${event.user_id ?? ''}`
+  return `${chat}|${id}`
+}
 
 export class OneBotError extends Error {
   constructor(action, data, { transport = false, uncertain = false } = {}) {
@@ -46,6 +58,21 @@ export function createOneBotClient({ endpoint, onEvent, onState, log, retryDelay
   let hasConnected = false // 首次连上之前不要退避到 30 秒，网关一就绪就尽快接上
   const pending = new Map()
   const retryWaits = new Set()
+  const recentMessages = new Map() // messageDedupeKey → 过期时间
+
+  function duplicateMessage(data) {
+    const key = messageDedupeKey(data)
+    if (!key) return false
+    const now = Date.now()
+    const expiresAt = recentMessages.get(key)
+    if (expiresAt && expiresAt > now) return true
+    recentMessages.set(key, now + MESSAGE_DEDUPE_MS)
+    if (recentMessages.size > 1000) {
+      for (const [k, exp] of recentMessages) if (exp <= now) recentMessages.delete(k)
+      while (recentMessages.size > 1000) recentMessages.delete(recentMessages.keys().next().value)
+    }
+    return false
+  }
 
   const setState = (s, detail) => {
     if (state === s) return
@@ -143,6 +170,9 @@ export function createOneBotClient({ endpoint, onEvent, onState, log, retryDelay
 
   function connect() {
     if (stopped) return
+    // 已经有一条连接在（正在）连接就别再开：旧连接关闭是异步的，restart 后它的 onclose
+    // 还会再排一次 connect，不管住就会同时挂两条 WS，每个事件被投递两遍。
+    if (ws && (ws.readyState === 0 || ws.readyState === 1)) return
     const ep = endpoint()
     if (!ep.wsUrl) {
       setState('unconfigured', '没有 WS 地址')
@@ -168,6 +198,7 @@ export function createOneBotClient({ endpoint, onEvent, onState, log, retryDelay
       log.info('已连上 QQ 网关（WS）')
     }
     sock.onmessage = (ev) => {
+      if (ws !== sock) return // 旧连接的残留消息不能再喂进来
       let data
       try { data = JSON.parse(typeof ev.data === 'string' ? ev.data : Buffer.from(ev.data).toString('utf8')) } catch (error) { return }
       if (data && data.echo && pending.has(data.echo)) {
@@ -179,11 +210,17 @@ export function createOneBotClient({ endpoint, onEvent, onState, log, retryDelay
         return
       }
       if (data && data.post_type) {
+        if (duplicateMessage(data)) {
+          log.debug?.(`忽略重复消息：${messageDedupeKey(data)}`)
+          return
+        }
         try { onEvent(data) } catch (error) { log.warn('处理事件出错：', error.message) }
       }
     }
     sock.onclose = (ev) => {
-      if (ws === sock) ws = null
+      // 旧/已停用连接的关闭事件既不能动当前连接，也不能再排重连（否则 restart 会多开一条 WS）
+      if (ws !== sock) return
+      ws = null
       for (const [k, p] of pending) {
         clearTimeout(p.t)
         p.reject(new OneBotError(p.action, { message: '连接断开' }, { uncertain: true }))
@@ -225,8 +262,15 @@ export function createOneBotClient({ endpoint, onEvent, onState, log, retryDelay
       for (const done of [...retryWaits]) done()
       clearTimeout(timer)
       setState('stopped')
-      try { ws?.close() } catch (error) {}
+      const old = ws
       ws = null
+      try { old?.close() } catch (error) {}
+      // 旧连接的 onclose 已经不会再处理了（ws !== sock），在途请求现在就要收尾
+      for (const [k, p] of pending) {
+        clearTimeout(p.t)
+        p.reject(new OneBotError(p.action, { message: '连接断开' }, { uncertain: true }))
+        pending.delete(k)
+      }
     },
     restart() {
       this.stop()

@@ -79,8 +79,10 @@ test('完整推送：init → remote → 校验私有 → ls-remote → add → 
   assert.equal(urlArg, 'https://gitee.com/owner-x/repo-x.git')
   // 令牌经环境变量 http.extraheader（Basic base64）喂给 git，不进命令行（P1-2）
   const env = commands[0].env
-  assert.equal(env.GIT_CONFIG_VALUE_1, 'AUTHORIZATION: basic ' + Buffer.from('oauth2:SECRET_TOKEN_A1').toString('base64'))
+  assert.equal(env.GIT_CONFIG_VALUE_1, 'AUTHORIZATION: basic ' + Buffer.from('owner-x:SECRET_TOKEN_A1').toString('base64'))
   assert.equal(env.GIT_TERMINAL_PROMPT, '0')
+  assert.equal(env.GIT_AUTHOR_NAME, 'Aurabot')
+  assert.equal(env.GIT_COMMITTER_EMAIL, 'aurabot@localhost')
   // 推送前确实校验过私有性（P1-1）：API 被调用过，且查询参数里带了令牌
   let fetchUrl = ''
   push.pushHooks.fetch = async (url) => { fetchUrl = url; return okApi() }

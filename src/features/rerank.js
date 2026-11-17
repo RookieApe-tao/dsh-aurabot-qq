@@ -37,9 +37,29 @@ export function createReranker({ getConfig, log, fetchImpl = globalThis.fetch })
     return Boolean(settings())
   }
 
+  // 失败退避：接口超时或报错后暂停一阵（1 分钟起，连续失败翻倍，最多 30 分钟），期间直接用原顺序，
+  // 不然每条消息都要等满超时（反馈里召回阶段每轮多等十几秒的来源之一）
+  let failures = 0
+  let skipUntil = 0
+  const now = () => Date.now()
+
   async function rank(query, hits) {
     const c = settings()
     if (!c || !Array.isArray(hits) || hits.length < 2) return hits
+    if (now() < skipUntil) return hits
+    try {
+      const out = await rankOnce(c, query, hits)
+      failures = 0
+      skipUntil = 0
+      return out
+    } catch (error) {
+      failures++
+      skipUntil = now() + Math.min(30 * 60_000, 60_000 * 2 ** (failures - 1))
+      throw error
+    }
+  }
+
+  async function rankOnce(c, query, hits) {
     const candidates = hits.slice(0, c.topN)
     const documents = candidates.map((h) => String(h?.it?.text || '').slice(0, 1200))
     const usable = documents.map((d, i) => ({ d, i })).filter((x) => x.d)
@@ -102,5 +122,5 @@ export function createReranker({ getConfig, log, fetchImpl = globalThis.fetch })
     return { model: c.model, top: rows[0]?.index ?? -1, score: Number(rows[0]?.relevance_score) || 0 }
   }
 
-  return { settings, configured, rank, test }
+  return { settings, configured, rank, test, backoff: () => ({ failures, skipUntil }) }
 }

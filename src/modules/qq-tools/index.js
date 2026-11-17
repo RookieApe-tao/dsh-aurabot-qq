@@ -1,8 +1,9 @@
 // 内置模块：基础 QQ 工具。翻聊天记录；主人私聊里还能让她主动给别人发消息、发文件。
 
-import { defineTool, str, int } from '../../tools/tools.js'
+import { defineTool, str, int, bool } from '../../tools/tools.js'
 import { readQqFile } from '../../features/qq-file.js'
 import { parseMessageEvent } from '../../chat/inbound.js'
+import { hasInvalidVoiceMarkup } from '../../chat/reply.js'
 
 const ownerQqAccounts = (identity) => {
   const owner = identity?.owner?.()
@@ -284,19 +285,36 @@ export default {
       if (level === 'full' || chat.kind === 'group') tools.push(defineTool({
         name: 'qq_send_message',
         description: '主动给另一个 QQ 好友或群发一条消息（不是回复当前聊天时用）。主人让你去别的私聊或群说几句时用。target 写 private:QQ号 或 group:群号；只能发给白名单里的人和群。',
-        properties: { target: str('private:QQ号 或 group:群号'), text: str('要发的话，可以用 ||| 分多条、<voice>…</voice> 发语音、<sticker:名字> 发表情') },
+        properties: { target: str('private:QQ号 或 group:群号'), text: str('要发的话；voice=true 时只填要念的正文，不写标签或 |||。普通消息仍支持 |||、<voice>…</voice>、<sticker:名字>'), voice: bool('目标聊天要语音时填 true；省略或 false 保留原有标签和语音设置。只控制这次发送，不改变当前聊天回复；以回执确认实际发送类型') },
         required: ['target', 'text'],
-        execute: async ({ target, text }) => {
+        execute: async ({ target, text, voice }) => {
           if (chat.kind === 'group' && !hub.turnSendersAllOwner(sessionId)) return { ok: false, message: '只有主人开口时才能往别的聊天发，这一轮不是。' }
           const cfg = api.config()
           const [kind, id] = String(target || '').split(':')
           const okList = kind === 'group' ? cfg.allow.groups : kind === 'private' ? [...ownerQqAccounts(api.core.identity), ...cfg.allow.private] : []
           if (!okList.map(String).includes(String(id))) return { ok: false, message: '不在白名单里，不能发' }
           if (`${kind}:${id}` === chat.chatId) return { ok: false, message: '这就是当前聊天，直接回话就行，别用这个工具' }
-          const r = await hub.deliver(`${kind}:${id}`, String(text || ''))
+          if (voice !== undefined && typeof voice !== 'boolean') return { ok: false, message: 'voice 要填 true 或 false；还没有发送。' }
+          const body = String(text || '')
+          if (voice === true && (/<\/?(?:voice|sticker|reply|at|poke|face)\b/i.test(body) || body.includes('|||'))) return { ok: false, message: 'voice=true 时 text 只填要念的正文，不写标签或 |||；请修改后再试，还没有发送。' }
+          if (hasInvalidVoiceMarkup(body)) return { ok: false, message: '语音标签没有正确配对，还没有发送。请改用 voice=true 并在 text 中只填正文，或修正为 <voice>正文</voice> 后再试。' }
+          let r
+          try { r = await hub.deliver(`${kind}:${id}`, body, voice === true ? { voice: true } : {}) }
+          catch (error) {
+            api.log?.warn?.('跨聊天发送未确认：', error?.message || error)
+            return { ok: false, message: '发送结果未确认，请先查看目标聊天；不要自动重发整条消息。详细原因请主人查看本机日志。' }
+          }
           if (!r) return { ok: false, message: '没发出去：这条被拦下了，或者内容是空的' }
-          if (r.failed) return { ok: false, message: `没发出去（${r.failed} 条失败）：${r.errors[0]}。别说发过了，照实告诉对方` }
-          return r?.missedAt?.length ? { ok: true, message: `发出去了，但 ${r.missedAt.map((n) => '@' + n).join('、')} 没对上群里的人（群名片和昵称里没有），只是文字、对方收不到提醒。要真 @ 得写 <at:QQ号>，不知道就问主人要他的群名片或 QQ 号` } : { ok: true, message: '发出去了' }
+          const sentTypes = r.sentTypes || [], queuedTypes = r.queuedTypes || []
+          const labels = { record: '语音', text: '文字', image: '图片', face: '表情', poke: '戳一戳' }
+          const sent = sentTypes.length ? '已发送：' + [...new Set(sentTypes.map((t) => labels[t] || '其他消息'))].join('、') + '。' : ''
+          if (r.failed) return { ok: false, sentTypes, queuedTypes, message: sent + (queuedTypes.length ? '还有消息在等待补发。' : '') + '部分发送失败或结果未确认；不要宣称全部成功，也不要自动重发整条消息，以免重复。' }
+          if (queuedTypes.length) return { ok: true, sentTypes, queuedTypes, message: sent + '还有消息已排队等待补发，尚未确认送达，请勿重复发送。' }
+          if (!sentTypes.length) return { ok: false, message: '没有确认发出的消息；可能被拦下、处于试运行或总开关关闭，不能说已发送。' }
+          const expectedVoice = voice === true || /<voice>/.test(body)
+          const fallback = expectedVoice && !sentTypes.includes('record') ? '本次没有发出语音；若已发文字，不要称为语音成功。' : ''
+          const mentions = r.missedAt?.length ? `但 ${r.missedAt.map((n) => '@' + n).join('、')} 没对上群里的人，只是文字、对方收不到提醒；真 @ 需要 <at:QQ号>。` : ''
+          return { ok: true, sentTypes, queuedTypes, message: sent + fallback + mentions }
         },
       }))
       return tools

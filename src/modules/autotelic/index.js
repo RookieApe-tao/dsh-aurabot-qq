@@ -17,6 +17,8 @@ import { probeTakeovers, applyTakeover, restoreTakeover, findFlipped, repressTak
 import { reconcileDay, problemsText } from '../../autotelic/reconcile.js'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { dataDir } from '../../core/store.js'
+import { personaDataDir, personaNow } from '../../persona/personas.js'
 
 export default {
   id: 'autotelic',
@@ -87,8 +89,15 @@ export default {
     // host 装好审计器后会把「已接线」标记放 core 上，面板据此显示「审计已开启」。
     const auditWired = () => Boolean(api.core?.autotelicAuditOn)
 
-    // P1+P2 运行时：心跳 tick（立项+推进+复盘+做梦）+ 预览 + 账本。账本落 api.dataDir('ledger.json')。
-    const journal = createJournal(api.dataDir())
+    // 她自己的东西（账本、日志、笔记、提案、攒着想说的话）跟着人格走：根目录人格沿用模块数据目录，
+    // 其他人格放在 persona-data/<id>/autotelic/（见 personas.js）。Python 环境、技能脚本、审计日志所有人格共用。
+    const own = (...parts) => {
+      const dir = personaDataDir(api.config(), personaNow(api.config()))
+      return dir === dataDir() ? api.dataDir(...parts) : join(dir, 'autotelic', ...parts)
+    }
+
+    // P1+P2 运行时：心跳 tick（立项+推进+复盘+做梦）+ 预览 + 账本。账本落 own('ledger.json')。
+    const journal = createJournal(() => own())
     const runtime = createRuntime({
       settings: () => api.settings(),
       cfg: api.config(),
@@ -96,7 +105,7 @@ export default {
       identity: api.core.identity,
       memoryOf: () => { try { return api.use('memory') } catch { return null } },
       personaName: () => '', // 人格名（素材提权重用）；取不到就空着
-      ledgerFile: api.dataDir('ledger.json'),
+      ledgerFile: () => own('ledger.json'),
       evalTurn: (prompt, { model, timeoutMs }) => api.core.hub.runSystemTurn('autotelic-eval', '自驱 · 好奇自评', prompt, { timeoutMs, noTools: true, key: 'eval', model }),
       // 立项前预审（2026-11-05 少爷定）：专门的会话 key（screen），不跟自评/工作间抢同一轮；
       // 没配便宜模型时用主模型跑（预审是「进待办前」的唯一语义闸，不能因为没配便宜模型就不审）
@@ -193,9 +202,9 @@ export default {
               const safe = String(title || '无题').replace(/[\\/:*?"<>|\s]+/g, '-').slice(0, 40) || '无题'
               // 正在办任务时文件名打任务前缀（<taskId>.），弹窗才能按任务归账（点哪条出哪条的）
               const cur = runtime.currentTaskId ? runtime.currentTaskId + '.' : ''
-              const file = api.dataDir('notes', `${cur}${day.getFullYear()}-${p2(day.getMonth() + 1)}-${p2(day.getDate())}-${safe}.md`)
+              const file = own('notes', `${cur}${day.getFullYear()}-${p2(day.getMonth() + 1)}-${p2(day.getDate())}-${safe}.md`)
               const { mkdirSync, writeFileSync } = await import('node:fs')
-              mkdirSync(api.dataDir('notes'), { recursive: true })
+              mkdirSync(own('notes'), { recursive: true })
               writeFileSync(file, `# ${title}\n\n${text}\n`, 'utf8')
               return { ok: true, message: `写好了：${file}` }
             } catch (error) { return { ok: false, message: `写不了：${error.message}` } }
@@ -254,9 +263,9 @@ export default {
             const { readJson, writeJson } = await import('../../core/store.js')
             // 安静时段自己判（§4.6：不能指望 outbound 治理，两者窗口不同）——先攒着
             if (isQuietNow(api.settings())) {
-              const pending = readJson(api.dataDir('say-pending.json'), [])
+              const pending = readJson(own('say-pending.json'), [])
               pending.push({ at: Date.now(), text: body, reason: clip(reason, 200) })
-              writeJson(api.dataDir('say-pending.json'), pending.slice(-20))
+              writeJson(own('say-pending.json'), pending.slice(-20))
               return { ok: true, message: '现在是安静时段，这句先攒着（没丢，安静结束再交给治理）' }
             }
             const r = await api.proactive.submit({ text: body, itemId: `say-${Date.now()}`, cause: { kind: 'background' } })
@@ -275,8 +284,8 @@ export default {
             const safe = String(title || '无题').replace(/[\\/:*?"<>|\s]+/g, '-').slice(0, 40) || '无题'
             try {
               const { mkdirSync, writeFileSync } = await import('node:fs')
-              mkdirSync(api.dataDir('proposals'), { recursive: true })
-              const file = api.dataDir('proposals', `${Date.now()}-${safe}.md`)
+              mkdirSync(own('proposals'), { recursive: true })
+              const file = own('proposals', `${Date.now()}-${safe}.md`)
               writeFileSync(file, `# 提案：${title}\n\n${body}\n`, 'utf8')
               note({ kind: 'autotelic/proposal', args: { title: clip(title, 60) }, outcome: 'ok' })
               return { ok: true, message: `提案写好了：${file}` }
@@ -296,11 +305,11 @@ export default {
             if (!spendR.ok) return spendR
             try {
               const { mkdirSync, writeFileSync } = await import('node:fs')
-              mkdirSync(api.dataDir('proposals'), { recursive: true })
+              mkdirSync(own('proposals'), { recursive: true })
               const day = new Date()
               const p2 = (n) => String(n).padStart(2, '0')
               const stamp = `${day.getFullYear()}${p2(day.getMonth() + 1)}${p2(day.getDate())}-${p2(day.getHours())}${p2(day.getMinutes())}`
-              const file = api.dataDir('proposals', `persona-${stamp}.md`)
+              const file = own('proposals', `persona-${stamp}.md`)
               writeFileSync(file, [
                 `# 人格修改提案（${stamp}）`, '',
                 '## 想改成什么样', '', String(want || '').trim(), '',
@@ -332,7 +341,7 @@ export default {
     api.route('/autotelic/skills', async () => ({ ok: true, list: skills.list() }))
     api.route('/autotelic/proposals', async () => {
       let list = []
-      try { list = readdirSync(api.dataDir('proposals')).filter((f) => f.endsWith('.md')).sort().reverse().slice(0, 20) } catch {}
+      try { list = readdirSync(own('proposals')).filter((f) => f.endsWith('.md')).sort().reverse().slice(0, 20) } catch {}
       return { ok: true, list }
     })
     api.route('/autotelic/env', async (req) => {
@@ -390,8 +399,8 @@ export default {
         running: runtime.running,
         env: api.settings().enabled && api.settings().allowPython ? await pythonEnv() : readEnv(),
         skills: skills.list().slice(0, 12),
-        proposals: (() => { try { return readdirSync(api.dataDir('proposals')).filter((f) => f.endsWith('.md')).length } catch { return 0 } })(),
-        sayPending: (() => { try { return (JSON.parse(readFileSync(api.dataDir('say-pending.json'), 'utf8') || '[]') || []).length } catch { return 0 } })(),
+        proposals: (() => { try { return readdirSync(own('proposals')).filter((f) => f.endsWith('.md')).length } catch { return 0 } })(),
+        sayPending: (() => { try { return (JSON.parse(readFileSync(own('say-pending.json'), 'utf8') || '[]') || []).length } catch { return 0 } })(),
         takeover: takeoverView(takeoverBackup()),
         // 立项前预审否决过的素材（面板「她为什么没立项」用；2026-11-05 少爷定）
         screenVetoes: runtime.book().screenVetoes().slice(-20),
@@ -477,7 +486,7 @@ export default {
         // 她写的笔记（notes/）：优先按文件名的 <taskId>. 前缀归账；老文件没前缀的按修改时间落在任务窗口内兜底
         const notes = []
         try {
-          const nDir = api.dataDir('notes')
+          const nDir = own('notes')
           const all = readdirSync(nDir).filter((f) => f.endsWith('.md'))
           const prefixed = all.filter((f) => f.startsWith(taskId + '.'))
           const files = prefixed.length ? prefixed : all.filter((f) => {

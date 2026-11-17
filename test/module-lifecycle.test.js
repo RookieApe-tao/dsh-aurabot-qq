@@ -180,6 +180,32 @@ test('异步 setup 停止后，迟到的写操作不能发送消息或修改配�
   })
 })
 
+test('运行和同步收尾的 core.setConfig 合并配置，迟到的回调不得再写', async (t) => {
+  const core = { hub: { subagentFor: () => {} }, setConfig: (next) => f.setConfig(next) }
+  const f = fixture(t, { core })
+  const initial = {
+    ...f.config(), botQQ: '10000001', ownerQQ: '10000002', enabled: true,
+    dryRun: false, setupDone: true, voice: { enabled: true, speed: 1.2 },
+  }
+  f.setConfig(initial)
+  f.write('config-writer', `
+    export default { id: 'config-writer', setup(api) {
+      api.core.setConfig({ voice: { enabled: false } })
+      api.onDispose(() => api.core.setConfig({ voice: { enabled: true } }))
+      return { write: () => api.core.setConfig({ voice: { speed: 0.5 } }) }
+    } }
+  `)
+  await f.modules.boot()
+  const expected = { ...initial, voice: { ...initial.voice, enabled: false } }
+  assert.deepEqual(f.config(), expected)
+
+  const lateWrite = f.modules.use('config-writer').write
+  assert.equal(f.modules.stop('config-writer'), true)
+  assert.deepEqual(f.config(), initial)
+  assert.throws(lateWrite, /已停止，不能调用 core.setConfig/)
+  assert.deepEqual(f.config(), initial)
+})
+
 test('导入途中关闭模块、开启安全模式或停止模块，导入结束后不执行 setup', async (t) => {
   for (const action of ['disable', 'safeMode', 'stop']) await t.test(action, async (t) => {
     const f = fixture(t)

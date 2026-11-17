@@ -61,7 +61,7 @@ export function createOutbox ({ file = dataDir('outbox', 'queue.json'), log, now
    * 加入一条待发送消息。只接受 send_private_msg / send_group_msg；
    * 图片 base64 等过大内容不入队，避免队列文件失控。
    */
-  function add ({ action, params, chatId = '', note = '', kind = 'reply', ttlMs } = {}) {
+  function add ({ action, params, chatId = '', note = '', kind = 'reply', ttlMs, incomingReply = false } = {}) {
     if (action !== 'send_private_msg' && action !== 'send_group_msg') {
       return { ok: false, message: '不是可补发的消息类型' }
     }
@@ -87,6 +87,7 @@ export function createOutbox ({ file = dataDir('outbox', 'queue.json'), log, now
       chatId: String(chatId || ''),
       note: String(note || '').slice(0, 120),
       kind,
+      ...(incomingReply ? { incomingReply: true } : {}),
       createdAt: at,
       expiresAt: at + Math.max(10_000, Number(ttlMs) || ttlForKind(kind)),
       attempts: 0,
@@ -108,7 +109,7 @@ export function createOutbox ({ file = dataDir('outbox', 'queue.json'), log, now
    * 连接后按顺序补发。call(action, params, { retries: 0 }) 由调用方提供。
    * 仅 transport 失败保留；uncertain / 业务错误丢弃，避免重复发或永远堵住队列。
    */
-  async function flush (call) {
+  async function flush (call, maySend = () => true) {
     load()
     let sent = 0
     let dropped = 0
@@ -118,6 +119,11 @@ export function createOutbox ({ file = dataDir('outbox', 'queue.json'), log, now
         remove(item.id)
         dropped++
         log?.warn?.(`补发过期，丢弃：${item.note || item.chatId || item.action}`)
+        continue
+      }
+      if (!maySend(item)) {
+        remove(item.id)
+        dropped++
         continue
       }
       if (Number(item.nextAt) > at) continue

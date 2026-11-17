@@ -239,7 +239,13 @@ for (const gate of ['awake', 'daily', 'gap', 'active']) {
     const id = s.pending()
     s.cfg.speakUp.allow = []
     s.dueTick(gate === 'daily' ? { count: 2 } : gate === 'gap' ? { nextAt: Date.now() + DAY } : {})
-    if (gate === 'awake') s.cfg.speakUp.awakeTo = 0
+    if (gate === 'awake') {
+      // 构造一个不包含当前小时的醒着窗口（从当前小时 +1 开始；不能再用 awakeTo=0：
+      // 新约定 from===to 表示全天）
+      const hour = new Date().getHours()
+      s.cfg.speakUp.awakeFrom = (hour + 1) % 24
+      s.cfg.speakUp.awakeTo = (hour + 2) % 24
+    }
     if (gate === 'active') s.hub.lastOwnerChatAt = Date.now()
     await s.speak.tick()
     assert.equal(s.pushed.length, 0)
@@ -328,8 +334,8 @@ for (const pauseAdmission of [false, true]) test(pauseAdmission
   const admissionEntered = deferred(), admissionReady = deferred()
   const settle = async () => { for (let i = 0; i < 20; i++) await new Promise(setImmediate) }
   const fake = createFakeDsh({ brain: async ({ text }) => {
-    // 当前时间随每轮输入注入；按原始聊天正文区分两轮。
-    const body = text.split('\n').filter((line) => !line.startsWith('【当前本机时间】')).join('\n')
+    // 时间和请求来源追加在正文后；本用例的首行正文区分普通聊天与主动回合。
+    const body = text.split('\n')[0]
     if (body === '普通聊天') { firstEntered.resolve(); await firstReply.promise; return '上一轮聊完啦' }
     nextEntered.resolve(); await nextReply.promise; return '裁员的事后来怎么样了？'
   } })

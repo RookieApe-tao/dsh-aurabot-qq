@@ -58,7 +58,7 @@ export function isQuietNow(settings, at = Date.now()) {
  * @param {object} [o.identity] 身份服务
  * @param {()=>object[]} [o.memoryOf] 记忆列表（memory 模块的 list('')）
  * @param {string} [o.personaName] 人格名（素材采集的 roleName）
- * @param {string} [o.ledgerFile] ledger.json 路径
+ * @param {string|Function} [o.ledgerFile] ledger.json 路径；给函数时每次按当时的路径取（换人格就换一本）
  * @param {object} [o.log]
  * @param {(prompt:string, opts:object)=>Promise<string>} [o.evalTurn] 便宜模型自评回合（测试注入 fake）
  * @param {(prompt:string, opts:object)=>Promise<string>} [o.screenTurn] 立项前预审回合；
@@ -75,14 +75,15 @@ export function createRuntime({ settings, cfg = {}, hub = {}, identity = null, m
     try { return mem?.list?.('') || [] } catch (error) { log?.debug?.('素材采集（记忆）失败：', error?.message); return [] }
   }
 
-  /** 账本（主人改了上限配置就重建，账不丢——同一文件接着读）。 */
+  /** 账本（主人改了上限配置、换了人格就重建，账不丢——按文件接着读；每次改动都已落盘）。 */
   function bookFor() {
     const s = settings()
-    const key = `${s.maxTasksActive}|${s.maxSteps}|${s.budgetActionsPerHour}`
+    const file = typeof ledgerFile === 'function' ? ledgerFile() : ledgerFile
+    const key = `${file}|${s.maxTasksActive}|${s.maxSteps}|${s.budgetActionsPerHour}`
     if (!book || key !== bookLimits) {
       bookLimits = key
       book = createBook({
-        file: ledgerFile,
+        file,
         maxActive: s.maxTasksActive,
         maxSteps: s.maxSteps,
         actionsPerHour: s.budgetActionsPerHour,

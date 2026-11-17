@@ -1,244 +1,92 @@
-// token 用量与花费：算价（新输入 / 缓存命中 / 输出三段、峰谷翻倍）和按区间 / 模块 / 聊天 / 模型的汇总。
-import { test, before, after } from 'node:test'
+import { test, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-
+import * as u from '../src/core/usage.js'
 let dir
-let usage
-
-before(async () => {
-  dir = mkdtempSync(join(tmpdir(), 'aurabot-usage-'))
-  process.env.AURABOT_DATA_DIR = dir
-  usage = await import('../src/core/usage.js')
-  usage.initUsage()
+const now = Date.now()
+const sample = { inputTokens: 100, outputTokens: 10, cacheReadTokens: 800, cacheWriteTokens: 100 }
+const report = () => u.usageReport({ range: 'all', now: now + 10000 })
+beforeEach(() => { dir=mkdtempSync(join(tmpdir(),'aurabot-usage-')); process.env.AURABOT_DATA_DIR=dir; u.initUsage() })
+afterEach(() => { u.closeUsage(); delete process.env.AURABOT_DATA_DIR; rmSync(dir,{recursive:true,force:true}) })
+test('四类 Token 不重叠相加；命中率按输入总量加权，不平均每轮百分比', () => {
+ u.recordUsage({chat:'group:1', usage:sample,at:now})
+ u.recordUsage({chat:'group:1',usage:{inputTokens:1000,outputTokens:20},at:now})
+ const r=report().current
+ assert.equal(r.totalTokens,2030);assert.equal(r.cacheHitRate,0.4);assert.equal(r.cacheWriteTokens,100)
+ assert.equal(r.byChat[0].totalTokens,2030);assert.equal(r.cost,null)
+})
+test('纯缓存用量不丢失；错误数值不会污染统计', () => {
+ u.recordUsage({usage:{cacheReadTokens:80},at:now})
+ u.recordUsage({usage:{cacheWriteTokens:20},at:now})
+ u.recordUsage({usage:{inputTokens:-1,outputTokens:Infinity},at:now})
+ assert.equal(report().current.totalTokens,100);assert.equal(report().current.runs,2)
+ assert.equal(report().current.cacheHitRate,0.8)
+})
+test('unknown / 中转同名 / 没记模型均不猜价；不完整总价隐藏', () => {
+ for(const model of ['', 'deepseek-v4.1-flash','MiniMax-M3.1-Flash']) assert.equal(u.costOf({model,in:100,out:10,provider:'gateway'}).unpriced,true)
+ u.initUsage({currency:'元',models:{'gateway::exact':{provider:'gateway',in:1,out:4,cached:0.1,cacheWrite:2}}})
+ assert.equal(u.costOf({model:'exact',provider:'other',in:100}).unpriced,true)
+ u.recordUsage({model:'exact',provider:'gateway',chat:'group:1',usage:sample,at:now})
+ assert.ok(Math.abs(report().current.cost-0.00042)<1e-10)
+ u.recordUsage({model:'unknown',provider:'gateway',chat:'private:2',usage:sample,at:now})
+ assert.equal(report().current.cost,null)
+ assert.equal(typeof report().current.byChat.find(x=>x.key==='group:1').cost,'number')
+ assert.equal(report().current.byChat.find(x=>x.key==='private:2').cost,null)
+})
+test('缓存写入未定价 / 无效费率 / 生效日前记录不显示估价', () => {
+ u.initUsage({models:{exact:{provider:'p',in:1,out:2,cached:0}}})
+ assert.equal(u.costOf({model:'exact',provider:'p',written:10}).unpriced,true)
+ u.initUsage({models:{exact:{provider:'p',in:-1,out:2,cached:0}}})
+ assert.equal(u.priceOf('exact',now,undefined,'p'),null)
+ u.initUsage({models:{exact:{provider:'p',in:0,out:0,cached:0,from:new Date(now+10000).toISOString()}}})
+ assert.equal(u.costOf({model:'exact',provider:'p',in:1,at:now}).unpriced,true)
+})
+test('全部对话展示，不再截断前12；后台未归属量不丢失', () => {
+ for(let i=0;i<25;i++)u.recordUsage({chat:'group:'+i,usage:sample,at:now})
+ u.recordUsage({module:'记忆',usage:sample,at:now})
+ const r=report().current;assert.equal(r.byChat.length,25)
+ assert.equal(r.byChat.reduce((n,x)=>n+x.totalTokens,0)+r.background.totalTokens,r.totalTokens)
+})
+test('settlement替换、重试累计、失败流用量、压缩和重复事件；重启后仍去重', () => {
+ const e=(seq,type,data)=>u.recordSessionUsage('s','group:1',{seq,type,time:now+seq,data})
+ e(0,'model/selection',{model:'m',provider:'p'})
+ e(1,'assistant/attempt',{turn:1,step:0,stream:{chunks:[{type:'usage',usage:{inputTokens:3}},{type:'usage',usage:sample}]}})
+ e(2,'assistant/message',{turn:1,step:0,usage:{inputTokens:20}})
+ assert.equal(report().current.totalTokens,20);assert.equal(report().current.runs,1)
+ e(3,'llm/retry-started',{turn:1,step:0})
+ e(4,'assistant/message',{turn:1,step:0,usage:sample})
+ e(5,'compaction/summary',{usage:{inputTokens:30},model:'c',provider:'p'})
+ e(5,'compaction/summary',{usage:{inputTokens:30}})
+ assert.equal(report().current.totalTokens,1060);assert.equal(report().current.runs,3)
+ u.closeUsage();u.initUsage()
+ e(4,'assistant/message',{turn:1,step:0,usage:sample})
+ assert.equal(report().current.totalTokens,1060)
+ e(6,'assistant/message',{turn:1,step:0,usage:{inputTokens:40}})
+ assert.equal(report().current.totalTokens,90)
+ assert.ok(report().current.byModel.some(x=>x.key==='p / m'))
+})
+test('旧累计数据保留总量和调用数，不把平均数当总量', () => {
+ u.closeUsage()
+ const day=new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Shanghai'}).format(now)
+ writeFileSync(join(dir,'usage.json'),JSON.stringify({days:{[day]:{聊天:{in:1000,out:200,hit:800,calls:10}}}}))
+ u.initUsage();const r=report().current
+ assert.equal(r.runs,10);assert.equal(r.totalTokens,2000);assert.equal(r.cost,null)
+})
+test('北京时间跨天范围与90天保留；空结果不冒充零费用', () => {
+ const start=Date.parse(new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Shanghai'}).format(now)+'T00:00:00+08:00')
+ u.recordUsage({usage:sample,at:start-1});u.recordUsage({usage:sample,at:start})
+ u.recordUsage({usage:sample,at:now-91*86400000})
+ const r=report();assert.equal(r.ranges.today.runs,1);assert.equal(r.ranges.yesterday.runs,1);assert.equal(r.ranges.all.runs,2)
+ assert.equal(u.usageReport({range:'invalid'}).range,'7')
 })
 
-after(() => {
-  delete process.env.AURABOT_DATA_DIR
-  try { rmSync(dir, { recursive: true, force: true }) } catch (error) {}
-})
-
-// 北京时间：周五 10:00 = 峰时；周六 23:00 = 空闲
-const PEAK_AT = Date.UTC(2026, 10, 6, 2, 0, 0)
-const OFF_AT = Date.UTC(2026, 10, 7, 15, 0, 0)
-
-// DSH 的 in 是「未命中」的那部分，cached 是命中前缀缓存的那部分：总输入 = 200k + 800k = 1M
-const row = { model: 'deepseek-v4.1-flash', in: 200_000, cached: 800_000, out: 100_000 }
-
-test('算价：新输入按未命中价，缓存命中单独算，输出单独算', () => {
-  // 0.2M×1 + 0.8M×0.02 + 0.1M×4 = 0.2 + 0.016 + 0.4
-  const c = usage.costOf(row, OFF_AT)
-  assert.ok(Math.abs(c.cost - 0.616) < 1e-9, '实际 ' + c.cost)
-  assert.ok(Math.abs(c.fresh - 0.2) < 1e-9)
-  assert.ok(Math.abs(c.cached - 0.016) < 1e-9)
-  assert.ok(Math.abs(c.output - 0.4) < 1e-9)
-  assert.equal(c.unpriced, false)
-})
-
-test('算价：峰时翻倍，周末不翻', () => {
-  const off = usage.costOf(row, OFF_AT).cost
-  const peak = usage.costOf(row, PEAK_AT).cost
-  assert.ok(Math.abs(peak - off * 2) < 1e-9, `峰时应该是闲时两倍：${peak} vs ${off}`)
-  assert.equal(usage.costOf(row, PEAK_AT).peak, true)
-  const sat = usage.costOf(row, Date.UTC(2026, 10, 7, 2, 0, 0)) // 同一个钟点的周六
-  assert.ok(Math.abs(sat.cost - off) < 1e-9)
-  assert.equal(sat.peak, false)
-})
-
-test('算价：pro 用 pro 价，认不出的模型算「未定价」', () => {
-  assert.ok(usage.costOf({ ...row, model: 'deepseek-v4-pro' }, OFF_AT).cost > usage.costOf(row, OFF_AT).cost * 3)
-  const unknown = usage.costOf({ ...row, model: 'some-local-llm' }, OFF_AT)
-  assert.equal(unknown.unpriced, true)
-  assert.equal(unknown.cost, 0)
-})
-
-test('汇总：今日 / 昨日 / 近 7 天 / 近 30 天各算各的，并按模块 / 聊天 / 模型分组', () => {
-  const today = Date.UTC(2026, 10, 6, 2, 0, 0) // 北京 2026-11-06 10:00
-  const day = 86_400_000
-  const model = 'deepseek-v4.1-flash'
-  usage.recordUsage({ module: '聊天', chat: 'group:1', model, usage: { inputTokens: 3000, outputTokens: 500 }, at: today })
-  usage.recordUsage({ module: '聊天', chat: 'group:1', model, usage: { inputTokens: 2000, outputTokens: 200, cacheReadTokens: 1000 }, at: today })
-  usage.recordUsage({ module: '记忆', model, usage: { inputTokens: 1000, outputTokens: 100 }, at: today })
-  usage.recordUsage({ module: '聊天', chat: 'private:2', model, usage: { inputTokens: 4000, outputTokens: 400 }, at: today - day })
-  usage.recordUsage({ module: '日记', model, usage: { inputTokens: 700, outputTokens: 70 }, at: today - 8 * day })
-
-  const r = usage.usageReport({ now: today + 3600_000 })
-  assert.equal(r.ranges.today.runs, 3)
-  // 合计 = 总输入（未命中 6000 + 命中 1000）+ 输出 800
-  assert.equal(r.ranges.today.totalTokens, 7000 + 800)
-  assert.equal(r.ranges.today.cachedTokens, 1000)
-  assert.equal(r.ranges.today.promptTokens, 3000 + 2000 + 1000 + 1000, '总输入 = 未命中 + 命中')
-  assert.ok(r.ranges.today.cacheHitRate > 0 && r.ranges.today.cacheHitRate < 1)
-  assert.equal(r.ranges.yesterday.runs, 1)
-  assert.equal(r.ranges.last7.runs, 4, '近 7 天含今天和昨天，不含 8 天前')
-  assert.equal(r.ranges.last30.runs, 5)
-
-  assert.deepEqual(r.current.byModule.map((m) => m.key), ['聊天', '记忆'], '按花费从大到小')
-  assert.equal(r.current.byModule[0].runs, 3)
-  assert.equal(r.current.byChat.map((c) => c.key).includes('group:1'), true)
-  assert.deepEqual(r.current.byModel.map((m) => m.key), [model])
-  assert.ok(r.current.cost > 0)
-})
-
-test('未定价的调用单独列出来，不算进花费', () => {
-  const at = Date.UTC(2026, 10, 6, 2, 0, 0)
-  usage.recordUsage({ module: '聊天', model: 'weird-model-x', usage: { inputTokens: 5000, outputTokens: 500 }, at })
-  const r = usage.usageReport({ now: at + 60_000 })
-  assert.equal(r.current.unpricedCalls >= 1, true)
-  assert.ok((r.current.unpricedModels || []).some((m) => m.model === 'weird-model-x'))
-})
-
-test('只记数字，不含内容；空用量直接跳过', () => {
-  const before = usage.usageReport({ now: PEAK_AT }).ranges.last30.runs
-  assert.equal(usage.recordUsage({ module: '聊天', usage: null }), null)
-  assert.equal(usage.recordUsage({ module: '聊天', usage: { inputTokens: 0, outputTokens: 0 } }), null)
-  assert.equal(usage.usageReport({ now: PEAK_AT }).ranges.last30.runs, before)
-})
-
-test('价格表可以覆盖（config.usage.pricing）', () => {
-  // 同名条目会被整个替换（其余的价目表继续生效）
-  usage.initUsage({ models: { 'deepseek-flash': { match: 'deepseek', in: 0, out: 0, cached: 0 } } })
-  assert.equal(usage.costOf(row, OFF_AT).cost, 0, '全填 0 就是 0')
-  usage.initUsage()
-  assert.ok(usage.costOf(row, OFF_AT).cost > 0)
-})
-
-test('价目表：多家厂商都认，DeepSeek 之外的没有峰谷价', () => {
-  // DeepSeek：官方价，峰时翻倍
-  assert.equal(usage.priceOf('deepseek-v4.1-flash', OFF_AT).in, 1)
-  assert.equal(usage.priceOf('trae/deepseek-v4.1-flash-max', OFF_AT).out, 4, '带前缀的模型名也认')
-  assert.equal(usage.priceOf('deepseek-v4-pro', OFF_AT).out, 13.5, 'pro 走 pro 价')
-  assert.equal(usage.priceOf('deepseek-v4.1-flash', PEAK_AT).in, 2)
-  // 其它厂商：LiteLLM 价 ×7.2 折元，峰时不翻倍
-  assert.equal(usage.priceOf('gpt-4o-mini', OFF_AT).in, 1.08)
-  assert.equal(usage.priceOf('gpt-4o-mini', PEAK_AT).in, 1.08, '非 DeepSeek 没有峰谷价')
-  assert.equal(usage.priceOf('claude-sonnet-4-5', OFF_AT).out, 108)
-  assert.equal(usage.priceOf('gemini-2.5-flash', OFF_AT).in, 2.16)
-  assert.equal(usage.priceOf('kimi-k2.6', OFF_AT).out, 28.8)
-  assert.equal(usage.priceOf('qwen-max', OFF_AT).in, 12.17)
-  assert.equal(usage.priceOf('glm-4.6', OFF_AT).out, 15.84)
-  assert.equal(usage.priceOf('doubao-seed-2-0-pro', OFF_AT).in, 3.47)
-  // 认不出来的还是未定价
-  assert.equal(usage.priceOf('some-local-llm', OFF_AT), null)
-  assert.equal(usage.priceOf('', OFF_AT), null)
-})
-
-test('价目表：可以在 config.usage.pricing 里加自己的模型（match 是字符串正则）', () => {
-  usage.initUsage({ models: { 'my-llm': { match: '^my-llm-', in: 2, out: 8, cached: 0.5 } } })
-  assert.deepEqual(usage.priceOf('my-llm-7b', OFF_AT), { in: 2, out: 8, cached: 0.5, peak: false })
-  assert.ok(usage.priceOf('deepseek-v4.1-flash', OFF_AT), '自己加的条目是往上加，不冲掉内置价')
-  usage.initUsage()
-  assert.ok(usage.priceOf('deepseek-v4.1-flash', OFF_AT))
-})
-
-test('后台任务按功能分：聊天不拆，后台轮次按模块名拆开', () => {
-  assert.equal(usage.moduleLabel('group:602656027'), '聊天')
-  assert.equal(usage.moduleLabel('private:1316149505'), '聊天')
-  assert.equal(usage.moduleLabel('system:diary'), '空间日记（后台）')
-  assert.equal(usage.moduleLabel('system:ext-heybox'), '刷小黑盒（后台）')
-  assert.equal(usage.moduleLabel('system:bili'), '刷 B 站（后台）')
-  assert.equal(usage.moduleLabel('memory'), '记忆')
-  assert.equal(usage.moduleLabel('mood'), '心情')
-  assert.equal(usage.moduleLabel('未知模块'), '未知模块', '认不出的模块原样显示')
-  assert.equal(usage.moduleLabel(''), '其他后台任务')
-
-  const at = Date.UTC(2026, 10, 8, 4, 0, 0)
-  usage.recordUsage({ module: usage.moduleLabel('system:diary'), model: 'deepseek-v4.1-flash', usage: { inputTokens: 1000, outputTokens: 100 }, at })
-  usage.recordUsage({ module: usage.moduleLabel('system:purpose'), model: 'deepseek-v4.1-flash', usage: { inputTokens: 2000, outputTokens: 200 }, at })
-  usage.recordUsage({ module: usage.moduleLabel('memory'), model: 'deepseek-v4.1-flash', usage: { inputTokens: 500, outputTokens: 50 }, at })
-  const r = usage.usageReport({ now: at + 60_000, range: 'today' })
-  const names = r.current.byModule.map((m) => m.key)
-  assert.ok(names.includes('空间日记（后台）'), '后台轮次要按功能分开，不是一坨「后台会话」')
-  assert.ok(names.includes('目的引擎（后台）'))
-  assert.ok(names.includes('记忆'))
-})
-
-test('旧标签归置：打标签前的那批行读出来也要人看得懂', () => {
-  // 有模型名 = 加了标签之前的 askModel 调用（回查是记忆模块）
-  assert.equal(usage.moduleOf({ module: '后台任务', model: 'deepseek-v4.1-flash' }), '记忆（回查）')
-  // 没模型名 = 从 v1 老格式摊出来的聚合行，查不出来就照实说
-  assert.equal(usage.moduleOf({ module: '后台任务', model: '' }), '其他后台任务')
-  assert.equal(usage.moduleOf({ module: '后台会话', model: '' }), '其他后台任务')
-  // 新数据原样通过
-  assert.equal(usage.moduleOf({ module: '聊天', model: 'deepseek-v4.1-flash' }), '聊天')
-  assert.equal(usage.moduleOf({ module: '记忆', model: 'deepseek-v4.1-flash' }), '记忆')
-  assert.equal(usage.moduleOf({ module: '', model: '' }), '其他后台任务')
-  assert.equal(usage.moduleOf({ module: '其它后台', model: 'x' }), '其他后台任务', '认不出的一律归到「其他后台任务」')
-})
-
-test('旧数据没记模型名：按 DeepSeek flash 价估，不能算成「未定价」白用 token', () => {
-  const old = { in: 3096, cached: 4992, out: 331, model: '' }
-  const c = usage.costOf({ ...old, at: OFF_AT })
-  // 3096×1 + 4992×0.02 + 331×4 都按百万算
-  const expect = (3096 * 1 + 4992 * 0.02 + 331 * 4) / 1_000_000
-  assert.ok(Math.abs(c.cost - expect) < 1e-9, `实际 ${c.cost} 期望 ${expect}`)
-  assert.equal(c.unpriced, false)
-  // 真认不出的模型名还是未定价
-  assert.equal(usage.costOf({ ...old, model: 'mystery-llm', at: OFF_AT }).unpriced, true)
-
-  const at = Date.UTC(2026, 10, 9, 4, 0, 0)
-  usage.recordUsage({ module: '其他后台任务', model: '', usage: { inputTokens: 1000, outputTokens: 100 }, at })
-  const r = usage.usageReport({ now: at + 60_000, range: 'today' })
-  assert.ok(r.current.assumedCalls >= 1, '要能数出有几条是按默认价估的')
-  assert.ok(r.current.cost > 0, '按默认价估之后要有花费')
-})
-
-test('口径：inputTokens 是未命中缓存的输入，cacheReadTokens 是命中的（两边相加才是总输入）', () => {
-  // 对着 DSH 会话投影核对过：投影里就是 uncachedInputTokens / cacheReadTokens 两个字段，
-  // 实测后者能是前者的几十倍。所以：
-  //   总输入 = inputTokens + cacheReadTokens
-  //   缓存命中率 = cacheReadTokens / (两者之和)
-  // 按「inputTokens 已含缓存」算会把命中率算成 100%、未命中算成 0，花费少算一大截。
-  const at = Date.UTC(2026, 10, 10, 4, 0, 0)
-  usage.recordUsage({
-    module: '聊天',
-    model: 'deepseek-v4.1-flash',
-    usage: { inputTokens: 1000, cacheReadTokens: 9000, outputTokens: 500 },
-    at,
-  })
-  const r = usage.usageReport({ now: at + 60_000, range: 'today' })
-  const t = r.ranges.today
-  assert.equal(t.promptTokens, 10000, '总输入 = 未命中 1000 + 命中 9000')
-  assert.equal(t.cachedTokens, 9000, '命中数就是 cacheReadTokens')
-  assert.equal(t.completionTokens, 500)
-  assert.equal(t.totalTokens, 10500)
-  assert.equal(t.cacheHitRate, 0.9, '命中率按两者之和算')
-  // 花费也按三段分别取价（空闲时段：未命中 1 元/百万、命中 0.02、输出 4）
-  const expect = (1000 * 1 + 9000 * 0.02 + 500 * 4) / 1_000_000
-  assert.ok(Math.abs(t.cost - expect) < 1e-9, `实际 ${t.cost} 期望 ${expect}`)
-})
-
-test('工具归属：聊天里调用某模块的工具时，它的消耗算到那个功能名下', () => {
-  // 聊天里让她刷 B 站 → 调 bili_watch → 下一步读字幕/热评算「刷 B 站」，不全是「聊天」
-  assert.equal(usage.moduleOfTool('bili_watch'), '刷 B 站')
-  assert.equal(usage.moduleOfTool('bili_comment'), '刷 B 站')
-  assert.equal(usage.moduleOfTool('bili_danmaku'), '刷 B 站')
-  // bili 模块注册的 B 站截图工具，名字是 qq_ 开头，得靠例外表
-  assert.equal(usage.moduleOfTool('qq_send_shot'), '刷 B 站')
-  assert.equal(usage.moduleOfTool('qq_draw_image'), '生图')
-  // 聊天本身的工具不算任何模块（仍记「聊天」）
-  assert.equal(usage.moduleOfTool('qq_send_message'), '')
-  assert.equal(usage.moduleOfTool('qq_chat_history'), '')
-  assert.equal(usage.moduleOfTool('home_where'), '', '认不出的工具不算模块')
-  assert.equal(usage.moduleOfTool(''), '')
-  assert.equal(usage.moduleOfTool(null), '')
-})
-
-test('按聊天只列群聊和私聊，后台会话只在按模块里看', () => {
-  const at = Date.UTC(2026, 10, 11, 4, 0, 0)
-  const u = { inputTokens: 100, outputTokens: 10 }
-  usage.recordUsage({ module: '聊天', chat: 'group:777', model: 'deepseek-v4.1-flash', usage: u, at })
-  usage.recordUsage({ module: '聊天', chat: 'private:888', model: 'deepseek-v4.1-flash', usage: u, at })
-  usage.recordUsage({ module: '刷 B 站（后台）', chat: 'system:bili', model: 'deepseek-v4.1-flash', usage: u, at })
-  usage.recordUsage({ module: '其他后台任务', chat: '', model: 'deepseek-v4.1-flash', usage: u, at })
-  const r = usage.usageReport({ now: at + 60_000, range: 'today' })
-  const chats = r.current.byChat.map((x) => x.key)
-  assert.deepEqual(chats.sort(), ['group:777', 'private:888'], '按聊天只该有群聊和私聊')
-  assert.ok(chats.every((k) => /^(group|private):/.test(k)))
-  // 后台那两项在按模块里，不能丢
-  const mods = r.current.byModule.map((x) => x.key)
-  assert.ok(mods.includes('刷 B 站（后台）'))
-  assert.ok(mods.includes('其他后台任务'))
+test('同一次调用的最终零值可以更正先前的正值', () => {
+ const event=(seq,usage)=>({seq,time:now,type:'assistant/message',data:{turn:1,step:0,usage}})
+ u.recordSessionUsage('s','private:1',event(1,sample))
+ u.recordSessionUsage('s','private:1',event(2,{inputTokens:0,outputTokens:0}))
+ assert.equal(report().current.totalTokens,0)
+ assert.equal(report().current.runs,1)
+ assert.equal(report().current.cacheHitRate,null)
 })

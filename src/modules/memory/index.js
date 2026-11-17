@@ -2,12 +2,15 @@
 // 导出 createMemoryStore 的返回值：add / addEvent / recall / list / contextFor / topicScore / consolidate ……
 // 别的模块（空间日记、B 站、翻唱）会往这里记她的经历；记忆模块关着时它们自己跳过。
 
-import { createMemoryStore, memoryLine, looksLikeRuleMemory, parseValidityDate } from '../../features/memory.js'
+import { createMemoryStore, memoryLine, looksLikeRuleMemory, parseValidityDate, parseMemoryCommand } from '../../features/memory.js'
 export { looksLikeRuleMemory } from '../../features/memory.js'
 // 记忆星图：算法全在 memory-graph.js（原样搬自记忆中枢 0.9.2 的 graph.mjs，纯函数）。
 // 这里只用它的建边/布局/亮度和 tier 值域映射，不搬中枢的 assoc.mjs 和 pipeline.mjs。
 import { buildEdges, layoutGraph3d, brightness, regionOf, FADING_THRESHOLD, LAYOUT_VERSION, toStarTier, toHostTier, STAR_TIER_LABEL } from '../../features/memory-graph.js'
 import { readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { dataDir } from '../../core/store.js'
+import { personaScope, personaNow, personaDataDir, personaDataRoots } from '../../persona/personas.js'
 import { defineTool, str } from '../../tools/tools.js'
 import { isOwnerPrivateChat } from '../../chat/access.js'
 import { parseChatId } from '../../gateway/address.js'
@@ -38,15 +41,61 @@ export default {
   tab: 'memory',
   files: ['features/memory.js', 'features/memory-rules.js', 'features/memory-store.js', 'features/memory-vector.js'],
   setup(api, { fetchImpl } = {}) {
+    // 融合：hub/http 是基础；identity/routeOwner 是本机身份库与多平台路由（每个 store 都要注入）
     const { hub, http, identity, routeOwner } = api.core
-    const memory = createMemoryStore({ dsh: api.dsh, getConfig: api.config, hub, log: api.log, fetchImpl, setConfig: api.setConfig, identity })
+    // 每个人格一个记忆库，目录见 personas.js。同一个目录只开一个实例（老用户还没认领时大家共用根目录那一个）；
+    // 库的每个方法都在调用它的人格下跑，里面读流水、取角色名都按这个人格，整理到一半切人格也不会串。
+    const stores = new Map() // 目录 → 记忆库
+    const scoped = new Map() // 人格|目录 → 固定在这个人格下的记忆库
+    let noMemory = null // 所有人格里设了「不再记住」的 QQ 号，任何一个人格都不记这些人
+    const blocked = (qq) => (noMemory ||= new Set(personaDataRoots(api.config()).flatMap(({ id }) => storeOf(id).noMemoryIds()))).has(qq)
+    function storeOf(pid) {
+      const directory = personaDataDir(api.config(), pid)
+      if (!stores.has(directory)) stores.set(directory, createMemoryStore({ dsh: api.dsh, getConfig: api.config, hub, log: api.log, fetchImpl, setConfig: api.setConfig, identity, directory, blocked }))
+      const key = pid + '|' + directory
+      if (!scoped.has(key)) scoped.set(key, new Proxy(stores.get(directory), { get: (t, k) => (typeof t[k] === 'function' ? (...args) => personaScope.run(pid, () => t[k](...args)) : t[k]) }))
+      return scoped.get(key)
+    }
+    const current = () => storeOf(personaNow(api.config()))
+    // 聊天里按会话所属的人格取库（DSH 的回调不一定在收消息那条异步链上）
+    const memoryOf = (sessionId) => storeOf(hub.personaOf?.(sessionId) || personaNow(api.config()))
+    /** 当前人格之外、各有一个目录的人格。 */
+    const others = () => personaDataRoots(api.config()).filter(({ dir }) => dir !== personaDataDir(api.config(), personaNow(api.config())))
+
+    // 「忘掉…」和「不再记住」是对方的隐私请求：每个人格都要照做。「记住…」只记在当前人格。
+    function handleCommand(chat, text) {
+      const result = current().handleCommand(chat, text)
+      if (parseMemoryCommand(text)?.action === 'forget') for (const { id } of others()) storeOf(id).handleCommand(chat, text)
+      return result
+    }
+    function setNoMemory(qq, enabled, options) {
+      const result = current().setNoMemory(qq, enabled, options)
+      if (result?.ok !== false) for (const { id } of others()) storeOf(id).setNoMemory(qq, enabled, options)
+      noMemory = null
+      return result
+    }
+    /** 删人格数据前关掉它的记忆库文件。 */
+    function closePersona(pid) {
+      const directory = personaDataDir(api.config(), pid)
+      if (directory === dataDir()) return
+      stores.get(directory)?.close()
+      stores.delete(directory)
+      for (const key of [...scoped.keys()]) if (key.endsWith('|' + directory)) scoped.delete(key)
+    }
+    const extra = { handleCommand, setNoMemory, closePersona }
+    // 面板接口和别的模块（日记、B 站……）都用当前人格（定时任务、收消息时已固定）的记忆库
+    const memory = new Proxy({}, {
+      get: (_, k) => extra[k] || current()[k],
+      has: (_, k) => k in extra || k in current(),
+    })
     memory.list('') // 启动时完成旧 JSON 迁移，不必等第一条聊天或打开面板。
 
-    api.context(({ chat, sessionId }) => (chat.kind === 'system' ? '' : memory.contextFor(chat, sessionId)))
+    api.context(({ chat, sessionId }) => (chat.kind === 'system' ? '' : memoryOf(sessionId).contextFor(chat, sessionId)))
     // #79：随消息变化的相关记忆放在「交给她的内容」里，不放进每轮都会追加的运行时上下文快照
     api.on('prompt', async (content, info) => {
       try {
         if (!info || !info.chat || info.chat.kind === 'system' || !Array.isArray(content)) return content
+        const memory = memoryOf(info.sessionId)
         const hits = memory.shouldAutoRecall(info.queryText || '') ? await memory.vectorHits(info.queryText || '', { respectForget: true }) : []
         const hint = await memory.recallHintAsync(info.chat, info.queryText || '', info.prevText || '', info.sessionId, info.speakers || [], hits)
         if (!hint) return content
@@ -57,6 +106,7 @@ export default {
 
     api.tool(({ chat, level, sessionId }) => {
       if (!api.config().memory.enabled || chat.kind === 'system') return []
+      const memory = memoryOf(sessionId)
       const current = chat.chatId
       const senders = () => (typeof hub.turnSenders === 'function' ? hub.turnSenders(sessionId) : hub.speakersOf?.(sessionId)) || []
       return [
@@ -208,11 +258,16 @@ export default {
     {
       // 星图布局状态（存模块数据目录，不写进记忆库，不污染 items）。
       // 测试里的 mock api 没有 dataDir —— 退回到不落盘（每次重算，只是慢一点），不能因此崩掉。
-      const graphFile = (() => {
-        try { return typeof api.dataDir === 'function' ? api.dataDir('graph-state.json') : null } catch { return null }
-      })()
-      const readGraph = () => { if (!graphFile) return {}; try { return JSON.parse(readFileSync(graphFile, 'utf8')) } catch { return {} } }
-      const writeGraph = (s) => { if (!graphFile) return; try { writeFileSync(graphFile, JSON.stringify(s)) } catch (error) { api.log.warn?.('星图状态保存失败：' + error.message) } }
+      // 星图跟着人格的记忆走：根目录人格沿用模块数据目录，其他人格放在自己的 persona-data/<id>/ 里
+      const graphFile = () => {
+        try {
+          if (typeof api.dataDir !== 'function') return null
+          const dir = personaDataDir(api.config(), personaNow(api.config()))
+          return dir === dataDir() ? api.dataDir('graph-state.json') : join(dir, 'graph-state.json')
+        } catch { return null }
+      }
+      const readGraph = () => { const file = graphFile(); if (!file) return {}; try { return JSON.parse(readFileSync(file, 'utf8')) } catch { return {} } }
+      const writeGraph = (s) => { const file = graphFile(); if (!file) return; try { writeFileSync(file, JSON.stringify(s)) } catch (error) { api.log.warn?.('星图状态保存失败：' + error.message) } }
 
       /** 组装一颗星：记忆条目 + 中枢算法要的清晰度参数（tier 翻成 short/long/core）。 */
       const starOf = (m, meta) => {

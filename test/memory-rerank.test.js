@@ -67,3 +67,17 @@ test('候选不足两条不发请求', async () => {
   assert.equal(one.length, 1)
   assert.equal(called, 0)
 })
+
+test('重排接口失败后退避：下一条消息不再等满超时，直接用原顺序', async () => {
+  const cfg = normalize({ memory: { vector: { baseUrl: 'https://api.siliconflow.cn/v1', apiKey: 'sk-v' }, rerank: { enabled: true } } })
+  let calls = 0
+  const fetchImpl = async () => { calls++; throw new Error('timeout') }
+  const r = createReranker({ getConfig: () => cfg, log, fetchImpl })
+  await assert.rejects(r.rank('主人喜欢吃什么', hits()))
+  assert.equal(calls, 1)
+  const again = await r.rank('主人喜欢吃什么', hits())
+  assert.equal(calls, 1, '退避期间不再请求')
+  assert.deepEqual(again.map((h) => h.it.id), ['a', 'b', 'c'])
+  assert.equal(r.backoff().failures, 1)
+  assert.ok(r.backoff().skipUntil > Date.now())
+})

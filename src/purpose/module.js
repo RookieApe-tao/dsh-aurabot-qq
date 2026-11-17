@@ -10,12 +10,13 @@
 // 想换引擎的主人自己开关，迁移说明见 docs/PURPOSE_MODULE_API.md。
 
 import { dataDir, readJson, writeJson } from '../core/store.js'
+import { quietWindowOf } from '../core/time-window.js'
 import { cleanOutboundText } from '../chat/reply.js'
 import { isOwner, isOwnerChatMuted, isOwnerPrivateChat } from '../chat/access.js'
 import { parseChatId } from '../gateway/address.js'
 import { isSessionBackoff } from '../chat/session-backoff.js'
 import { followUpHint } from '../features/memory.js'
-import { selfName, selfNames } from '../persona/personas.js'
+import { selfName, selfNames, personaDataDir, personaNow } from '../persona/personas.js'
 import { normalizeSelection } from '../chat/chat-model.js'
 import {
   DEFAULT_PURPOSE_CONFIG, PURPOSE_NEEDS, NEED_LABELS, EMOTION_LABELS, EMOTION_PROFILES,
@@ -23,6 +24,7 @@ import {
   ensurePurposeDay, ensurePurposeSchedule, planNextFire, evaluatePurposeTick,
   markPurposeDelivered, markPurposeSkip, applyPurposeOutcome,
   collectMaterials, analyzePersona, deriveDrives, formGoalHypotheses, applyPersonaOverrides,
+  inQuietHours,
   minePurposeSeeds, selectPurpose, buildPurposePrompt, parsePurposeMemo, emotionProfile,
   summarizePurposeState, recordOwnerReplyHours, formatMaterialLine,
 } from './engine.js'
@@ -33,7 +35,6 @@ const MINUTE = 60_000
 const MOOD_PREFIX = '【系统提醒，不是主人说的话】（她主动找你）'
 const SILENCE = '[沉默]'
 
-const pad2 = (n) => String(n).padStart(2, '0')
 // 文本截断：模块内随手用（引擎侧有同名工具，这里不跨文件依赖）。
 const clip = (text, max = 120) => {
   const s = String(text ?? '').replace(/\s+/g, ' ').trim()
@@ -54,10 +55,8 @@ export function purposeConfig(cfg = {}) {
   const ext = (cfg.ext && cfg.ext.purpose) || {}
   const awakeFrom = clampInt(ext.awakeFrom ?? su.awakeFrom, 8, 0, 24)
   const awakeTo = clampInt(ext.awakeTo ?? su.awakeTo, 23, 0, 24)
-  // awake 窗口为全天（awakeTo>=24 或区间非法）时，安静时段关闭（start===end 视为不启用）
-  const quiet = awakeTo >= 24 || awakeFrom >= awakeTo
-    ? { quietStart: '00:00', quietEnd: '00:00' }
-    : { quietStart: `${pad2(awakeTo % 24)}:00`, quietEnd: `${pad2(awakeFrom)}:00` }
+  // 醒着窗口的补集 = 安静时段；from > to 是跨天窗口（如 9 点到次日 3 点），安静时段为 3 点–9 点。
+  const quiet = quietWindowOf(awakeFrom, awakeTo)
   // normalizePurposeConfig 只认引擎字段，打分模型在归一化后补挂（面板下拉同款结构校验）
   return {
     ...normalizePurposeConfig({
@@ -106,8 +105,11 @@ export function createPurpose({ getConfig, setConfig, hub, log, isMuted, mood, m
   // 下面的 friend 是主动搭话白名单里的对象，不传就是主人。朋友各有各的状态，素材只看和这个人的私聊、关于这个人的记忆。
   const chatIdOf = (cfg, friend) => (friend ? `private:${friend}` : resolveOwnerChat())
   const lastPrivateAt = (cfg, friend) => friend ? (hub?.lastPrivateAt?.(friend) || 0) : Math.max(hub?.lastOwnerChatAt || 0, hub?.lastBotToOwner?.at || 0)
-  const stateFile = (friend) => dataDir('purpose', ...(friend ? ['friends', `${friend}.json`] : ['purpose-state.json']))
-  const nudgeFile = () => dataDir('purpose', 'nudge.json')
+  // 内驱力、目标、惦记的事是她自己的，跟着人格走（根目录人格还是老位置，见 personas.js）。
+  // 人格卡片段做的目标依据也就只留在原人格的状态里，不会被换上的人格读到。出站额度在 outbound-policy，仍共用。
+  const purposeDir = (...parts) => personaDataDir(getConfig(), personaNow(getConfig()), 'purpose', ...parts)
+  const stateFile = (friend) => purposeDir(...(friend ? ['friends', `${friend}.json`] : ['purpose-state.json']))
+  const nudgeFile = () => purposeDir('nudge.json')
 
   // ---------- 状态 ----------
   function loadState(config, now = Date.now(), friend = '') {
@@ -202,9 +204,9 @@ export function createPurpose({ getConfig, setConfig, hub, log, isMuted, mood, m
     const list = materials.slice(0, 28)
     const lines = list.map((m, i) => `${i + 1}. ${formatMaterialLine(m, now)}`)
     const prompt = [
-      '下面是 AI 伙伴「大肥鱼」最近看到/经历的事情列表（已脱敏）。给每一条判断：',
+      `下面是 AI 伙伴「${selfName(getConfig())}」最近看到/经历的事情列表（已脱敏）。给每一条判断：`,
       `① 它最指向哪种内心需要（只能是：${PURPOSE_NEEDS.join('/')}）；`,
-      `② 它让大肥鱼产生什么情绪（只能是：${Object.keys(EMOTION_LABELS).join('/')}）。`,
+      `② 它让${selfName(getConfig())}产生什么情绪（只能是：${Object.keys(EMOTION_LABELS).join('/')}）。`,
       '只输出一个 JSON 数组，不要解释：[{"i":1,"need":"play","emotion":"curious"}, …]，i 对应条目序号。',
       '',
       ...lines,
@@ -380,7 +382,12 @@ export function createPurpose({ getConfig, setConfig, hub, log, isMuted, mood, m
   async function runOnce({ reason = '定时', config, state, force = false, friend = '' } = {}) {
     const cooldown = hub.systemSessionCooldown?.('purpose', { key: friend })
     if (cooldown) return { outcome: 'skipped-cooldown', retryAt: cooldown.retryAt }
+    // 迁进私聊会话之后（#446），会话故障的退避是记在 `private:<QQ>` 上的，不是 `system:purpose`。
+    // 这里必须先查它：否则第一次挂载失败之后每个 tick 都会重新 prepare、重算驱动力/目标并落盘，
+    // 把状态文件改得面目全非（实测会把 drives 一路推高），而实际一条消息都发不出去。
     const cfg = getConfig()
+    const roomCooldown = friend ? null : hub.chatCooldown?.(chatIdOf(cfg))
+    if (roomCooldown) return { outcome: 'skipped-cooldown', retryAt: roomCooldown.retryAt }
     const now = Date.now()
     ensurePurposeDay(state, now)
     const ctx = await prepare(cfg, config, state, now, friend)
@@ -424,9 +431,43 @@ export function createPurpose({ getConfig, setConfig, hub, log, isMuted, mood, m
 
     let raw = ''
     let genError = null
+    // 载体预判（#446）：真正的对外发言要归入目标私聊的统一时间线——但**只在它最终会以 QQ 消息出现时**。
+    // carrier=pet 且桌宠在线时这一轮走气泡，既不该往 QQ 发消息，也不能让私聊会话替它自动投递，
+    // 所以那种情况保持原来的 system 会话路径。
+    const su = carrierSettings()
+    const petOnline = su.carrier === 'pet' && Boolean(petOf()?.online?.()?.online)
+    // 这一轮会不会以 QQ 私聊消息落地：
+    //   · 朋友（friend）永远走 QQ → 会；
+    //   · carrier=qq（默认）→ 会（petFallbackToQQ 只跟 pet 载体有关，这里不该掺进来）；
+    //   · carrier=pet 且桌宠在线 → 不会（走气泡）；
+    //   · carrier=pet 且桌宠离线 → 只有开了回落才会，否则静默。
+    const willUseQQ = friend
+      ? true
+      : (su.carrier !== 'pet' || (!petOnline && su.petFallbackToQQ))
+    const inChat = willUseQQ && typeof hub.runTurnInChat === 'function'
     try {
       log.info?.(`目的（${reason}）：${picked.purpose.text}`)
-      raw = await hub.runSystemTurn('purpose', 'QQ · 主动搭话（目的回合）', prompt, { timeoutMs: 180000, noTools: true, key: friend })
+      if (inChat) {
+        // 在这一轮真正的私聊会话里生成：她看到的上下文就是这段聊天本身，
+        // DSH 注入的 elapsed 也就天然是这段私聊的真实静默时长（#446 的核心）。
+        // suppressDelivery：原文末尾带「内部备忘」（【目的】/【状态】/【待续】），
+        // 直接让 hub 投递会把备忘泄到 QQ 里；所以拿回原文，照旧过 cleanReply 再由下面选载体投递。
+        const r = await hub.runTurnInChat(chatIdOf(cfg, friend), prompt, {
+          // userText 只喂检索/存档，别把这一大段提示词当成用户消息记进她的对话档案。
+          noTools: true, timeoutMs: 180000, kind: 'purpose', suppressDelivery: true, userText: MOOD_PREFIX,
+        })
+        if (r && r.ok === false && r.reason === 'busy') {
+          // 主人正在说话：不插队，也不占次数（与追问让位同一口径）
+          Object.assign(state, beforeAttempt)
+          saveState(state, friend)
+          log.info?.(`目的（${reason}）：主人在说话，这一轮让位`)
+          return { outcome: 'skipped-busy' }
+        }
+        if (r && r.ok === false) throw Object.assign(new Error(r.error || '在私聊里生成失败'), { code: 'IN_CHAT_FAILED' })
+        raw = String(r?.raw || '')
+      } else {
+        raw = await hub.runSystemTurn('purpose', 'QQ · 主动搭话（目的回合）', prompt, { timeoutMs: 180000, noTools: true, key: friend })
+      }
     } catch (error) {
       if (isSessionBackoff(error)) {
         // 查询与真正调用之间也可能进入冷却；这一轮没启动，不占次数或失败账。
@@ -480,7 +521,7 @@ export function createPurpose({ getConfig, setConfig, hub, log, isMuted, mood, m
     if (following && outcome === 'sent') memoryOf()?.markFollowUpAsked?.(ctx.followUp.id)
     // 模型的「待续」不能把事实跟进再复制进 purpose.pending。
     applyPurposeOutcome(state, { now: Date.now(), config, outcome, text, memo: following ? null : memo, planned: picked.purpose })
-    if (!friend) nudgeMood(picked.purpose, outcome, memo)
+    if (!friend) nudgeMood(picked.purpose, outcome, memo, chatIdOf(cfg, friend))
     saveState(state, friend)
     log.info?.(`目的：回合结束 ${outcome}（今天第 ${state.countToday} 次）`)
     return { outcome, text, memo }
@@ -528,7 +569,8 @@ export function createPurpose({ getConfig, setConfig, hub, log, isMuted, mood, m
     const persona = (() => {
       try {
         const t = typeof personaText === 'function' ? String(personaText() || '').trim() : ''
-        return t.slice(0, 1500)
+        // 5000 字：人格卡后半段常是「怎么说话/怎么接话」的具体规则，截 1500 字会把最关键的判断依据切掉
+        return t.slice(0, 5000)
       } catch { return '' }
     })()
     const moodLine = (() => {
@@ -537,12 +579,12 @@ export function createPurpose({ getConfig, setConfig, hub, log, isMuted, mood, m
         if (!m) return ''
         // contextLine 自带「你现在 X，因为 Y。这会影响你说话：Z」，比裸数字有用得多
         if (typeof m.contextLine === 'function') {
-          const line = String(m.contextLine() || '').trim()
+          const line = String(m.contextLine({ chatId: target }) || '').trim()
           if (line) return line
         }
         if (typeof m.state === 'function') {
           const st = m.state()
-          if (st) return `（你现在心情 ${Number(st.value ?? 60)}/100（${st.label || ''}）${st.reason ? `，因为${st.reason}` : ''}。）`
+          if (st) return `（你现在心情 ${Number(st.value ?? 60)}/100（${st.label || ''}）。）`
         }
       } catch {}
       return ''
@@ -618,14 +660,16 @@ export function createPurpose({ getConfig, setConfig, hub, log, isMuted, mood, m
       try {
         const days = hub.chatLogDays?.() || []
         const rows = []
-        for (const day of days.slice(-1)) {
+        // 读两天：只看当天的话，凌晨刚过零点时最近 20 条会凑不满
+        for (const day of days.slice(-2)) {
           for (const e of hub.chatLogOf?.(day) || []) {
             if (!e || e.forgottenAt) continue
             if (String(e.chatId) !== ownerKey) continue
             rows.push(e)
           }
         }
-        const tail = rows.slice(-8)
+        // 20 条：决断要看得出「你们现在聊到哪、什么气氛」，8 条常常只够看到半截对话
+        const tail = rows.slice(-20)
         if (!tail.length) return ''
         // 顺便判断：主人私聊流水里，她最近有没有真的发过几乎一样的内容（这才是「说过了」的硬证据）
         const norm = (s) => String(s || '').replace(/[^\u4e00-\u9fa5a-zA-Z0-9]/g, '').slice(0, 120)
@@ -704,7 +748,7 @@ export function createPurpose({ getConfig, setConfig, hub, log, isMuted, mood, m
 
   // 9 维驱动 → mood 单标量。mood 关闭时 nudge 自静默。
   // memo 里的【感受】喜/−喜（feelings.moodDelta ±10）会叠加在情绪表之上。
-  function nudgeMood(purpose, outcome, memo = null) {
+  function nudgeMood(purpose, outcome, memo = null, chatId = '') {
     if (outcome !== 'sent') return
     const m = moodOf()
     if (!m?.nudge) return
@@ -713,38 +757,120 @@ export function createPurpose({ getConfig, setConfig, hub, log, isMuted, mood, m
     const feel = Math.max(-10, Math.min(10, Number(memo?.feelings?.moodDelta) || 0))
     const total = delta + feel
     if (!total) return
-    try { m.nudge(total, `主动搭话：${String(purpose?.text || '').slice(0, 20)}`) } catch {}
+    try { m.nudge(total, `主动搭话：${String(purpose?.text || '').slice(0, 20)}`, chatId) } catch {}
+  }
+
+  /** 主人（或朋友）最近真的发过来的几句话，越靠后越新。追问的提示词要拿它当真实上下文。 */
+  function recentInbound(cfg, friend = '', limit = 2) {
+    const ownerKey = chatIdOf(cfg, friend)
+    try {
+      const rows = []
+      for (const day of (hub.chatLogDays?.() || []).slice(-2)) {
+        for (const e of hub.chatLogOf?.(day) || []) {
+          if (!e || e.forgottenAt) continue
+          if (String(e.chatId) !== ownerKey) continue
+          if (e.who === 'bot') continue // 只看对方说的话，她自己说的上面已经有了
+          const text = String(e.text || '').replace(/\s+/g, ' ').trim()
+          if (text) rows.push({ text, at: Number(e.t) || 0 })
+        }
+      }
+      return rows.slice(-limit)
+    } catch { return [] }
   }
 
   // ---------- 追问（沿用旧 speakup 的「轻轻追一句」，不占今日次数） ----------
-  async function maybeNudge(cfg, state, now = Date.now()) {
+  //
+  // #298 的六条缺陷在这里逐条收口：
+  //   · 只判 su.nudge 不够，还要判 speakUp.enabled（对齐旧引擎 companion.js 的 `if (!cfg.enabled || !c.enabled) return`）；
+  //   · nudgedFor 必须「真决定发」之后才写——先抛硬币再写标记会把这条消息的追问机会永久吃掉；
+  //   · 吗/呢/嘛 要锚句尾，否则陈述句里的「嘛」会被当成提问；
+  //   · 追问也是主动开口，安静时段与每日上限跟正常目的回合同一套口径；
+  //   · 生成改在目标私聊的真实会话里（见 runNudgeTurn），DSH 注入的 elapsed 天然就是这段静默的真实时长。
+  async function maybeNudge(cfg, config, state, now = Date.now()) {
     const su = cfg.speakUp || {}
-    if (!su.nudge) return false
+    // 总开关关掉就一步都不做：主人关掉「主动搭话」后追问还会发，是用户实际踩到的那个 bug。
+    if (!cfg.enabled || !su.enabled || !su.nudge) return false
     const lb = hub.lastBotToOwner || { at: 0, text: '' }
     const quietMs = now - (lb.at || 0)
-    const flag = readJson(nudgeFile(), {})
     if (!lb.at || lb.at <= (hub.lastOwnerChatAt || 0)) return false
+    const flag = readJson(nudgeFile(), {})
     if (flag.nudgedFor === lb.at) return false
-    if (!/[？?]|吗|呢|嘛|没$/.test(String(lb.text || '').trim())) return false
+    // 问号在哪儿都算提问；吗/呢/嘛/没 必须落在句尾（「这算什么嘛 反正我也不着急 你先忙」不是提问）。
+    if (!/[？?]|(?:吗|呢|嘛|没)$/.test(String(lb.text || '').trim())) return false
     if (!(quietMs > 15 * MINUTE && quietMs < 40 * MINUTE)) return false
+    // 安静时段与每日上限：追问以前走的是 normalize 之前的老路径，两条闸门都没吃到。
+    if (inQuietHours(now, config)) return false
+    if (config.dailyMax > 0 && state.countToday >= config.dailyMax) return false
     if (hub.systemSessionCooldown?.('purpose-nudge')) return false
-    writeJson(nudgeFile(), { nudgedFor: lb.at }) // 引擎状态文件会被 normalize 洗字段，追问标记单独存
+    // 抽空不发：这里必须直接返回，绝不能先写 nudgedFor——写了就等于永久消耗这条消息的追问机会。
     if (Math.random() >= 0.5) return true
-    const idle = Math.round(quietMs / MINUTE)
     const owner = cfg.ownerName || '主人'
-    const prompt = `【系统提醒，不是${owner}说的话】你刚才跟${owner}说「${String(lb.text || '').slice(-60)}」，${owner}已经 ${idle} 分钟没回了。可以轻轻追一句（比如「人呢」「睡着啦？」，或者换个话题），别催、别抱怨；觉得${owner}在忙就只回 ${SILENCE}。这一轮不能用工具，直接输出那句话。`
+    const idle = Math.round(quietMs / MINUTE)
+    const recent = recentInbound(cfg, '', 2)
+    const recentBlock = recent.length
+      ? `\n【${owner}最近真的对你说过的话（真实聊天记录，越靠后越新）】\n${
+        recent.map((e) => `${owner}：${e.text.slice(0, 80)}`).join('\n')}\n`
+      : ''
+    const prompt = [
+      `【系统提醒，不是${owner}说的话】你刚才跟${owner}说「${String(lb.text || '').slice(-60)}」，到现在 ${idle} 分钟没有回你。`,
+      recentBlock,
+      `这一轮不能用工具，直接输出你要发的那句话。可以轻轻追一句（比如「人呢」「睡着啦？」，或者换个话题），别催、别抱怨；觉得${owner}在忙就只回 ${SILENCE}。`,
+      // time-context 串台的正本清源：静默时长只有下面这一个数字是真的，
+      // 不许拿别的「距上次对话过了多久」来推算，否则又会说出「22 小时没回了」这种与事实不符的话。
+      `注意：${idle} 分钟就是${owner}没回你的真实时长。不要用任何其它来源的「过了多久」来替代或叠加它，也不要把它说成更大的数。`,
+    ].filter(Boolean).join('\n')
+    // 决定要发了才落标记：这一轮没发生（让位/提交失败）时恢复成原值，这条消息还能再追一次。
+    writeJson(nudgeFile(), { ...flag, nudgedFor: lb.at }) // 引擎状态文件会被 normalize 洗字段，追问标记单独存
     try {
-      const raw = await hub.runSystemTurn('purpose-nudge', 'QQ · 主动搭话（追问）', prompt, { timeoutMs: 120000, noTools: true })
-      const text = cleanReply(raw, { warn: (message) => log.warn?.(`目的：${message}`) }, getConfig())
-      if (text) await hub.deliver(chatIdOf(cfg), text, { userText: MOOD_PREFIX }) // 不带 own:true，同上：hub 桥接进下次对话
-    } catch (error) {
-      if (isSessionBackoff(error)) {
-        writeJson(nudgeFile(), flag)
+      const outcome = await runNudgeTurn(cfg, prompt)
+      if (outcome === 'busy') {
+        writeJson(nudgeFile(), flag) // 让位给主人的正常对话：不消耗这次追问机会
         return false
       }
+      // 追问本身也是在这个私聊里说的一句话：hub 在 deliverTurn 里会把 lastBotToOwner
+      // 换成这条新话（src/chat/hub.js 里「主人私聊」那个分支，isOwnerPrivateChat 判定），
+      // 而它发生在 onTurnEnd 之前，所以这里读到的已经是「她刚追出去的那句」。
+      // 把 nudgedFor 推进到它上面：一句追问不会再成为下一条追问的由头（否则「人呢？」几十分钟后
+      // 又满足条件，一路连环催）。真正的新消息（主人的回复、她之后别的话）时间戳不同，照常能追。
+      if (outcome === 'sent') {
+        const after = Number(hub.lastBotToOwner?.at) || 0
+        if (after && after !== lb.at) writeJson(nudgeFile(), { ...flag, nudgedFor: after })
+      }
+      return true // sent / silent / unknown 都算追过（unknown 保守不回滚，避免双发）
+    } catch (error) {
+      writeJson(nudgeFile(), flag) // 抛错 = 这一轮没发生，不算追过
+      if (isSessionBackoff(error)) return false
       log.warn?.('目的：追问出错：', error?.message)
+      return false
     }
-    return true
+  }
+
+  /**
+   * 在目标私聊的真实会话里跑一轮追问（#446 的核心：对外发言要在目标聊天的统一时间线里生成）。
+   *
+   * 返回语义（决定调用方要不要回滚 nudgedFor）：
+   *   · 'sent'     她真发出了话
+   *   · 'silent'   她这轮决定沉默 —— 也算追过，不再重复打扰
+   *   · 'busy'     让位/没提交起来：这一轮根本没发生，调用方回滚标记，下一分钟还能再追
+   *   · 'unknown'  超时等结果不确定：**不回滚**，宁可少追一次也不能冒双发的险
+   */
+  async function runNudgeTurn(cfg, prompt) {
+    const chatId = chatIdOf(cfg)
+    if (typeof hub.runTurnInChat !== 'function') {
+      // 旧宿主没有这个入口：退回系统会话，但提示词里已经给了真实静默分钟数（见 maybeNudge 的说明）。
+      const raw = await hub.runSystemTurn('purpose-nudge', 'QQ · 主动搭话（追问）', prompt, { timeoutMs: 120000, noTools: true })
+      const text = cleanReply(raw, { warn: (message) => log.warn?.(`目的：${message}`) }, getConfig())
+      if (text) await hub.deliver(chatId, text, { userText: MOOD_PREFIX }) // 不带 own:true，hub 桥接进下次对话
+      return text ? 'sent' : 'silent'
+    }
+    // 在真私聊里生成：回复由 hub 的 turn/end 正常落地（logChat + saidElsewhere + 心情链路全复用），
+    // 这里不要再 deliver 一次，否则会双发。
+    const r = await hub.runTurnInChat(chatId, prompt, { noTools: true, timeoutMs: 120000, userText: MOOD_PREFIX, kind: 'purpose-nudge' })
+    if (r && r.ok === true) return r.sent ? 'sent' : 'silent'
+    // 只有「这一轮根本没发生」才允许回滚：busy 让位 / 提交失败。
+    // 超时属于结果未知，回滚会导致下一分钟重追、可能双发，所以按已追过处理。
+    if (r && (r.reason === 'busy' || r.reason === 'submit-failed' || r.reason === 'unsupported-chat')) return 'busy'
+    return 'unknown'
   }
 
   // ---------- 对外 ----------
@@ -762,7 +888,7 @@ export function createPurpose({ getConfig, setConfig, hub, log, isMuted, mood, m
   async function tickOne(cfg, config, friend = '') {
     const now = Date.now()
     const state = loadState(config, now, friend)
-    if (!friend && await maybeNudge(cfg, state, now)) return true
+    if (!friend && await maybeNudge(cfg, config, state, now)) return true
     if (hub.systemSessionCooldown?.('purpose', { key: friend })) return false
     const env = {
       enabled: true, modeOk: true, dshReady: true, paused: false, ownerAllowed: true,

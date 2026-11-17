@@ -32,8 +32,9 @@
 //   · 策略源只回答「能不能发」，**自己不发送任何消息**（发送仍由 hub/A 线完成）。
 //
 // 独立性：
-//   本文件不 import `src/` 内任何模块——判定逻辑自带实现（清醒窗口 / 每日额度 / 间隔冷却 /
-//   读状态 / 写盘），便于单测、便于移植，也避免与 companion.js / engine.js 形成环。
+//   本文件除零依赖的 src/core/time-window.js（跨天窗口判定）外不 import `src/` 内任何模块——
+//   判定逻辑自带实现（每日额度 / 间隔冷却 / 读状态 / 写盘），便于单测、便于移植，
+//   也避免与 companion.js / engine.js 形成环。
 //
 // 落盘（只写 dataDir）：
 //   <dataDir>/purpose-policy.json   目的引擎逻辑发言 + 生成尝试账本
@@ -44,6 +45,7 @@
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { inHourWindow, nextWindowStart } from '../core/time-window.js'
 
 const MINUTE = 60_000
 const VERSION = 1
@@ -78,21 +80,6 @@ function clampInt(value, fallback, min, max) {
 function localDateKey(at) {
   const d = new Date(at)
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-}
-
-/** 清醒窗口 [from, to)；to >= 24 或区间非法视为全天清醒（同 purpose/module.js 的派生规则）。 */
-function inAwakeWindow(at, from, to) {
-  if (to >= 24 || from >= to) return true
-  const h = new Date(at).getHours()
-  return h >= from && h < to
-}
-
-/** 下一个「窗口开始」时刻（严格晚于 at），用于把落在安静时段的排程推到明早。 */
-function awakeStartAfter(at, from) {
-  const d = new Date(at)
-  d.setHours(clampInt(from, 0, 0, 23), 0, 0, 0)
-  while (d.getTime() <= at) d.setDate(d.getDate() + 1)
-  return d.getTime()
 }
 
 /** dataDir 允许传字符串或函数（模块 api.dataDir 是函数），空值 → 内存模式。 */
@@ -554,7 +541,7 @@ export function createPurposePolicy({ getConfig, engine, state, now, dataDir, lo
       if (pending.size > 0) return { ok: false, reason: 'busy', detail: 'in-flight' }
       return { ok: true }
     }
-    if (!inAwakeWindow(t, conf.awakeFrom, conf.awakeTo)) return { ok: false, reason: 'quiet', detail: 'asleep' }
+    if (!inHourWindow(t, conf.awakeFrom, conf.awakeTo)) return { ok: false, reason: 'quiet', detail: 'asleep' }
     if (s.attemptCount >= conf.attemptMax) return { ok: false, reason: 'budget', detail: 'attempt-budget' }
     if (s.speechCount + pending.size >= conf.speechMax) return { ok: false, reason: 'budget', detail: 'speech-budget' }
     if (pending.size > 0) return { ok: false, reason: 'busy', detail: 'in-flight' }
@@ -580,7 +567,7 @@ export function createPurposePolicy({ getConfig, engine, state, now, dataDir, lo
     }
     const conf = gateConf()
     let next = at + conf.gapMinMs + Math.random() * (conf.gapMaxMs - conf.gapMinMs)
-    if (!inAwakeWindow(next, conf.awakeFrom, conf.awakeTo)) next = awakeStartAfter(next, conf.awakeFrom)
+    if (!inHourWindow(next, conf.awakeFrom, conf.awakeTo)) next = nextWindowStart(next, conf.awakeFrom)
     return Math.round(next)
   }
 
@@ -960,7 +947,7 @@ export function createSpeakupPolicy({ getConfig, speakup, now, dataDir, log, las
     if (isOwnerMuted()) {
       return { ok: false, reason: 'quiet', detail: 'muted' }
     }
-    if (!inAwakeWindow(t, conf.awakeFrom, conf.awakeTo)) return { ok: false, reason: 'quiet', detail: 'asleep' }
+    if (!inHourWindow(t, conf.awakeFrom, conf.awakeTo)) return { ok: false, reason: 'quiet', detail: 'asleep' }
     const s = load(t)
     ensureSpeakupDay(s, t)
     if (s.count + pending.size >= conf.maxPerDay) return { ok: false, reason: 'budget', detail: 'daily-max' }

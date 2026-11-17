@@ -56,9 +56,10 @@ function setup(packs, { cfg = {}, revoked = [], status = [] } = {}) {
     return { ok: true, arrayBuffer: async () => p.buf }
   }
   const mods = { status: () => status, sync: async () => {}, stop: () => true }
-  const log = { info() {}, warn() {} }
+  const logs = []
+  const log = { info: (...args) => logs.push(args.join(' ')), warn() {} }
   const c = createCommunity({ mods, getConfig: () => config, setConfig: (n) => { config = n }, log, version: '1.2.0', registryUrl: 'https://x/index.json', fetcher })
-  return { c, cfg: () => config }
+  return { c, cfg: () => config, logs }
 }
 
 test('registry 地址：配置 ext.market.registryUrl 优先于内置，并暴露 registryUrl()', async () => {
@@ -214,17 +215,30 @@ test('版本、撤回、依赖不满足不让装；更新替换旧文件', async
   assert.equal(existsSync(join(userDir(), 'demo-g', 'old.txt')), false)
 })
 
-test('替换内置要确认；卸载默认保留设置，purge 才清', async () => {
+test('替换内置要确认；卸载保留源码改动，purge 才清数据和设置', async () => {
   const p = pack('demo-h', '1.0.0')
   p.entry.replacesBuiltin = true
   const s = setup([p], { cfg: { ext: { 'demo-h': { a: 1 } } } })
   assert.equal((await s.c.install('demo-h')).needConfirm, true)
   assert.equal((await s.c.install('demo-h', { confirmReplace: true })).ok, true)
-  await s.c.remove('demo-h')
+  const data = join(root, 'modules-data', 'demo-h')
+  mkdirSync(data, { recursive: true })
+  writeFileSync(join(data, 'state.json'), '{}')
+  writeFileSync(join(userDir(), 'demo-h', 'local.patch'), '我的改动')
+  const first = await s.c.remove('demo-h')
+  assert.equal(first.ok, true, first.message)
   assert.equal(existsSync(join(userDir(), 'demo-h')), false)
+  assert.match(first.archive, /^modules\/\.trash\/demo-h-/)
+  assert.equal(readFileSync(join(root, first.archive, 'local.patch'), 'utf8'), '我的改动')
+  assert.equal(existsSync(join(data, 'state.json')), true)
   assert.equal(s.cfg().ext['demo-h'].a, 1)
+  assert.ok(s.logs.some((line) => line.includes('面板卸载社区模块「demo-h」') && line.includes(first.archive)))
   await s.c.install('demo-h', { confirmReplace: true })
-  await s.c.remove('demo-h', { purge: true })
+  const second = await s.c.remove('demo-h', { purge: true })
+  assert.equal(second.ok, true, second.message)
+  assert.notEqual(second.archive, first.archive)
+  assert.equal(readFileSync(join(root, first.archive, 'local.patch'), 'utf8'), '我的改动')
+  assert.equal(existsSync(data), false)
   assert.equal(s.cfg().ext['demo-h'], undefined)
 })
 

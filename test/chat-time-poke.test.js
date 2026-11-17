@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createFakeDsh } from './helpers/fake-dsh.js'
@@ -36,9 +36,14 @@ const poke = (kind) => ({ post_type: 'notice', notice_type: 'notify', sub_type: 
   ...(kind === 'group' ? { group_id: Number(GROUP) } : {}),
 })
 const at = { type: 'at', data: { qq: BOT } }
-function setup(t, { brain = async () => '收到啦', hooks, patch = {}, call } = {}) {
+function setup(t, { brain = async () => '收到啦', hooks, patch = {}, call, seedLog } = {}) {
   const previous = process.env.AURABOT_DATA_DIR
-  process.env.AURABOT_DATA_DIR = mkdtempSync(join(root, 'data-'))
+  const dataDir = mkdtempSync(join(root, 'data-'))
+  process.env.AURABOT_DATA_DIR = dataDir
+  if (seedLog) {
+    mkdirSync(join(dataDir, 'chatlog'), { recursive: true })
+    writeFileSync(join(dataDir, 'chatlog', seedLog.day + '.jsonl'), seedLog.rows.map((r) => JSON.stringify(r)).join('\n') + '\n')
+  }
   const cfg = normalize({ enabled: true, dryRun: false, setupDone: true, ownerQQ: OWNER, botQQ: BOT,
     allow: { groups: [GROUP], private: [] }, merge: { enabled: false },
     group: { interjectChance: 0, quietHours: [0, 0] },
@@ -64,6 +69,23 @@ function setup(t, { brain = async () => '收到啦', hooks, patch = {}, call } =
   const sent = () => calls.filter(c => c.action === 'send_private_msg' || c.action === 'send_group_msg')
   return { hub, fake, cfg, calls, sent, identity }
 }
+
+test('重启后从聊天流水恢复主动搭话计时，不把 0 当很久没聊', async (t) => {
+  const now = new Date(2026, 10, 4, 14, 5).getTime()
+  t.mock.timers.enable({ apis: ['Date'], now })
+  const d = new Date(now - 10 * 60_000)
+  const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  const s = setup(t, {
+    patch: { speakUp: { enabled: true, allow: [], awakeFrom: 0, awakeTo: 24, idleMinutes: 40 } },
+    seedLog: { day, rows: [
+      { t: now - 10 * 60_000, chatId: `private:${OWNER}`, who: '主人', uid: OWNER, text: '刚聊过' },
+      { t: now - 9 * 60_000, chatId: `private:${OWNER}`, who: 'bot', text: '记得呢' },
+    ] },
+  })
+  assert.equal(s.hub.lastOwnerChatAt, now - 10 * 60_000)
+  assert.equal(s.hub.lastBotToOwner.at, now - 9 * 60_000)
+  assert.match(s.hub.lastBotToOwner.text, /记得/)
+})
 
 test('本机时间包含日期、星期、时分和时段，跨日重新生成', () => {
   assert.match(currentTimeLine(new Date(2026, 10, 4, 14, 5)), /2026-11-04 星期三 下午 14:05/)

@@ -1,3 +1,4 @@
+import { validMemberFilter } from './chat/member-filter.js'
 // Aurabot · 宿主半边（DSH 插件入口）
 //
 // 让 DSH 里的 AI 以独立 QQ 号「大肥鱼」住在 QQ 里：
@@ -9,15 +10,18 @@
 //
 // ⚠ 安全默认：总开关关、试运行开。不手动打开，一句都不会真的发到 QQ。
 
-import { readFileSync, readdirSync, existsSync, writeFileSync, unlinkSync, statSync, mkdirSync } from 'node:fs'
+// 融合：readdirSync 是本机用的；rmSync 是 beta 新增且已被合并态代码使用（2 处）
+import { readFileSync, readdirSync, existsSync, writeFileSync, unlinkSync, statSync, mkdirSync, rmSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawn } from 'node:child_process'
 import net from 'node:net'
-// 面板首屏提速（33c75e0）依赖：isDeepStrictEqual/randomUUID/commitConfig/configRevision；quietWindowOf 是 beta 才有的符号，dev 不带。
+// 面板首屏提速（33c75e0）依赖：isDeepStrictEqual/randomUUID/commitConfig/configRevision。
+// 注意：quietWindowOf 虽是 beta 引入的符号，但合并后本机代码已用到（3 处），必须一并导入。
 import { isDeepStrictEqual } from 'node:util'
 import { randomUUID } from 'node:crypto'
 import { loadConfig, saveConfig, commitConfig, configRevision, publicConfig, mergeFromPanel, ownerAuthorizationRevision } from './core/config.js'
+import { quietWindowOf } from './core/time-window.js'
 import { createLogger } from './core/logger.js'
 import { encodeResponse } from './core/http-compress.js'
 import { registerSecret, redact } from './core/redact.js'
@@ -35,13 +39,15 @@ import { createMediaAccess } from './core/media.js'
 import { buildFaceIndex } from './chat/faces.js'
 import { FACE_TABLE } from './chat/face-table.js'
 import { dataDir, ensureDir } from './core/store.js'
-import { initUsage, usageReport } from './core/usage.js'
+import { initUsage, usageReport, closeUsage } from './core/usage.js'
 import { createUpdateChecker, changelogSection, hostEnv, updatePlan, repoOf } from './core/update.js'
 import { parseCommand, runCommand, createMutes, commandList } from './chat/commands.js'
-import { ownerPrivateChatIds } from './chat/access.js'
+// 融合：ownerPrivateChatIds 是本机用；groupResponseMode 是 beta 新增且已被使用（2 处）
+import { ownerPrivateChatIds, isOwner, groupResponseMode } from './chat/access.js'
 import { changePermissions, changePrivateWhitelist, privatePermissionCatalog } from './chat/permission-policy.js'
 import { canUseDelegatedCommand, delegatedCommandKey, runPersonalModelCommand } from './chat/delegated-commands.js'
-import { listPersonas, readPersona, savePersona, deletePersona, currentPersonaText, rulesText, seedPersonas } from './persona/personas.js'
+import { listPersonas, readPersona, savePersona, deletePersona, currentPersonaText, resolvePersonaId, rulesText, seedPersonas, safeId, dataOwner, claimPending, hasRootData, personaDataDir, personaNow } from './persona/personas.js'
+import { readLook, lookImage, lookImages, lookReferences, configureLookImage, lookMime, saveLookImage, deleteLookImage, saveAppearance, appearanceBlock, describeLook } from './persona/persona-look.js'
 import { createModules, API_VERSION } from './core/modules.js'
 import { createCommunity, REGISTRY_URL, GITEE_MIRROR } from './core/community.js'
 import { createApprovalRelay } from './security/approval.js'
@@ -156,10 +162,13 @@ export function isChatSession(hub, session) {
 export function apply(ctx) {
   const logger = createLogger({ dsh: ctx })
   const log = logger.child('core')
-  // ---------- 面板首屏提速（方案 §二）：bootId=本次装配标识，重启即换新 ----------
+  // ---------- 面板首屏提速（方案 §二） ----------
+  // bootId：本次宿主装配的唯一标识，面板用它判定「同一进程」的读写与保存回执；重启即换新。
   const bootId = randomUUID()
-  let panelCoreReady = false // 核心配置/路由就绪前，/panel/bootstrap|pulse|config 回 503 BOOTSTRAPPING
-  let modsReady = false // 模块目录未就绪时 bootstrap 带 modulesReady=false（面板先画已知入口占位）
+  // 核心配置与面板路由就绪前，三条轻量 GET（/panel/bootstrap|pulse|config）回 503 BOOTSTRAPPING。
+  let panelCoreReady = false
+  // 模块目录尚未就绪时 bootstrap 里 modulesReady=false（面板先画已知入口，占位等确认）。
+  let modsReady = false
   // 恢复备份必须在读配置之前：读完配置后内存里的旧状态会写回去
   try {
     const restored = applyPendingRestore()
@@ -191,8 +200,12 @@ export function apply(ctx) {
     try { cfg = commitConfig(cfg, cfg) }
     catch { log.warn('初始化主人授权记录失败，本次启动使用会话授权') }
   }
-  // （33c75e0 的 beta 侧「全新安装人格认领根目录」块不带入：dev 线已把主人认领/数据归属
-  //  迁到身份库（上方 identity.claimOwner），本文件没有 dataOwner/hasRootData/safeId 这些符号。）
+  // 全新安装（根目录还没有记忆、会话和流水）：当前人格直接认领根目录。老用户升级要主人在面板里认领。
+  // 注意：dataOwner/hasRootData/safeId 已在本文件 import 且被其他路由使用，故此处一并保留 beta 逻辑。
+  if (!dataOwner(cfg) && !hasRootData()) {
+    try { cfg = commitConfig({ ...cfg, persona: { ...cfg.persona, dataOwner: safeId(cfg.persona.current) || 'dafeiyu' } }, cfg) }
+    catch { log.warn('记录数据归属人格失败，本次启动所有人格共用根目录') }
+  }
   let mods = null
   let bridge = null
   // 备份与云备份推送的任务状态声明在顶部：setConfig 里改云备份设置时要提前排定时器
@@ -231,14 +244,17 @@ export function apply(ctx) {
   secrets()
   seedPersonas()
   // token 用量与花费（面板「概览」）：价格表可以在 config.usage.pricing 里覆盖
-  initUsage(cfg.usage?.pricing, cfg.cost?.offPeakHolidays)
+  initUsage(cfg.usage?.pricing)
 
   // ---------- 人格与规则：通过提示词变量注入到 Aurabot 的两个 preset ----------
   const variable = (n, fn) => ctx.effect(() => ctx.systemPrompt.variable(n, (...args) => captureSystemPrompt(n, cleanText(fn(...args)))), `aurabot: 变量 ${n}`)
   const rulesOpts = (kind) => ({ ...(mods ? { off: mods.builtinOff(), extra: mods.rules(kind) } : {}), identity })
   // 扩展模块能整段改写人格和规则（同步：提示词变量不能等）
   const rewrite = (event, text, ...args) => { const r = mods ? mods.filterSync(event, text, ...args) : text; return typeof r === 'string' ? r : r === null ? '' : text }
-  variable('aurabot_persona', () => rewrite('persona', currentPersonaText(cfg.persona.current)))
+  variable('aurabot_persona', () => {
+    const id = resolvePersonaId(personaNow(cfg))
+    return rewrite('persona', currentPersonaText(id) + appearanceBlock(id))
+  })
   variable('aurabot_rules_private', () => {
     const base = rewrite('rules', rulesText('private', cfg, rulesOpts('private')), 'private')
     // 危险命令确认开着时补一句：被拦下要如实告诉主人，别绕着写
@@ -509,7 +525,8 @@ export function apply(ctx) {
   async function flushOutbox () {
     if (onebotState !== 'connected' || !loginOk) return
     try {
-      const r = await outbox.flush((action, params, opts) => onebot.call(action, params, { ...opts, retries: 0 }))
+      const r = await outbox.flush((action, params, opts) => onebot.call(action, params, { ...opts, retries: 0 }),
+        item => !item.incomingReply || item.action !== 'send_group_msg' || groupResponseMode(cfg, item.params?.group_id) === 'chat')
       if (r.sent || r.dropped || r.left) log.info(`补发队列：成功 ${r.sent}，丢弃 ${r.dropped}，剩余 ${r.left}`)
     } catch (error) {
       logger.child('onebot').warn('补发队列出错：', error.message)
@@ -647,8 +664,10 @@ export function apply(ctx) {
         if (cmd.ext.sensitive === true && !markSensitive(cmd.name)) return ''
         return String((await cmd.ext.run(cmd.arg, msg)) ?? '')
       }
-      if (cmd.name === 'permissions' && !markSensitive(cmd.name)) return ''
-      return runCommand(cmd, msg, { getConfig, setConfig, mutes, hub, identity, mood: use('mood'), memory: use('memory'), qzone: use('diary'), song: use('song'), listModels, reasoningFor: (provider, model) => modelReasoning(ctx, provider, model, { refresh: true }), defaultModel: () => defaultModel(ctx, { model: {} }), extraCommands: mods.commands() })
+      // 融合：beta 新增 groupsettings 命令与 onebot/ownerStillCurrent/logger 依赖；本机 identity 保留。
+      // listGroups：群设置指令的「查所在群」口（分层规矩：中枢层不直连平台客户端，宿主注入）。
+      if (['permissions', 'groupsettings'].includes(cmd.name) && !markSensitive(cmd.name)) return ''
+      return runCommand(cmd, msg, { getConfig, setConfig, mutes, hub, identity, onebot, ownerStillCurrent, listGroups: (params, opts) => onebot.call('get_group_list', params, opts), defaultPlatform, log: logger, mood: use('mood'), memory: use('memory'), qzone: use('diary'), song: use('song'), listModels, reasoningFor: (provider, model) => modelReasoning(ctx, provider, model, { refresh: true }), defaultModel: () => defaultModel(ctx, { model: {} }), extraCommands: mods.commands() })
     },
     isMuted: (chatId) => mutes.muted(chatId),
     moodEffects: () => use('mood')?.effects?.() ?? null,
@@ -977,8 +996,15 @@ export function apply(ctx) {
     defaultModel: () => defaultModel(ctx, { model: {} }),
     http: { body: readBody, raw: readRaw, query, send },
     media: createMediaAccess({ root: ROOT, use, config: getConfig }),
-    personas: { list: listPersonas, read: readPersona, current: () => currentPersonaText(cfg.persona.current) },
-    getConfig, setConfig,
+    personas: {
+      list: listPersonas, read: readPersona, current: () => currentPersonaText(cfg.persona.current),
+      look: (sessionId) => {
+        const id = resolvePersonaId((sessionId && hub.personaOf(sessionId)) || personaNow(cfg))
+        const references = id ? lookReferences(id, { lazy: true }) : []
+        return { get image() { return references[0]?.image || null }, references, appearance: id ? readLook(id).appearance : '' }
+      },
+    },
+    getConfig,
   }
   mods = createModules({ ctx, core, getConfig, setConfig, logger, version: VERSION, builtins: BUILTINS })
   bridge = createBridge({ ctx, getConfig, setConfig, hub, mods, identity, routeOwner, log: logger.child('bridge'), version: VERSION, apiVersion: API_VERSION, overview: () => overview() })
@@ -1171,7 +1197,17 @@ export function apply(ctx) {
     routeOwner,
   })
   core.dangerGuard = dangerGuard
-  approvalRelay = createApprovalRelay({ getConfig, deliver: (chatId, text) => hub.sendText(chatId, text), chatOfSession: (id) => hub.chatOfSession(id), identity, routeOwner, log })
+  // 融合：beta 的 timeoutMs（config.approvalTimeoutSec 已存在于 config.js）+ 本机的 identity/routeOwner（多平台主人路由）
+  approvalRelay = createApprovalRelay({
+    getConfig,
+    deliver: (chatId, text) => hub.sendText(chatId, text),
+    chatOfSession: (id) => hub.chatOfSession(id),
+    identity,
+    routeOwner,
+    // 等主人回复「确认」多久：可配置（config.approvalTimeoutSec，秒），默认 5 分钟
+    timeoutMs: (Number(getConfig().approvalTimeoutSec) || 300) * 1000,
+    log,
+  })
   ctx.effect(() => {
     let off = null
     try { off = ctx.on('approval/request', (request, next) => approvalRelay.onRequest(request, next)) } catch (error) { log.debug('挂审批应答失败：', error.message) }
@@ -1322,6 +1358,8 @@ export function apply(ctx) {
     hasOwner: () => Boolean(identity.owner()),
     workspaceOf: workspaceOfSession,
     compose: noticeText,
+    // 合并窗口可配置（config.notice.windowSec，秒）：审批/选项请求到齐后等多久再推 QQ
+    windowMs: (Number(getConfig().notice?.windowSec) || 8) * 1000,
     log,
   })
   async function notifyApproval(session, event) {
@@ -1435,6 +1473,7 @@ export function apply(ctx) {
     dangerGuard?.dispose()
     approvalRelay?.dispose()
     hub.dispose()
+    closeUsage()
     bridge.dispose()
     mods.dispose()
     onebot.stop()
@@ -1493,6 +1532,7 @@ export function apply(ctx) {
       workspaceDir: workspaceDirOf(cfg),
       workspaceReal: realWorkspace(workspaceDirOf(cfg)),
       personas: listPersonas(),
+      persona: { current: cfg.persona.current, dataOwner: dataOwner(cfg), claimPending: claimPending(cfg) },
       modules: mods.status(),
       bridge: { dshTools: cfg.bridge.dshTools, http: cfg.bridge.http, hasToken: Boolean(cfg.bridge.token), tools: bridge.deniedTools(), toolsService: Boolean(ctx.get?.('tools')) },
     }
@@ -1514,10 +1554,9 @@ export function apply(ctx) {
     const pu = use('purpose')
     const ext = (cfg.ext && cfg.ext.purpose) || {}
     const sp = cfg.speakUp || {}
-    const pad2 = (n) => String(n % 24).padStart(2, '0')
     const awakeFrom = Number.isFinite(sp.awakeFrom) ? sp.awakeFrom : 8
     const awakeTo = Number.isFinite(sp.awakeTo) ? sp.awakeTo : 23
-    const quiet = awakeTo >= 24 || awakeFrom >= awakeTo ? { quietStart: '00:00', quietEnd: '00:00' } : { quietStart: pad2(awakeTo) + ':00', quietEnd: pad2(awakeFrom) + ':00' }
+    const quiet = quietWindowOf(awakeFrom, awakeTo)
     return {
       available: typeof pu?.status === 'function',
       enabled: ext.enabled === true,
@@ -1560,9 +1599,9 @@ export function apply(ctx) {
 
   route('/save', async (req) => {
     const body = await readBody(req)
-    // 旁听名单格式校验（33c75e0 port）：面板草稿可能早于 QQ 的 /quiet /chatty，坏群号一律拒绝覆盖。
-    // 这条校验自包含（正则即可判），随首屏提速一起 port；beta 侧的群号表/不回应名单/
-    // _groupSettingsBase 冲突检查依赖 dev 已移除的 member-filter 体系，不带入（见下）。
+    // 面板草稿可能早于 QQ 的 /quiet /chatty；拒绝覆盖期间改过的群设置。
+    // 只检查新版面板显式附带的基线，旧版和模块的局部保存维持原约定。
+    // 注：合并态已包含 beta 的 member-filter 体系（src/chat/member-filter.js 存在且已 import），故下方校验整体保留。
     if (body?.memory && Object.hasOwn(body.memory, 'passiveGroups')) {
       const raw = body.memory.passiveGroups
       const ids = Array.isArray(raw) ? raw : typeof raw === 'string' ? raw.split(/[\s,，;；]+/).filter(Boolean) : null
@@ -1570,9 +1609,23 @@ export function apply(ctx) {
         ok: false, code: 'invalid_passive_groups', message: '旁听名单请填 5～12 位数字群号，用换行或逗号分隔，不要混入文字。本次没有保存。',
       })
     }
-    // （33c75e0 的 beta 侧其余 /save 校验不带入：dev 线已重构 /save，群号表/不回应名单
-    //  校验与 _groupSettingsBase 冲突检查整组不在 dev 线上（src/chat/member-filter.js 已不存在），
-    //  保留 beta 版会引用未导入的 validMemberFilter 直接 ReferenceError。回执本身不受影响。）
+    // beta 的 /save 校验整体保留：validMemberFilter 已在 L1 import，member-filter.js 存在，saveEnvelope 亦可用。
+    for (const ids of [body?.group?.moduleOnlyGroups, ...(body?._groupSettingsBase?.groups ? [body?.allow?.groups] : [])]) {
+      if (ids !== undefined && (!Array.isArray(ids) || ids.some(id => !/^[1-9]\d{4,11}$/.test(String(id))))) return saveEnvelope({
+        ok: false, code: 'invalid_group_ids', message: '群号请填 5～12 位数字，不要混入文字。本次没有保存。',
+      })
+    }
+    if (body && Object.hasOwn(body, 'memberFilter') && !validMemberFilter(body.memberFilter)) return saveEnvelope({
+      ok: false, code: 'invalid_member_filter', message: '不回应名单未保存：请填有效的 QQ 号和群号（5～12 位数字），每人只添加一次，并明确选择所有群或指定群；最多 100 人、每人 100 个群。',
+    })
+    const expected = body?._groupSettingsBase
+    if (body) delete body._groupSettingsBase
+    if (expected && (
+      (Object.hasOwn(expected, 'groups') && !isDeepStrictEqual(expected.groups, cfg.allow.groups)) ||
+      (Object.hasOwn(expected, 'memberFilter') && !isDeepStrictEqual(expected.memberFilter, cfg.memberFilter)) ||
+      (Object.hasOwn(expected, 'group') && !isDeepStrictEqual(expected.group, cfg.group)) ||
+      (Object.hasOwn(expected, 'passiveGroups') && !isDeepStrictEqual(expected.passiveGroups, cfg.memory.passiveGroups))
+    )) return saveEnvelope({ ok: false, code: 'group_settings_conflict', message: '群设置已在别处修改，本次没有保存。请记下要保留的改动，再点「读取最新设置」放弃草稿。' })
     const before = cfg
     // ---- 保存回执（方案 §2.2）：按提交前后（归一化后）的实际结果逐字段确认。 ----
     // body 此时已剥掉 _groupSettingsBase 与 snowluma.webuiPassword（密码走单独通道，不算普通配置字段）。
@@ -1694,7 +1747,8 @@ export function apply(ctx) {
     } else {
       notice[kind] = value
     }
-    setConfig({ notice })
+    // 带上整份配置：保存时只和默认值合并，只传 notice 会把其他设置全重置
+    setConfig({ ...cfg, notice })
     return { ok: true, notice }
   })
   route('/panel/purpose/config', async (req) => {
@@ -2445,30 +2499,105 @@ export function apply(ctx) {
     return { ok: true, message: n ? `归档了 ${n} 个会话，下一条消息起她会重新开始` : '本来就没有会话' }
   })
 
-  // 人格
-  route('/personas', async () => ({ ok: true, list: listPersonas(), current: cfg.persona.current }))
+  // 人格：新增写操作显式限制 POST，避免 GET 绕过 CSRF 方法检查。
+  const personaPost = (req, res) => {
+    if (req.method === 'POST') return true
+    send(res, 405, { ok: false, message: '请使用 POST' })
+    return false
+  }
+  const savedLookId = (id) => {
+    readLook(id) // 严格检查 id，不接受清洗后指向另一人格
+    if (!readPersona(id)) throw new Error('请先保存人格')
+    return id
+  }
+  route('/persona/look', async (req) => ({ ok: true, look: readLook(savedLookId(query(req).id)) }))
+  route('/persona/look/image', async (req, res) => {
+    const q = query(req)
+    const buf = lookImage(savedLookId(q.id), q.imageId)
+    if (!buf) { send(res, 404, { ok: false, message: '还没有人设图' }); return }
+    res.setHeader?.('x-content-type-options', 'nosniff')
+    send(res, 200, buf, lookMime(buf))
+  })
+  route('/persona/look/upload', async (req, res) => {
+    if (!personaPost(req, res)) return
+    const b = JSON.parse((await readRaw(req, 8 * 1024 * 1024)).toString('utf8'))
+    const id = savedLookId(b?.id)
+    const match = typeof b.data === 'string' && b.data.match(/^data:image\/(?:png|jpeg|jpg|gif|webp);base64,([A-Za-z0-9+/]+={0,2})$/)
+    if (!match || match[1].length % 4 !== 0) throw new Error('请选择有效的图片 data URL')
+    return { ok: true, look: saveLookImage(id, Buffer.from(match[1], 'base64'), { imageId: b.imageId, append: b.append === true }) }
+  })
+  route('/persona/look/delete', async (req, res) => {
+    if (!personaPost(req, res)) return
+    const b = await readBody(req)
+    return { ok: true, look: deleteLookImage(savedLookId(b.id), b.imageId) }
+  })
+  route('/persona/look/configure', async (req, res) => {
+    if (!personaPost(req, res)) return
+    const b = JSON.parse((await readRaw(req, 16 * 1024)).toString('utf8'))
+    return { ok: true, look: configureLookImage(savedLookId(b.id), b.imageId, { reference: b.reference, note: b.note }) }
+  })
+  route('/persona/look/describe', async (req, res) => {
+    if (!personaPost(req, res)) return
+    const b = await readBody(req)
+    const id = savedLookId(b.id)
+    const buffers = lookImages(id)
+    if (!buffers.length) throw new Error('请先上传人设图')
+    const imageHash = readLook(id).imageHash
+    const text = await describeLook({ dsh: ctx, cfg: getConfig(), buffers })
+    // 在途解析不覆盖换图后的状态；描述仍由面板确认保存。
+    if (!readPersona(id) || readLook(id).imageHash !== imageHash) throw new Error('人设图已变化，请重新解析')
+    return { ok: true, text, imageHash }
+  })
+  route('/personas', async () => ({ ok: true, list: listPersonas(), current: cfg.persona.current, dataOwner: dataOwner(cfg), claimPending: claimPending(cfg) }))
   route('/persona/get', async (req) => {
     const p = readPersona(query(req).id)
-    return p ? { ok: true, persona: p } : { ok: false, message: '没有这个人格' }
+    return p ? { ok: true, persona: p, look: readLook(p.id) } : { ok: false, message: '没有这个人格' }
   })
-  route('/persona/save', async (req) => {
+  route('/persona/save', async (req, res) => {
+    if (!personaPost(req, res)) return
     const b = await readBody(req)
+    readLook(b.id)
+    if (b.appearance !== undefined && typeof b.appearance !== 'string') throw new Error('外貌描述须为文字')
     const p = savePersona(b.id, b)
+    if (b.appearance !== undefined) saveAppearance(p.id, b.appearance, b.appearanceSource)
     bridge.refresh()
-    return { ok: true, persona: p, message: '人格已保存，下一轮起生效' }
+    return { ok: true, persona: p, look: readLook(p.id), message: '人格已保存，下一轮起生效' }
   })
   route('/persona/delete', async (req) => {
     const b = await readBody(req)
-    if (b.id === cfg.persona.current) return { ok: false, message: '正在用的人格不能删' }
-    deletePersona(b.id)
+    const id = safeId(b.id)
+    if (id === safeId(cfg.persona.current)) return { ok: false, message: '正在用的人格不能删' }
+    deletePersona(id)
+    // 连数据一起删：只删 persona-data/<id>/。根目录归数据归属人格（还没认领时大家共用），不能删。
+    const dir = personaDataDir(cfg, id)
+    if (b.withData && id && dir !== dataDir()) {
+      use('memory')?.closePersona?.(id)
+      try { rmSync(dir, { recursive: true, force: true }) } catch (error) {
+        return { ok: false, list: listPersonas(), message: '人格删掉了，但它的数据没删干净：' + error.message }
+      }
+    }
     return { ok: true, list: listPersonas() }
   })
   route('/persona/use', async (req) => {
     const b = await readBody(req)
-    if (!readPersona(b.id)) return { ok: false, message: '没有这个人格' }
-    setConfig({ ...cfg, persona: { current: b.id } })
-    log.info(`切换人格 → ${b.id}`)
-    return { ok: true, current: b.id, message: '切换好了，下一轮回复起生效' }
+    const id = safeId(b.id)
+    if (!readPersona(id)) return { ok: false, message: '没有这个人格' }
+    // 正在回复或在忙后台的事：切过去会把旧人格的回复当成新人格的发出去
+    if (id !== safeId(cfg.persona.current) && hub.busy()) return { ok: false, message: '她正在回复或在忙后台的事，等这一轮结束再切' }
+    setConfig({ ...cfg, persona: { ...cfg.persona, current: id } })
+    log.info(`切换人格 → ${id}`)
+    return { ok: true, current: id, message: '切换好了，下一轮回复起生效' }
+  })
+  // 老用户升级后认领根目录的数据：只能认领一次，之后其他人格用 persona-data/<id>/ 里自己的记忆和会话
+  route('/persona/data-owner', async (req) => {
+    const b = await readBody(req)
+    const id = safeId(b.id)
+    if (dataOwner(cfg)) return { ok: false, message: '根目录的数据已经认领过了' }
+    if (!readPersona(id)) return { ok: false, message: '没有这个人格' }
+    if (hub.busy()) return { ok: false, message: '她正在回复或在忙后台的事，等这一轮结束再认领' }
+    setConfig({ ...cfg, persona: { ...cfg.persona, dataOwner: id } })
+    log.info(`根目录的记忆和会话归给人格 ${id}`)
+    return { ok: true, dataOwner: id, message: '认领好了，其他人格从下一轮起用自己的记忆和会话' }
   })
   // 人格页「AI 润色」：只改面板上这一节的文字，不保存；用不用由主人在面板里选
   route('/persona/polish', async (req) => {
