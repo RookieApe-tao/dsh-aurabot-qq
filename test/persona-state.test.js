@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createFakeDsh } from './helpers/fake-dsh.js'
-import { createRuntime } from '../src/autotelic/runtime.js'
+import { createBook } from '../src/autotelic/book.js'
 import { createJournal } from '../src/autotelic/reflect.js'
 
 const OWNER = '10000001'
@@ -91,19 +91,18 @@ test('「心里想要」附在本轮消息末尾，不进系统提示词；后�
 test('autotelic 账本按当时的文件取：换了人格就换一本，切回来接着记', (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'aurabot-ledger-'))
   t.after(() => rmSync(dir, { recursive: true, force: true }))
-  let file = join(dir, 'a', 'ledger.json')
-  const rt = createRuntime({
-    settings: () => ({ maxTasksActive: 3, maxSteps: 8, budgetActionsPerHour: 12 }),
-    hub: {},
-    ledgerFile: () => file,
-  })
-  rt.book().heartbeat('大肥鱼的一拍')
-  file = join(dir, 'b', 'ledger.json')
-  assert.equal(rt.book().meta().ticks.length, 0, '翔子的账本是空的')
-  rt.book().heartbeat('翔子的一拍')
-  file = join(dir, 'a', 'ledger.json')
-  assert.deepEqual(rt.book().meta().ticks.map((x) => x.outcome), ['大肥鱼的一拍'])
-  assert.deepEqual(JSON.parse(readFileSync(join(dir, 'b', 'ledger.json'), 'utf8')).ticks.map((x) => x.outcome), ['翔子的一拍'])
+  // v5：模块壳按 own() 的目录惰性建账本（getBook），人格一换目录一换就换一本——这里按同样口径验 book 本体
+  const mkBook = (file) => createBook({ file, now: () => Date.now() })
+  const fileA = join(dir, 'a', 'ledger.json')
+  const bA = mkBook(fileA)
+  bA.heartbeat('大肥鱼的一拍')
+  const fileB = join(dir, 'b', 'ledger.json')
+  const bB = mkBook(fileB)
+  assert.equal(bB.meta().ticks.length, 0, '翔子的账本是空的')
+  bB.heartbeat('翔子的一拍')
+  const bA2 = mkBook(fileA)
+  assert.deepEqual(bA2.meta().ticks.map((x) => x.outcome), ['大肥鱼的一拍'])
+  assert.deepEqual(JSON.parse(readFileSync(fileB, 'utf8')).ticks.map((x) => x.outcome), ['翔子的一拍'])
 })
 
 test('autotelic 日志按当时的目录写', (t) => {
