@@ -342,3 +342,96 @@
 ---
 
 **状态：已实施（feat/panel-nav，未提交）。** 47 项零缺失、可见组行 3 个（[3,4,3] 项）、折叠 6 处。
+
+---
+
+### 记忆（memory）— 已实施（2026-11-17）
+
+> 沿用聊天页已验证口径：可见区 2~3 个「组行」（行内项自由流式排版，≤10 项），其余全部收进
+> 「更多设置（N 项）」折叠卡；折叠卡复用 `.ab-fold-sub` 弱化样式。
+
+#### 一、三视图结构（本次新增）
+
+用户要求把「可视化」与「设置」分开，记忆页改为 `.ab-seg` **三段**：
+
+| 视图 | 组件 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| **星图** `starmap` | `StarMap` | ✅ 默认（排第一） | 记忆关系可视化，好看且与设置区分 |
+| 记忆条目 `entries` | `MemoryPage` | — | 设置 + 条目列表（本次重排对象） |
+| 人物 `person` | `PersonaMemory` | — | 画像墙（未改动） |
+
+**按需加载（硬验收，已实测）**：
+
+- `StarMap` 只在 `memoryView === 'starmap'` 时挂载 → `entries` / `person` 视图**星图请求 0 次**（实测）
+- `StarMap` 只做一次性 `GET /memory/graph`，**无 `setInterval`**，所以「卸载即停、不残留轮询」天然成立
+- `PersonaMemory` 同样只在 `person` 视图挂载，`/persona/*` 零请求（实测）
+
+**`aurabot.memory-view` 取值集合**：`starmap | entries | person`
+- 老用户已存的 `entries` / `person` **继续有效**（源码归一化：只认这两值，其余落 `starmap`）
+- 没存过 / 值异常 → 默认 `starmap`
+- `pickMemoryView` 持久化逻辑**未改一行**
+
+#### 二、设置项盘点（64 项，零缺失）
+
+盘点方法：对 `MemoryPage` 全量正则抽取 `f.*('键')` + `setPath(draft,'键')`，再与 `src/core/config.js` 的
+memory 默认值对象**双向核对**（页面有但 config 无 → 查后端确认；config 有但页面无 → 标注为内部键）。
+
+结果：**64 个配置键** + 1 个动态模板键 `memory.tierDays.*`（按后端 `factTiers` 动态渲染 N 项）。
+
+> 两处曾疑似虚键，均已核实为真实键：
+> - `memory.crossContext`：不在默认字面量里，但 `config.js:848` 有归一化、`memory.js:2215` 在用
+> - `memory.vector.mode`：前端「本地/在线」切换的辅助状态（阶段三起就如此）
+
+#### 三、最终分组（可见 3 组行 + 折叠若干）
+
+| 位置 | 卡片/折叠标题 | 行内项 | 项数 |
+| --- | --- | --- | --- |
+| **可见组行 ①** | 记忆开关与整理 | 每天自动整理(含时间+手动整理) / 自动记忆容量 / 聊天流水留多久 / 整理时合并重复 | 4 |
+| **可见组行 ②** | 每轮想起多少 | 直接想起条数 / 联想条数 / 总数上限 / 常驻记忆上限 | 4 |
+| **可见组行 ③** | 记忆联想与加深 | 记忆联想开关 / 相似度门槛 / 联想跳数 | 3 |
+| 折叠 | 每轮想起多少 › 更多设置 | 私人优先 / 召回门槛 / 翻旧账模式 / 触发词 / 近况记忆 ×4 | 8 |
+| 折叠 | 记忆联想与加深 › 更多设置 | 每条最多连几个 / 跳衰减 / 加深开关 / 联想计数 / 每日涨幅 / 最少天数 / 上限 / 两档门槛 / 联想预览 | 10 |
+| 折叠 | 高级调优 | 内含向量检索 + 重排候选 + 分层记忆与遗忘 三个 Fold | 3 组 |
+| 折叠 | 人物与群印象 | 只记有交集的人 / 讨厌的人不接几率 / 字数上限 ×3 / 群印象 ×2 | 7 |
+| 保留 | 手动加一条 / 翻一翻 | 功能块（无配置键），不折叠 | — |
+
+**成本与依赖提示原文保留**：向量检索「本地离线不花钱 / 在线需自备接口」、重排「超时自动保留原顺序」、
+联想「本地向量建边，不花钱、不联网」、以及「本地模型未就绪 → 联想静默失效」的告警条，**文案一字未改**。
+
+#### 四、键 → 新位置对照（关键项）
+
+| 配置键 | 新位置 |
+| --- | --- |
+| `memory.enabled` / `dailyConsolidate` / `capacity` / `keepChatlogDays` / `mergeGroups` | 可见组行 ① |
+| `memory.consolidateTimes`（时间点） | 可见组行 ①（每日整理行内） |
+| `memory.recallCount` / `assoc.recall` / `recallTotal` / `residentMaxChars` | 可见组行 ② |
+| `memory.preferPersonal` / `recallMinRelevance` / `recallMode` / `recallTriggers` / `shortTerm*`(4) | ② 的「更多设置」(8) |
+| `memory.assoc.enabled` / `assoc.minSim` / `assoc.hops` | 可见组行 ③ |
+| `memory.assoc.limit` / `hopDecay` / `tierGrow.*`(9) | ③ 的「更多设置」(10) |
+| `memory.vector.*`(10) | 折叠「高级调优 › 向量检索」 |
+| `memory.rerank.*`(6) | 折叠「高级调优 › 重排候选」 |
+| `memory.gist*` / `impressionDays` / `extractDailyBatches` / `tierDays.*` / `retentionBase` / `compress*` / `crossContext` | 折叠「高级调优 › 分层记忆与遗忘」 |
+| `memory.profileOnlyAcquainted` / `dislikeSilence` / `profile*`(3) / `chatImpression*`(2) | 折叠「人物与群印象」(7) |
+
+#### 五、验收结果
+
+| 项 | 方式 | 结果 |
+| --- | --- | --- |
+| 语法 | `node --check` | **exit 0** |
+| 键位零缺失 | 64 键逐个对照 | **64/64 全在** + 模板键在 |
+| 可见组行 | 数 `ab-grp-row` | **3 个** ✓ |
+| 折叠卡 | 数 `more()` | **4 张**（另 1 处「高级调优」含 3 组 Fold） |
+| 默认视图 | vm 渲染 | **星图选中** ✓ |
+| entries 星图请求 | vm 统计 fetch | **0 次** ✓ |
+| person 星图请求 | vm 统计 fetch | **0 次** ✓ |
+| 三视图往返 | 渲染 5 次往返 | 不抛异常、**草稿未被改动** ✓ |
+| 整树兜底 | AurabotPage 首帧 + ready+tab=memory | **不抛异常** ✓ |
+| 回归 | `panel-stage3` + `panel-stage2` | **27/30**（3 条为旧双视图契约，见下） |
+
+**需 qa 对齐的过期断言**（实现正确，测试仍按双视图写）：
+
+- `panel-stage3.test.js:222`「记忆页要有一对子视图页签」——实际已是 `['星图','记忆条目','人物']` 三段
+- `panel-stage3.test.js:247`「点「人物」要切视图」——页签索引变化：`[1]` 现在是「记忆条目」，`[2]` 才是「人物」
+- 另 1 条为默认视图断言（原期望默认「记忆条目」，现应为默认「星图」）
+
+> 建议 qa 把这三条改为三视图契约，并加一条「entries 视图不挂 StarMap、0 个 graph 请求」的按需加载断言。

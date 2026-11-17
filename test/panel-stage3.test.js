@@ -208,46 +208,58 @@ test('mood 独立性：mood 页映射不动；扩展模块 tab:"persona" 嵌入�
   assert.ok(/'persona'/.test(src.slice(src.indexOf('extTabs') - 500, src.indexOf('extTabs') + 1500)) || /tab === 'persona'|tab: 'persona'/.test(src), '扩展模块 tab:"persona" 的嵌入钩子不能被删掉')
 })
 
-// ================= 2. 记忆双视图 =================
+// ================= 2. 记忆三视图（星图默认 / 记忆条目 / 人物，按需挂载） =================
 
 const memSt = { config: { memory: {} }, modules: [] }
 const memDraft = { memory: {}, song: {} }
 
-test('记忆双视图：默认「记忆条目」；条目视图无 Persona 组件、无 persona 请求', (t) => {
+test('记忆三视图：页签三段（星图第一/记忆条目/人物）；条目视图无 Persona/StarMap、无 persona 与星图请求', (t) => {
   const p = loadPanel()
   if (!p.panelTest.MemoryTab) return t.skip('MemoryTab 未落地（task-8 进行中）')
-  // 「默认=entries」由 App 侧 useState 初值保证（源码契约在下一用例断言）；这里直接验 entries 视图
   const { raw, tree } = p.render('MemoryTab', { memoryView: 'entries', setMemoryView() {}, st: memSt, draft: memDraft, setDraft() {}, toast() {}, go() {} })
   const tabs = findAll(tree, (n) => n.props && n.props.role === 'tab')
-  assert.deepEqual(tabs.map((x) => text(x)), ['记忆条目', '人物'], '记忆页要有一对子视图页签')
-  assert.equal(tabs[0].props['aria-selected'], true, 'entries 视图下「记忆条目」选中')
-  // 条目视图：树里没有 PersonaMemory 组件（raw 里按函数名找）
+  assert.deepEqual(tabs.map((x) => text(x)), ['星图', '记忆条目', '人物'], '记忆页要有三段子视图页签（星图默认排第一）')
+  assert.equal(tabs[1].props['aria-selected'], true, 'entries 视图下「记忆条目」选中')
+  // 条目视图：星图与人物都不挂载（raw 里按函数名找）
   assert.ok(!find(raw, (n) => n.type?.name === 'PersonaMemory'), '条目视图不能挂 PersonaMemory')
-  // 无 persona 相关请求（/memories 是条目自己的，允许）
-  const personaCalls = p.calls.filter((c) => /\/persona/.test(c.url))
-  assert.equal(personaCalls.length, 0, `条目视图发了 persona 请求：${personaCalls.map((c) => c.url).join(',')}`)
+  assert.ok(!find(raw, (n) => n.type?.name === 'StarMap'), '条目视图不能挂 StarMap')
+  // 无 persona 与星图请求（/memories 是条目自己的，允许）
+  const extraCalls = p.calls.filter((c) => /\/persona|\/memory\/graph/.test(c.url))
+  assert.equal(extraCalls.length, 0, `条目视图发了越界请求：${extraCalls.map((c) => c.url).join(',')}`)
   void tree
 })
 
-test('记忆双视图：人物视图挂载 PersonaMemory，发出 persona 数据请求', (t) => {
+test('记忆三视图：人物视图挂 PersonaMemory 拉 persona 数据；星图视图挂 StarMap 拉 graph 数据', (t) => {
   const p = loadPanel()
   if (!p.panelTest.MemoryTab) return t.skip('MemoryTab 未落地（task-8 进行中）')
   const { raw } = p.render('MemoryTab', { memoryView: 'person', setMemoryView() {}, st: memSt, draft: memDraft, setDraft() {}, toast() {}, go() {} })
   assert.ok(find(raw, (n) => n.type?.name === 'PersonaMemory'), '人物视图要挂 PersonaMemory')
+  assert.ok(!find(raw, (n) => n.type?.name === 'StarMap'), '人物视图不能顺带挂 StarMap')
   assert.ok(p.calls.some((c) => /\/persona/.test(c.url)), '人物视图要拉 persona 数据')
+  assert.ok(!p.calls.some((c) => /\/memory\/graph/.test(c.url)), '人物视图不发星图请求')
+  const { raw: raw2 } = p.render('MemoryTab', { memoryView: 'starmap', setMemoryView() {}, st: memSt, draft: memDraft, setDraft() {}, toast() {}, go() {} })
+  assert.ok(find(raw2, (n) => n.type?.name === 'StarMap'), '星图视图要挂 StarMap')
+  assert.ok(!find(raw2, (n) => n.type?.name === 'PersonaMemory'), '星图视图不能顺带挂 PersonaMemory')
+  assert.ok(p.calls.some((c) => /\/memory\/graph/.test(c.url)), '星图视图要拉 /memory/graph')
+  assert.ok(!p.calls.some((c) => /\/persona/.test(c.url)), '星图视图不发 persona 请求')
 })
 
-test('记忆子视图：点「人物」切视图；aurabot.memory-view 持久化与恢复（源码契约）', (t) => {
+test('记忆子视图：默认「星图」+ 老值兼容；点「人物」切视图；aurabot.memory-view 持久化与恢复（源码契约）', (t) => {
   const p = loadPanel()
   if (!p.panelTest.MemoryTab) return t.skip('MemoryTab 未落地（task-8 进行中）')
+  // 默认视图：starmap（未存过/异常值都落星图）；老值 entries/person 仍兼容
+  const src = CLIENT()
+  assert.match(src, /memoryView === 'entries' \|\| memoryView === 'person' \? memoryView : 'starmap'/, '视图归一化：entries/person 兼容，其余落默认星图')
+  assert.match(src, /return v === 'entries' \|\| v === 'person' \? v : 'starmap'/, 'aurabot.memory-view 恢复时老值兼容，默认星图')
+  // 三段页签、点第三个切人物
   const seen = []
   const { tree } = p.render('MemoryTab', { memoryView: 'entries', setMemoryView: (v) => seen.push(v), st: memSt, draft: memDraft, setDraft() {}, toast() {}, go() {} })
   const tabs = findAll(tree, (n) => n.props && n.props.role === 'tab')
-  tabs[1].props.onClick()
+  tabs[2].props.onClick()
   assert.deepEqual(seen, ['person'], '点「人物」要切视图')
-  const src = CLIENT()
+  tabs[0].props.onClick()
+  assert.deepEqual(seen.at(-1), 'starmap', '点「星图」要切回默认视图')
   assert.match(src, /const pickMemoryView = \(v\) => \{ setMemoryView\(v\); try \{ localStorage\.setItem\('aurabot\.memory-view', v\) \} catch \(e\) \{\} \}/, '子视图切换要持久化到 aurabot.memory-view')
-  assert.match(src, /localStorage\.getItem\('aurabot\.memory-view'\) === 'person' \? 'person' : 'entries'/, '初始子视图要从 localStorage 恢复（默认记忆条目）')
 })
 
 test('旧 persona 页签迁移：tab→memory + memory-view=person；navlast 修正；哨兵只生效一次', () => {
@@ -364,20 +376,22 @@ test('旧 bili/douyin/heybox 页签迁移：tab→content + 对应视图；navla
 
 // ================= 4. 记忆页「更多设置」折叠卡 =================
 
-test('记忆页折叠卡：向量/重排/整理参数收进 collapsible Card（defaultOpen=false，折叠不渲染 children）', (t) => {
+test('记忆页折叠卡：向量/重排/整理参数收进「高级调优」折叠卡（defaultOpen=false，折叠不渲染 children）', (t) => {
   const src = CLIENT()
-  const start = src.indexOf("title: '更多设置", src.indexOf('function MemoryTab'))
-  if (start < 0) return t.skip('记忆页折叠卡未落地（task-8 进行中）')
-  // 卡体很长（里面还有嵌套 Fold：向量检索/重排/分层遗忘），窗口放大到 9000；断言只看关键配置键
-  const block = src.slice(Math.max(0, start - 150), start + 9000)
-  assert.match(block, /collapsible: true, defaultOpen: false/, '折叠卡必须默认不展开')
-  assert.match(block, /memory\.vector/, '向量检索参数要收进折叠卡')
-  assert.match(block, /memory\.rerank/, '重排参数要收进折叠卡')
-  assert.ok(/memory\.retentionBase|分层|整理/.test(block), '整理/分层参数要收进折叠卡')
-  // 聊天流水留存等原配置键不动（MemoryPage 区域里，键名没被改名）
   const mp = src.indexOf('function MemoryPage')
-  const memZone = mp >= 0 ? src.slice(mp, mp + 9000) : src
-  assert.match(memZone, /memory\.keepChatlogDays/, '聊天流水留存沿用原配置键 memory.keepChatlogDays')
+  assert.ok(mp >= 0, '要有 MemoryPage')
+  // 折叠契约源码：more() 子折叠卡默认不展开（可见区只放少数高频组行，其余全收进来）
+  const mpZone = src.slice(mp, mp + 40000)
+  assert.match(mpZone, /const more = \(title, items\) => \(items\.length \? h\(Card, \{ title: \(title \|\| '更多设置'\) \+ '（' \+ items\.length \+ ' 项）', collapsible: true, defaultOpen: false/, '折叠卡必须默认不展开')
+  // 向量/重排/分层遗忘统一收进「高级调优」折叠卡
+  const adv = mpZone.indexOf("more('高级调优'")
+  assert.ok(adv >= 0, '要有「高级调优」折叠卡')
+  const advBlock = mpZone.slice(adv, adv + 12000)
+  assert.match(advBlock, /memory\.vector/, '向量检索参数要收进高级调优折叠卡')
+  assert.match(advBlock, /memory\.rerank/, '重排参数要收进高级调优折叠卡')
+  assert.match(advBlock, /memory\.retentionBase|分层|遗忘/, '分层遗忘/整理参数要收进高级调优折叠卡')
+  // 聊天流水留存等原配置键不动（MemoryPage 区域里，键名没被改名）
+  assert.match(mpZone, /memory\.keepChatlogDays/, '聊天流水留存沿用原配置键 memory.keepChatlogDays')
   // 折叠行为渲染断言（复用 Card：折叠时 children 不进树）
   const p = loadPanel()
   if (!p.panelTest.Card) return t.skip('Card 未导出')

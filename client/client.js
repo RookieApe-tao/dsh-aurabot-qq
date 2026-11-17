@@ -4987,20 +4987,30 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
     // 「心情与记忆」拆成两页：心情只管情绪状态和半衰期，记忆页管记忆库、星图、整理、联想、向量检索。
     // 一页塞十几组设置太挤（实测要滚好几屏才能看到保存条），拆开后各管各的、找设置更快。
     /**
-     * 记忆页外壳：「记忆条目」/「人物」两个子视图共用一个页签（照 VoiceTab 模式）。
-     * 关键约束：人物视图（PersonaMemory）只在 view==='person' 时挂载——不挂载即不拉人物列表。
+     * 记忆页外壳：三个子视图共用页签（照 VoiceTab / ContentTab 模式）。
+     *   星图（默认，可视化） / 记忆条目（设置+列表） / 人物（画像墙）
+     * 关键约束（按需加载）：星图与人物都只在各自视图激活时挂载——
+     *   星图挂了才会 get('/memory/graph')，人物挂了才会拉 /persona/*；切走即卸载、不再请求。
+     * 星图只做一次性拉取（无 setInterval），所以「不挂载 = 0 请求、0 轮询」天然成立。
      */
     function MemoryTab({ memoryView, setMemoryView, st, draft, setDraft, toast, go }) {
-      // 未传/异常值时归一化到默认「记忆条目」，避免两个页签都没有选中态
-      const view = memoryView === 'person' ? 'person' : 'entries'
+      // 归一化：老用户存的 entries/person 继续有效；没存过 / 异常值一律落默认「星图」
+      const view = memoryView === 'entries' || memoryView === 'person' ? memoryView : 'starmap'
+      const tab = (id, label) => h('button', {
+        key: id, type: 'button', role: 'tab',
+        'aria-selected': view === id,
+        className: cx(view === id && 'on'),
+        onClick: () => setMemoryView(id),
+      }, label)
       const seg = h('div', { className: 'ab-seg', role: 'tablist', 'aria-label': '记忆子视图' },
-        h('button', { type: 'button', role: 'tab', 'aria-selected': view === 'entries', className: cx(view === 'entries' && 'on'), onClick: () => setMemoryView('entries') }, '记忆条目'),
-        h('button', { type: 'button', role: 'tab', 'aria-selected': view === 'person', className: cx(view === 'person' && 'on'), onClick: () => setMemoryView('person') }, '人物'))
+        tab('starmap', '星图'), tab('entries', '记忆条目'), tab('person', '人物'))
       return h('div', null,
         h('div', { className: 'ab-flex', style: { margin: '0 0 12px' } }, seg),
         view === 'person'
           ? h(PersonaMemory, { toast })
-          : h(MemoryPage, { st, draft, setDraft, toast, go }))
+          : view === 'entries'
+            ? h(MemoryPage, { st, draft, setDraft, toast, go })
+            : h(StarMap, { toast }))
     }
 
     function MemoryPage({ st, draft, setDraft, toast }) {
@@ -5043,67 +5053,71 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       if (!memOn) return h(ModOff, { name: '记忆' })
       const chatlogRow = h(Row, { label: '聊天流水留多久', hint: '默认留 7 天，刚说过的话靠它想起来；0 = 整理完就删；-1 = 永久保留；其他数字 = 留这么多天。留得越久，本机存的聊天原文越多' }, f.num('memory.keepChatlogDays', { min: -1, max: 3650 }))
       const mergeRow = h(Row, { label: '整理时合并重复记忆', hint: '同一个人名下说的是一件事的条目并成一条。每个人多一次模型调用，默认关' }, f.sw('memory.mergeGroups'))
+      // 「更多设置（N 项）」折叠子卡：与聊天页同口径——可见区只放少数高频组行，其余全收进来
+      const more = (title, items) => (items.length ? h(Card, { title: (title || '更多设置') + '（' + items.length + ' 项）', collapsible: true, defaultOpen: false, className: 'ab-fold-sub' }, items) : null)
       return h('div', { className: 'ab-grid' },
-        h(Fold, { title: '记忆库', icon: '🗂',
-          summary: (stats ? stats.count : '–') + ' 条 · ' + (last ? '上次整理 ' + new Date(last.at).toLocaleDateString() : '还没整理过'),
-          right: f.sw('memory.enabled') },
-          h('p', { className: 'ab-desc', style: { marginTop: 0 } }, '长期记忆：ta聊天时自己记的、每天从聊天里整理出来的、写过的空间日记、你手动加的。每一轮回复前，ta会按对方正在说的话翻出最相关的几条。'),
+        // ===== 可见组行 ① 记忆开关与整理（4 项，行内自由排版）=====
+        h(Card, { title: '记忆开关与整理', right: f.sw('memory.enabled'),
+          desc: '长期记忆：ta聊天时自己记的、每天从聊天里整理出来的、写过的空间日记、你手动加的。每一轮回复前，ta会按对方正在说的话翻出最相关的几条。' },
+          st.persona && !st.persona.claimPending ? h('p', { className: 'ab-muted ab-small', style: { marginTop: 0 } }, '这里是「' + (((st.personas || []).find((p) => p.id === st.persona.current) || {}).name || st.persona.current) + '」的记忆。每个人格的记忆分开存，切换人格后这里显示新人格的。') : null,
           h('div', { className: 'ab-grid ab-g4', style: { marginBottom: 12 } },
             h('div', { className: 'ab-card ab-stat' }, h('div', { className: 'n' }, stats ? stats.count : '–'), h('div', { className: 'l' }, '条长期记忆')),
             h('div', { className: 'ab-card ab-stat' }, h('div', { className: 'n' }, stats ? stats.auto : '–'), h('div', { className: 'l' }, '条来自每日整理' + (stats && stats.outdated ? '（另有 ' + stats.outdated + ' 条已过时）' : ''))),
             h('div', { className: 'ab-card ab-stat' }, h('div', { className: 'n', style: { fontSize: 16, paddingTop: 6 } }, last ? new Date(last.at).toLocaleString() : '还没整理过'), h('div', { className: 'l' }, '上次整理'))),
-          h(Row, { label: '每天自动整理两次', hint: '把临时记忆（聊天流水）提炼成长期记忆、相处经验和说话方式；第二次只处理新聊天，过了一天的流水整理完清空；各会话自己的上下文不受影响' },
-            f.sw('memory.dailyConsolidate'), h('span', { className: 'ab-muted' }, '每天'),
-            h('input', { className: 'ab-input sm', type: 'time', value: times[0] || '04:00', onChange: (e) => setTime(0, e.target.value) }),
-            h('span', { className: 'ab-muted' }, '和'),
-            h('input', { className: 'ab-input sm', type: 'time', value: times[1] || '16:00', onChange: (e) => setTime(1, e.target.value) }),
-            h(Btn, { small: true, onClick: async () => { toast('正在整理，可能要一两分钟…'); const r = await post('/memory/extract', {}); toast(r.message); load(); loadIns() } }, '现在整理一次')),
-          h(Row, { label: '自动记忆容量', hint: '默认 3000 条，可调高到 100000；聊天提炼、经历和日记按现有比例分配。手动记忆和分档事实不受此限制，过期与压缩规则照常生效。调低容量后，新记忆可能按原有规则替换旧的普通记忆。' },
-            h('input', {
-              className: 'ab-input sm', type: 'number', min: 3000, max: 100000, step: 1, 'aria-label': '自动记忆容量',
-              value: capacityInput === null ? capacityTotal : capacityInput,
-              onFocus: () => { capacityBeforeEdit.current = capacity },
-              onChange: (e) => {
-                const raw = e.target.value
-                setCapacityInput(raw)
-                const n = Number(raw)
-                if (raw !== '' && Number.isInteger(n) && n >= 3000 && n <= 100000) {
-                  setDraft(setPath(draft, 'memory.capacity', resizeMemoryCapacity(capacityBeforeEdit.current || capacity, n)))
-                }
-              },
-              onBlur: (e) => {
-                const n = Number(e.target.value)
-                if ((e.target.value === '' || !Number.isInteger(n) || n < 3000 || n > 100000) && capacityBeforeEdit.current) {
-                  setDraft(setPath(draft, 'memory.capacity', capacityBeforeEdit.current))
-                }
-                capacityBeforeEdit.current = null
-                setCapacityInput(null)
-              },
-            }), h('span', { className: 'ab-muted' }, '条')),
-          chatlogRow,
-          mergeRow,
-        ),
+          h('div', { className: 'ab-grp-row' },
+            h(Row, { label: '每天自动整理两次', hint: '把临时记忆（聊天流水）提炼成长期记忆、相处经验和说话方式；第二次只处理新聊天，过了一天的流水整理完清空；各会话自己的上下文不受影响' },
+              f.sw('memory.dailyConsolidate'), h('span', { className: 'ab-muted' }, '每天'),
+              h('input', { className: 'ab-input sm', type: 'time', value: times[0] || '04:00', onChange: (e) => setTime(0, e.target.value) }),
+              h('span', { className: 'ab-muted' }, '和'),
+              h('input', { className: 'ab-input sm', type: 'time', value: times[1] || '16:00', onChange: (e) => setTime(1, e.target.value) }),
+              h(Btn, { small: true, onClick: async () => { toast('正在整理，可能要一两分钟…'); const r = await post('/memory/extract', {}); toast(r.message); load(); loadIns() } }, '现在整理一次')),
+            h(Row, { label: '自动记忆容量', hint: '默认 3000 条，可调高到 100000；聊天提炼、经历和日记按现有比例分配。手动记忆和分档事实不受此限制，过期与压缩规则照常生效。' },
+              h('input', {
+                className: 'ab-input sm', type: 'number', min: 3000, max: 100000, step: 1, 'aria-label': '自动记忆容量',
+                value: capacityInput === null ? capacityTotal : capacityInput,
+                onFocus: () => { capacityBeforeEdit.current = capacity },
+                onChange: (e) => {
+                  const raw = e.target.value
+                  setCapacityInput(raw)
+                  const n = Number(raw)
+                  if (raw !== '' && Number.isInteger(n) && n >= 3000 && n <= 100000) {
+                    setDraft(setPath(draft, 'memory.capacity', resizeMemoryCapacity(capacityBeforeEdit.current || capacity, n)))
+                  }
+                },
+                onBlur: (e) => {
+                  const n = Number(e.target.value)
+                  if ((e.target.value === '' || !Number.isInteger(n) || n < 3000 || n > 100000) && capacityBeforeEdit.current) {
+                    setDraft(setPath(draft, 'memory.capacity', capacityBeforeEdit.current))
+                  }
+                  capacityBeforeEdit.current = null
+                  setCapacityInput(null)
+                },
+              }), h('span', { className: 'ab-muted' }, '条')),
+            chatlogRow,
+            mergeRow,
+          )),
 
-        h(StarMap, { toast, onChanged: () => load('') }),
-
-        h(Fold, { title: '每轮想起多少', icon: '💭',
-          summary: '直接 ' + (draft.memory.recallCount ?? 6) + ' 条 + 联想 ' + (draft.memory.assoc?.recall ?? 3) + ' 条' },
-          h(Row, { label: '每轮最多直接想起几条', hint: '「直接命中」的条数上限：按你说的关键词/意思直接对上的那几条。联想不占这个名额。' }, f.range('memory.recallCount', 0, 12, 1, (v) => v + ' 条')),
-          h(Row, { label: '每轮最多带几条联想', hint: '「间接想起」的条数上限：从上面那几条往外联想出来的。和直接想起各自独立，最后合在一起交给她。' }, f.range('memory.assoc.recall', 0, 8, 1, (v) => v + ' 条')),
-          h(Row, { label: '想起总数上限', hint: '直接 + 联想合起来的总条数；0 = 不额外限制（就等于「直接 N 条 + 联想 M 条」）。调小可以在上下文紧张时封顶。' },
-            f.num('memory.recallTotal', { min: 0, max: 24 }), h('span', { className: 'ab-muted' }, '条')),
+        // ===== 可见组行 ② 每轮想起多少（4 项核心参数，行内自由排版）=====
+        h(Card, { title: '每轮想起多少',
+          desc: '每轮回复前，ta 会按对方正在说的话翻出最相关的几条。这里是「想起多少」的调节。' },
+          h('div', { className: 'ab-grp-row' },
+            h(Row, { label: '每轮最多直接想起几条', hint: '「直接命中」的条数上限：按你说的关键词/意思直接对上的那几条。联想不占这个名额。' }, f.range('memory.recallCount', 0, 12, 1, (v) => v + ' 条')),
+            h(Row, { label: '每轮最多带几条联想', hint: '「间接想起」的条数上限：从上面那几条往外联想出来的。和直接想起各自独立，最后合在一起交给她。' }, f.range('memory.assoc.recall', 0, 8, 1, (v) => v + ' 条')),
+            h(Row, { label: '想起总数上限', hint: '直接 + 联想合起来的总条数；0 = 不额外限制（就等于「直接 N 条 + 联想 M 条」）。调小可以在上下文紧张时封顶。' },
+              f.num('memory.recallTotal', { min: 0, max: 24 }), h('span', { className: 'ab-muted' }, '条')),
+            h(Row, { label: '常驻记忆上限', hint: '每一轮都会带上的长期记忆最多多少字，超了从末尾截断。太小会显得忘事，太大会占上下文；默认 1200，范围 200~4000' }, f.num('memory.residentMaxChars', { min: 200, max: 4000 }), h('span', { className: 'ab-muted' }, '字')),
+          ),
           h('div', { className: 'ab-note' }, '当前效果：每轮最多直接想起 ' + (draft.memory.recallCount ?? 6) + ' 条 + 联想 ' + (draft.memory.assoc?.recall ?? 3) + ' 条' + ((Number(draft.memory.recallTotal) || 0) > 0 ? '，总数封顶 ' + draft.memory.recallTotal + ' 条' : '（不额外限制总数') + '。'),
-          // beta 侧新增：每轮常驻的字数上限 + 私人记忆优先
-          h(Row, { label: '常驻记忆上限', hint: '每一轮都会带上的长期记忆最多多少字，超了从末尾截断。太小会显得忘事，太大会占上下文；默认 1200，范围 200~4000' }, f.num('memory.residentMaxChars', { min: 200, max: 4000 }), h('span', { className: 'ab-muted' }, '字')),
-          h(Row, { label: '私人记忆优先', hint: '想起相关记忆时，如果没在问 B站、视频、最近看了什么，优先带关于某个人 / 她自己记的；问具体视频时仍先想起视频' }, f.sw('memory.preferPersonal')),
-          // 面板「记忆库」四组折叠状态的持久化由 /memory/ui 接口负责（beta 侧功能）
-          h(Row, { label: '召回最低相关度', hint: '默认 0，沿用原有检索门槛；调高会更挑剔，可能减少想起的线索。人物加分不会把无关内容抬过线，上一句和关联补充也要过线。' }, f.range('memory.recallMinRelevance', 0, 1, 0.05, (v) => Number(v).toFixed(2))),
-          h(Row, { label: '什么时候自动翻旧账' }, f.select('memory.recallMode', [{ value: 'always', label: '每轮都查' }, { value: 'trigger', label: '提到过去时才查' }])),
-          h(Row, { label: '翻旧账的触发词', hint: '一行一个，也可用逗号分隔；主动查记忆的工具不受影响' }, f.list('memory.recallTriggers')),
-          h(Row, { label: '记得刚才聊到哪', hint: '同一个人在不同平台接着聊时，也能记得刚才聊到哪。每段聊天多一次很短的模型调用。' }, f.sw('memory.shortTerm')),
-          h(Row, { label: '记住最近多久的聊天' }, f.num('memory.shortTermHours', { min: 0.1, step: 0.1 }), h('span', { className: 'ab-muted' }, '小时')),
-          h(Row, { label: '聊天停多久后整理' }, f.num('memory.shortTermIdleMinutes', { min: 0 }), h('span', { className: 'ab-muted' }, '分钟')),
-          h(Row, { label: '刚才的印象最多多少字' }, f.num('memory.shortTermChars', { min: 1 }), h('span', { className: 'ab-muted' }, '字')),
+          more('更多设置', [
+            h(Row, { key: 'pp', label: '私人记忆优先', hint: '想起相关记忆时，如果没在问 B站、视频、最近看了什么，优先带关于某个人 / 她自己记的；问具体视频时仍先想起视频' }, f.sw('memory.preferPersonal')),
+            h(Row, { key: 'rm', label: '召回最低相关度', hint: '默认 0，沿用原有检索门槛；调高会更挑剔，可能减少想起的线索。人物加分不会把无关内容抬过线，上一句和关联补充也要过线。' }, f.range('memory.recallMinRelevance', 0, 1, 0.05, (v) => Number(v).toFixed(2))),
+            h(Row, { key: 'md', label: '什么时候自动翻旧账' }, f.select('memory.recallMode', [{ value: 'always', label: '每轮都查' }, { value: 'trigger', label: '提到过去时才查' }])),
+            h(Row, { key: 'tg', label: '翻旧账的触发词', hint: '一行一个，也可用逗号分隔；主动查记忆的工具不受影响' }, f.list('memory.recallTriggers')),
+            h(Row, { key: 'st', label: '记得刚才聊到哪', hint: '同一个人在不同平台接着聊时，也能记得刚才聊到哪。每段聊天多一次很短的模型调用。' }, f.sw('memory.shortTerm')),
+            h(Row, { key: 'sh', label: '记住最近多久的聊天' }, f.num('memory.shortTermHours', { min: 0.1, step: 0.1 }), h('span', { className: 'ab-muted' }, '小时')),
+            h(Row, { key: 'si', label: '聊天停多久后整理' }, f.num('memory.shortTermIdleMinutes', { min: 0 }), h('span', { className: 'ab-muted' }, '分钟')),
+            h(Row, { key: 'sc', label: '刚才的印象最多多少字' }, f.num('memory.shortTermChars', { min: 1 }), h('span', { className: 'ab-muted' }, '字')),
+          ]),
         ),
 
         h(Fold, { title: '记忆联想与加深', icon: '🔗',
@@ -5117,31 +5131,37 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
           ...(stats && stats.vectorLocal?.wanted && stats.vectorLocal.ready && stats.assoc === 0 && stats.count > 0 && draft.memory.assoc?.enabled !== false
             ? [h('div', { className: 'ab-note' }, '⏳ 还没有可用的关联：已经有 ' + stats.count + ' 条记忆，系统会在下一分钟自动建边。')]
             : []),
-          h(Row, { label: '记忆联想', hint: '已建 ' + (stats && stats.assoc ? stats.assoc : '–') + ' 条关联' + (stats && stats.assocAt ? '（' + new Date(stats.assocAt).toLocaleString() + ' 更新）' : '') }, f.sw('memory.assoc.enabled')),
-          h(Row, { label: '多条相似才算关联', hint: '余弦相似度门槛，越高连得越少越准；默认 45%' }, f.range('memory.assoc.minSim', 0.3, 0.9, 0.05, (v) => Math.round(v * 100) + '%')),
-          h(Row, { label: '每条最多连几个', hint: '度上限，防止一条记忆连到半个库' }, f.num('memory.assoc.limit', { min: 1, max: 8 }), h('span', { className: 'ab-muted' }, '条')),
-          h(Row, { label: '联想跳数', hint: '0 关、1 = A→B、2 = A→B→C（默认）、3 最多。再高就是套娃，已封顶。条数上限在上面「每轮最多带几条联想」里调' },
-            h('div', { className: 'ab-flex', style: { gap: 8 } }, ['0', '1', '2', '3'].map((v) => h('label', { key: v, className: 'ab-flex', style: { gap: 4, cursor: 'pointer', alignItems: 'center' } },
-              h('input', { type: 'radio', name: 'memory.assoc.hops', checked: String(draft.memory.assoc?.hops ?? 2) === v, onChange: () => setDraft(setPath(draft, 'memory.assoc.hops', Number(v))) }),
-              h('span', null, v === '0' ? '关' : v === '1' ? '1 跳' : v === '2' ? '2 跳' : '3 跳'))))),
-          h(Row, { label: '每多跳一次打几折', hint: '跳得越远越不可信，分数乘以这个系数；默认 55%' }, f.range('memory.assoc.hopDecay', 0.1, 1, 0.05, (v) => Math.round(v * 100) + '%')),
-          h(Row, { label: '记忆加深（行为驱动升档）', hint: '被想起来的次数和天数够了，重要程度慢慢涨、档位往上走' }, f.sw('memory.tierGrow.enabled')),
-          h(Row, { label: '联想带出的记忆也算想起', hint: '几次联想折算成「想起来一天」。2 = 联想两次算一次想起（比直接命中轻）；1 = 一样重' }, f.num('memory.tierGrow.assocPerHitDay', { min: 1, max: 20 }), h('span', { className: 'ab-muted' }, '次/天')),
-          h(Row, { label: '被反复想起后每天涨多少', hint: '默认 0.02/天；要到下面「最少想起几天」才会计入' }, f.num('memory.tierGrow.perDay', { min: 0, max: 0.2, step: 0.01 })),
-          h(Row, { label: '最少想起几天才开始算', hint: '默认 3 天；偶然想起一两次不该把她记的事推到重要档' }, f.num('memory.tierGrow.minHitDays', { min: 0, max: 60 }), h('span', { className: 'ab-muted' }, '天')),
-          h(Row, { label: '重要程度上限', hint: '自动加深的天花板，留一点空间给模型标过的重要记忆；默认 0.85' }, f.range('memory.tierGrow.cap', 0, 1, 0.05, (v) => Math.round(v * 100) + '%')),
-          h(Row, { label: '升到「一般」要想起几天、多重要', hint: '默认 5 天且 ≥ 60%' },
-            f.num('memory.tierGrow.tier2.hitDays', { min: 0, max: 365 }), h('span', { className: 'ab-muted' }, '天 /'),
-            f.range('memory.tierGrow.tier2.imp', 0, 1, 0.05, (v) => Math.round(v * 100) + '%')),
-          h(Row, { label: '升到「重要」要想起几天、多重要', hint: '默认 10 天且 ≥ 75%' },
-            f.num('memory.tierGrow.tier3.hitDays', { min: 0, max: 365 }), h('span', { className: 'ab-muted' }, '天 /'),
-            f.range('memory.tierGrow.tier3.imp', 0, 1, 0.05, (v) => Math.round(v * 100) + '%')),
-          h(AssocPreview, { toast }),
+          // 可见组行 ③ 只放 3 个最常用的：联想开关、相似门槛、联想跳数；其余进折叠
+          h('div', { className: 'ab-grp-row' },
+            h(Row, { label: '记忆联想', hint: '已建 ' + (stats && stats.assoc ? stats.assoc : '–') + ' 条关联' + (stats && stats.assocAt ? '（' + new Date(stats.assocAt).toLocaleString() + ' 更新）' : '') }, f.sw('memory.assoc.enabled')),
+            h(Row, { label: '多条相似才算关联', hint: '余弦相似度门槛，越高连得越少越准；默认 45%' }, f.range('memory.assoc.minSim', 0.3, 0.9, 0.05, (v) => Math.round(v * 100) + '%')),
+            h(Row, { label: '联想跳数', hint: '0 关、1 = A→B、2 = A→B→C（默认）、3 最多。再高就是套娃，已封顶。条数上限在上面「每轮最多带几条联想」里调' },
+              h('div', { className: 'ab-flex', style: { gap: 8 } }, ['0', '1', '2', '3'].map((v) => h('label', { key: v, className: 'ab-flex', style: { gap: 4, cursor: 'pointer', alignItems: 'center' } },
+                h('input', { type: 'radio', name: 'memory.assoc.hops', checked: String(draft.memory.assoc?.hops ?? 2) === v, onChange: () => setDraft(setPath(draft, 'memory.assoc.hops', Number(v))) }),
+                h('span', null, v === '0' ? '关' : v === '1' ? '1 跳' : v === '2' ? '2 跳' : '3 跳'))))),
+          ),
+          more('更多设置', [
+            h(Row, { key: 'al', label: '每条最多连几个', hint: '度上限，防止一条记忆连到半个库' }, f.num('memory.assoc.limit', { min: 1, max: 8 }), h('span', { className: 'ab-muted' }, '条')),
+            h(Row, { key: 'hd', label: '每多跳一次打几折', hint: '跳得越远越不可信，分数乘以这个系数；默认 55%' }, f.range('memory.assoc.hopDecay', 0.1, 1, 0.05, (v) => Math.round(v * 100) + '%')),
+            h(Row, { key: 'tg', label: '记忆加深（行为驱动升档）', hint: '被想起来的次数和天数够了，重要程度慢慢涨、档位往上走' }, f.sw('memory.tierGrow.enabled')),
+            h(Row, { key: 'ah', label: '联想带出的记忆也算想起', hint: '几次联想折算成「想起来一天」。2 = 联想两次算一次想起（比直接命中轻）；1 = 一样重' }, f.num('memory.tierGrow.assocPerHitDay', { min: 1, max: 20 }), h('span', { className: 'ab-muted' }, '次/天')),
+            h(Row, { key: 'pd', label: '被反复想起后每天涨多少', hint: '默认 0.02/天；要到下面「最少想起几天」才会计入' }, f.num('memory.tierGrow.perDay', { min: 0, max: 0.2, step: 0.01 })),
+            h(Row, { key: 'mh', label: '最少想起几天才开始算', hint: '默认 3 天；偶然想起一两次不该把她记的事推到重要档' }, f.num('memory.tierGrow.minHitDays', { min: 0, max: 60 }), h('span', { className: 'ab-muted' }, '天')),
+            h(Row, { key: 'cp', label: '重要程度上限', hint: '自动加深的天花板，留一点空间给模型标过的重要记忆；默认 0.85' }, f.range('memory.tierGrow.cap', 0, 1, 0.05, (v) => Math.round(v * 100) + '%')),
+            h(Row, { key: 't2', label: '升到「一般」要想起几天、多重要', hint: '默认 5 天且 ≥ 60%' },
+              f.num('memory.tierGrow.tier2.hitDays', { min: 0, max: 365 }), h('span', { className: 'ab-muted' }, '天 /'),
+              f.range('memory.tierGrow.tier2.imp', 0, 1, 0.05, (v) => Math.round(v * 100) + '%')),
+            h(Row, { key: 't3', label: '升到「重要」要想起几天、多重要', hint: '默认 10 天且 ≥ 75%' },
+              f.num('memory.tierGrow.tier3.hitDays', { min: 0, max: 365 }), h('span', { className: 'ab-muted' }, '天 /'),
+              f.range('memory.tierGrow.tier3.imp', 0, 1, 0.05, (v) => Math.round(v * 100) + '%')),
+            h(AssocPreview, { key: 'ap', toast }),
+          ]),
         ),
 
-        // 低频参数统一收进「更多设置」折叠卡（defaultOpen=false：默认不展开，展开区才挂载控件）
-        h(Card, { title: '更多设置（3 项）', desc: '向量检索、重排候选、分层记忆与遗忘：都是调优用的低频参数，不改也能正常用。', collapsible: true, defaultOpen: false },
-        h(Fold, { title: '向量检索（实验性）', icon: '🧭',
+        // 低频调优参数统一收进「更多设置」折叠卡（defaultOpen=false：默认不展开，展开区才挂载控件）
+        // 内部仍按 Fold 分组（向量检索 / 重排 / 分层遗忘），保留各组的运行成本与依赖提示文案
+        more('高级调优', [
+        h(Fold, { key: 'vec', title: '向量检索（实验性）', icon: '🧭',
           summary: stats ? '已同步 ' + (stats.vector || 0) + ' / ' + (stats.count || 0) + ' 条' : '' },
           h('div', { className: 'ab-note' }, '默认关闭。打开后可以按意思找记忆：推荐用自带的本地小模型（纯离线、不联网、不花钱）；也可以改成自己的在线服务，那时会把记忆文字和查询文字发给你填的地址。'),
           h(Row, { label: '向量检索（实验性）', hint: '补充按意思找记忆；已同步 ' + (stats ? stats.vector || 0 : '–') + ' 条（可刷新页面查看）' }, f.sw('memory.vector.enabled')),
@@ -5239,16 +5259,16 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
           h('div', { className: 'ab-muted ab-small' }, '重排只处理已经通过群聊/人物权限过滤的候选，不会看到不该带出的记忆。'),
         ),
 
-        h(Fold, { title: '人物与群印象', icon: '👤' },
-          // beta 侧新增：只给有交集的人建人物记忆，路过群友不占位置
-          h(Row, { label: '只记住有交集的人', hint: '只给私聊过、在群里 @ 她、回复她或被她回复过的人，以及 QQ 好友和白名单朋友建立人物记忆。路过群友不占位置，群里的公共事情照常记；已有画像保留。' }, f.sw('memory.profileOnlyAcquainted')),
-          h(Row, { label: '讨厌的人说话时不接的几率', hint: '消息仍会看到和记住；0% 表示照常回复，主人和一起说话的其他人不受影响' }, f.range('memory.dislikeSilence', 0, 1, 0.05, (v) => Math.round(v * 100) + '%')),
-          h(Row, { label: '每项人物印象最多多少字' }, f.num('memory.profileFieldChars', { min: 0 })),
-          h(Row, { label: '群里最多带几个人的画像' }, f.num('memory.profilePeople', { min: 0 })),
-          h(Row, { label: '人物画像总字数上限' }, f.num('memory.profileChars', { min: 0 })),
-          h(Row, { label: '记住群印象', hint: '只在对应的群里带上' }, f.sw('memory.chatImpression')),
-          h(Row, { label: '群印象字数上限' }, f.num('memory.chatImpressionChars', { min: 0 })),
-        ),
+        // 人物与群印象：低频画像开关与字数上限，收进折叠（保留 7 项）
+        more('人物与群印象', [
+          h(Row, { key: 'oa', label: '只记住有交集的人', hint: '只给私聊过、在群里 @ 她、回复她或被她回复过的人，以及 QQ 好友和白名单朋友建立人物记忆。路过群友不占位置，群里的公共事情照常记；已有画像保留。' }, f.sw('memory.profileOnlyAcquainted')),
+          h(Row, { key: 'ds', label: '讨厌的人说话时不接的几率', hint: '消息仍会看到和记住；0% 表示照常回复，主人和一起说话的其他人不受影响' }, f.range('memory.dislikeSilence', 0, 1, 0.05, (v) => Math.round(v * 100) + '%')),
+          h(Row, { key: 'fc', label: '每项人物印象最多多少字' }, f.num('memory.profileFieldChars', { min: 0 })),
+          h(Row, { key: 'pp', label: '群里最多带几个人的画像' }, f.num('memory.profilePeople', { min: 0 })),
+          h(Row, { key: 'pc', label: '人物画像总字数上限' }, f.num('memory.profileChars', { min: 0 })),
+          h(Row, { key: 'ci', label: '记住群印象', hint: '只在对应的群里带上' }, f.sw('memory.chatImpression')),
+          h(Row, { key: 'cc', label: '群印象字数上限' }, f.num('memory.chatImpressionChars', { min: 0 })),
+        ]),
 
         h(Fold, { title: '分层记忆与遗忘', icon: '📚' },
           h(Row, { label: '压缩旧聊天和记忆', hint: '原话到期前先压成梗概；失败或预算不足时保留原文' }, f.sw('memory.gistEnabled')),
@@ -5269,7 +5289,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
           h(Row, { label: '多久以前的事开始浓缩', hint: '这些天以前的琐碎记忆才会被概括；最近的事先留着具体细节。默认 14 天' }, f.num('memory.compressAfterDays', { min: 1, max: 365 }), h('span', { className: 'ab-muted' }, '天')),
           h(Row, { label: '私聊时想起别处的话', hint: '和你私聊时，带上她最近 24 小时在别的聊天里说过的话，每轮多占约 300 字。只进你的私聊，别处一律不带。默认关。' }, f.sw('memory.crossContext')),
         ),
-        ),
+        ]),
 
         h(Fold, { title: '手动加一条', icon: '✍️', summary: '你想让她一定记住的事' },
           h('div', { className: 'ab-flex', style: { gap: 8, flexWrap: 'wrap' } },
@@ -9780,8 +9800,14 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       const [voiceView, setVoiceView] = useState(() => { try { return localStorage.getItem('aurabot.voice-view') === 'listen' ? 'listen' : 'send' } catch (e) { return 'send' } })
       // 切换子视图时记住选择：下次进来还停在同一视图
       const pickVoiceView = (v) => { setVoiceView(v); try { localStorage.setItem('aurabot.voice-view', v) } catch (e) {} }
-      // 记忆页子视图：'entries' 记忆条目 / 'person' 人物（旧「人物记忆」页迁入 person）
-      const [memoryView, setMemoryView] = useState(() => { try { return localStorage.getItem('aurabot.memory-view') === 'person' ? 'person' : 'entries' } catch (e) { return 'entries' } })
+      // 记忆页子视图：'starmap' 星图（默认）/ 'entries' 记忆条目 / 'person' 人物。
+      // 取值集合扩展后仍兼容老用户：已存 entries/person 继续有效；没存过或值异常 → 默认星图。
+      const [memoryView, setMemoryView] = useState(() => {
+        try {
+          const v = localStorage.getItem('aurabot.memory-view')
+          return v === 'entries' || v === 'person' ? v : 'starmap'
+        } catch (e) { return 'starmap' }
+      })
       const pickMemoryView = (v) => { setMemoryView(v); try { localStorage.setItem('aurabot.memory-view', v) } catch (e) {} }
       // 内容平台子视图：bili / douyin / heybox（旧三个独立页签迁入这里）
       const [contentView, setContentView] = useState(() => { try { return localStorage.getItem('aurabot.content-view') || '' } catch (e) { return '' } })
