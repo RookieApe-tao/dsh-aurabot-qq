@@ -327,7 +327,7 @@ export default {
 
       // 5) 三段决策环（①生成 → ②把关；constraintRules 已在前缀段与把关前置否决注入）
       const round = Math.floor(Date.now() / 60000)
-      const res = await planner.decideRound({
+      const res = await c.planner.decideRound({
         round,
         persona: { summary: personaSummary, instinctExtra },
         constraintRulesText,
