@@ -132,6 +132,38 @@ test('慢工具提示等待发送挂钩时轮次结束，不再投递到 QQ', as
   assert.equal(s.calls.some((x) => x.action === 'send_private_msg'), false)
 })
 
+// 生图 notice 已经自己发过「正在做」提示（qq_draw_image 里 markSlowNotice）：hub 的 1.5s 兜底
+// 要跳过，不能把她的当轮正文再发一遍——同样的话会重复两条（2026-11-18 主人私聊实测）。
+test('工具调 markSlowNotice 后，慢工具兜底不再发她当轮正文', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const work = deferred()
+  t.after(() => work.resolve({ ok: true }))
+  let fake
+  const s = setup(t, {
+    cfg: config({ dryRun: false }),
+    brain: async ({ callTool }) => {
+      const agent = [...fake.agents.values()][0]
+      // 她当轮正文写了「我去画」，同时工具先自己把 notice 发出去并登记 markSlowNotice
+      fake.emit('session/event', agent.session, { type: 'assistant/message', data: { turn: 1, message: { content: [
+        { type: 'text', text: '哟 憋半天是想要这款 行 给你画 别太兴奋' },
+        { type: 'tool-call', id: 'slow-mark-1', name: 'slow-mark', arguments: '{}' },
+      ] } } })
+      const [sid] = [...s.hub.sessions().values()].map((x) => x.sessionId)
+      s.hub.markSlowNotice(sid)
+      await callTool('slow-mark', {})
+      return ''
+    },
+    buildTools: () => [{ name: 'slow-mark', slow: true, execute: () => work.promise }],
+  })
+  fake = s.fake
+  await s.hub.onMessage(event())
+  await settle()
+  t.mock.timers.tick(1501)
+  await settle()
+  assert.equal(s.calls.some((x) => x.action === 'send_private_msg' && JSON.stringify(x.params.message).includes('憋半天')), false,
+    'notice 已发过时兜底不能把当轮正文再发一遍')
+})
+
 function config(patch = {}) {
   return normalize({ enabled: true, dryRun: true, setupDone: true, ownerQQ: OWNER, botQQ: BOT,
     allow: { private: [OTHER], groups: [] }, voice: { enabled: false }, merge: { enabled: false },

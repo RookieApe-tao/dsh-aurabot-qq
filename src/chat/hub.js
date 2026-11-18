@@ -4781,6 +4781,11 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
     subagentFor,
     turnSendersAllOwner,
     turnDirectFromOwner,
+    // 这个聊天的回合（模型/工具阶段）是否正在进行。出站治理用它区分「她回合内的画前提示」
+    // 与「模块主动发言」：前者是对话的一部分，直发不经代发决断，否则会与最终回复重复（2026-11-18）。
+    turnRunning: (chatId) => running.has(String(chatId || '')),
+    // 慢工具自己已把「正在做」提示发出去（生图 notice）：登记后 hub 的 1.5s 兜底不再发她当轮正文。
+    markSlowNotice: (sessionId) => { if (sessionId) slowNoticeSent.add(sessionKey(sessionId)) },
     onNotice,
     turnHasOwner,
     turnSenders,

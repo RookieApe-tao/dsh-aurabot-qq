@@ -474,6 +474,40 @@ test('broker 档：模块发主人纯文本改走宿主代发（scopedHub 路径
   assert.equal(sent.length, 0, 'broker 代发路径不应再直接调 hub')
 })
 
+// ---------- broker 档：她回合内的模块发送直发，不经代发决断（2026-11-18 生图画前提示重复回归） ----------
+
+test('broker 档：她回合进行中时，模块 sendText 直发不经代发决断', async (t) => {
+  const svc = createOutboundPolicy({
+    getConfig: () => ({ ownerQQ: '10001', ext: { outboundPolicy: { tier: 'broker' } } }),
+    dataDir: null,
+    hooks: { fsSync: false },
+  })
+  let reserves = 0
+  svc.registerPolicySource({
+    name: 'purpose', state: () => 'ready', ready: () => true,
+    reserve: () => { reserves++; return { ok: true, reserveId: 'r1' } }, commit: () => ({ ok: true }), release: () => ({ ok: true }),
+  })
+  const submitted = []
+  svc.setDeliverer(async (to, text) => { submitted.push({ to, text }); return true })
+  const { hub, sent } = makeHub(t)
+  // 模拟「她的回合正在进行」（工具执行阶段）：生图的画前提示正是在这个窗口里发出的。
+  // 用闭包变量切换状态——scopedHub 在创建时捕获函数引用，事后重赋值不生效。
+  let inTurn = true
+  hub.turnRunning = (chatId) => inTurn && chatId === 'private:10001'
+  const scoped = scopeCoreForModule({ hub: { ...hub, subagentFor: () => () => 'ok' }, outbound: svc }, 'imagegen')
+  const r = await scoped.hub.sendText('private:10001', '哟 憋半天是想要这款 行 给你画 别太兴奋')
+  assert.deepEqual(r, { message_id: 'm1' }, '回合内直发返回真实发送回执（sendText 立刻完成）')
+  assert.equal(sent.length, 1, '这条真的发到 QQ 了')
+  assert.equal(submitted.length, 0, '不进代发决断——慢工具兜底与代发不会再重复同一句话')
+  assert.equal(reserves, 0, '回合内直发不占策略源额度（与「识别不了就直发」同口径）')
+  // 回合结束后：同一条发送回到原来的 broker 代发路径，行为不变
+  inTurn = false
+  const r2 = await scoped.hub.sendText('private:10001', '抖音日报来了')
+  assert.ok(r2, '回合结束后的主动发言照旧走代发')
+  assert.deepEqual(submitted, [{ to: 'private:10001', text: '抖音日报来了' }])
+  assert.equal(sent.length, 1, '代发路径不直接调 hub')
+})
+
 test('broker 档：决断不发 + 日志口各种坏形态都不炸链路（2026-11-06 生产 TypeError 回归）', async (t) => {
   const svc = createOutboundPolicy({
     getConfig: () => ({ ownerQQ: '10001', ext: { outboundPolicy: { tier: 'broker' } } }),

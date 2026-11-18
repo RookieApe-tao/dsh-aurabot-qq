@@ -175,7 +175,9 @@ export default {
         }
         const text = typeof notice === 'string' ? notice.trim().slice(0, 200) : ''
         let acknowledged = text ? await hub.sendText(chat.chatId, text) : null
-        if (acknowledged) hub.markSlowNotice?.(sessionId)
+        // 「正在做」提示已经以 notice 发出去了：立刻登记，hub 的慢工具兜底（1.5s 定时器）就不再发
+        // 她当轮正文——否则 notice 和兜底各发一遍，同样的话出现两次（2026-11-18 主人私聊实测）。
+        if (acknowledged && typeof hub.markSlowNotice === 'function') hub.markSlowNotice(sessionId)
         const simulatedNotice = () => acknowledged === null && Boolean(cfg.debug || cfg.dryRun)
         if (!acknowledged && !simulatedNotice() && !text) {
           // 模板提示是她自己写的正文；没有 notice 时优先用它，绝不发「好，我来画」固定句。

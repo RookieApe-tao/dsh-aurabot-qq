@@ -374,6 +374,15 @@ function settleModuleCall(core, verdict, outcome, log) {
 function governedSend(core, id, ask, run, log) {
   const svc = outboundOf(core)
   if (!svc) return run({ sourceModule: id })
+  // 她自己的回合正在进行（工具执行中）：这条发送是对话的一部分（生图/翻唱的画前提示、进度提示），
+  // 不是「模块主动找主人」。走代发决断要等一轮模型，慢工具兜底会先把同一句话发出去 → 内容重复两遍
+  // （2026-11-18 实测：notice 与兜底文案相同时 15:52:43 与 15:52:51 各发一次）。
+  // 回合内按「识别不了就直发」同口径：不过门闸、不占额度，直接发。回合结束后行为完全不变。
+  const inTurn = typeof core.hub?.turnRunning === 'function' && ask?.chatId && core.hub.turnRunning(ask.chatId)
+  if (inTurn) {
+    safeLog('info', log, `模块「${id}」这条发送发生在她自己的回合内（画前/进度提示），直发不经代发决断`)
+    return run({ sourceModule: id, outboundDone: true })
+  }
   // broker 档无可审文本（图片/文件/语音/消息段）发主人私聊：识别不了就直发，不进门闸
   if (unreviewableBrokerSend(core, ask)) {
     safeLog('info', log, `模块「${id}」这条主动发送没有可审文本（图片/文件等），按「识别不了就直发」口径直接发出`)
