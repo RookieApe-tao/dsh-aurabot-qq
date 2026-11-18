@@ -8,6 +8,10 @@ import { shouldDeferBackground } from '../core/offpeak.js'
 import { inHourWindow } from '../core/time-window.js'
 import { followUpHint } from './memory.js'
 import { moodReason } from './mood-context.js'
+import {
+  DEFAULT_EMOTIONS, FALLBACK_EMOTION_ICON, deriveEmotionVector, emotionKeys,
+  normalizeEmotionVector, normalizeEmotions, resolveEmotion, topEmotion,
+} from './mood-emotions.js'
 import { selfName, personaDataDir, personaNow } from '../persona/personas.js'
 
 // ---------------- 心情 ----------------
@@ -15,7 +19,8 @@ import { selfName, personaDataDir, personaNow } from '../persona/personas.js'
 // 心情明显偏离平常时，每一轮都告诉她现在的状态和具体的说话方式；平平常常时不说（免得把性格念「定」住）。
 // 心情还会实际影响行为：发表情包 / 语音的概率、回复快慢、群里插话的积极程度。
 
-const UP = ['喜欢你', '爱你', '想你', '可爱', '好看', '漂亮', '聪明', '真棒', '厉害', '牛', '谢谢', '辛苦', '晚安', '早安', '抱抱', '摸摸', '贴贴', '乖', '宝贝', '爱了', '哈哈哈', '白米饭', '好吃', '请你吃']
+// 【本机私有改动（local/de-identify-fish）：UP 词表去掉「白米饭」——一条鱼对米饭话题心情高涨就是露馅】
+const UP = ['喜欢你', '爱你', '想你', '可爱', '好看', '漂亮', '聪明', '真棒', '厉害', '牛', '谢谢', '辛苦', '晚安', '早安', '抱抱', '摸摸', '贴贴', '乖', '宝贝', '爱了', '哈哈哈', '好吃', '请你吃']
 const DOWN = ['讨厌', '滚', '烦死', '闭嘴', '笨', '蠢', '傻', '丑', '垃圾', '废物', '恶心', '无聊', '走开', '别理我', '不理你', '别说话', '生气', '难过', '烦人']
 
 export function moodLabel(v) {
@@ -83,11 +88,30 @@ export function createMood({ getConfig, dsh, log }) {
     const v = Number(getConfig().mood?.base)
     return Number.isFinite(v) ? Math.min(90, Math.max(10, v)) : MOOD_BASE // 面板是 10~90，手写超出时夹到边上，别退回默认
   }
-  const load = () => readJson(file(), () => ({ value: base(), at: Date.now(), reason: '', history: [] }))
+  const load = () => readJson(file(), () => ({ value: base(), at: Date.now(), reason: '', history: [], emotions: {}, emotionsAt: 0 }))
   const save = (s) => writeJson(file(), s)
   const current = () => {
     const s = load()
     return Math.round(decayed(s.value, s.at, getConfig().mood.halfLifeHours, Date.now(), base()))
+  }
+  /** 心情项配置：面板随时可改，读写都按当下配置走，不缓存（改完立刻生效，与标量同口径）。 */
+  const emotions = () => normalizeEmotions(getConfig().mood?.emotions)
+  /**
+   * 当前的情绪向量（已衰减、按当下心情项裁剪）。
+   * 只算不写：state() 是纯读，面板轮询不该产生落盘。
+   */
+  function emotionState(now = Date.now()) {
+    const s = load()
+    const list = emotions()
+    const { vector, at } = deriveEmotionVector({
+      vector: s.emotions,
+      at: s.emotionsAt,
+      halfLifeHours: getConfig().mood?.halfLifeHours,
+      now,
+      emotions: list,
+    })
+    const top = topEmotion(vector, list)
+    return { vector, at, list, top }
   }
   /**
    * 推一下心情（d 可正可负），记下原因和原因所属的聊天。
@@ -109,12 +133,94 @@ export function createMood({ getConfig, dsh, log }) {
     save(s)
     try { log?.debug?.(`心情 ${before} → ${Math.round(s.value)}（${d > 0 ? '+' : ''}${d}）：${reason}`) } catch (error) {}
   }
+  /**
+   * 这一轮让她「有点什么情绪」：情绪向量里对应项抬一手（衰减在每次结算时统一做）。
+   *
+   * 这是目的引擎等模块上报情绪的唯一入口——
+   * 心情模块是唯一真相，别人的情绪一律走这里，不再自己维护一份向量。
+   *
+   * @param {string|string[]|object} emotion 情绪键 / 键数组 / { 键: 权重 }
+   * @param {object} opts { weight 单项权重(默认0.45)、now、silent=true 时不落盘（预演/预览用） }
+   * @returns {object|null} 结算后的向量；模块关着或调试模式返回 null
+   */
+  function feel(emotion, { weight = 0.45, now = Date.now(), silent = false } = {}) {
+    const cfg = getConfig()
+    if (cfg.debug) return null
+    if (!cfg.mood?.enabled) return null
+    const list = emotions()
+    const s = load()
+    const boost = typeof emotion === 'object' && emotion !== null && !Array.isArray(emotion)
+      ? emotion
+      : (Array.isArray(emotion) ? { ...Object.fromEntries(emotion.map((key) => [key, weight])) } : { [String(emotion || '')]: weight })
+    const { vector, at } = deriveEmotionVector({
+      vector: s.emotions,
+      at: s.emotionsAt,
+      boost,
+      halfLifeHours: cfg.mood?.halfLifeHours,
+      now,
+      emotions: list,
+    })
+    if (!silent) {
+      s.emotions = vector
+      s.emotionsAt = at
+      save(s)
+    }
+    const keys = Object.keys(boost).map((key) => resolveEmotion(list, key)).filter(Boolean)
+    if (keys.length) { try { log?.debug?.(`情绪 ${keys.join('、')} +${weight}`) } catch (error) {} }
+    return vector
+  }
+  /**
+   * 把别处攒起来的旧向量并进来（一次性迁移用）。
+   * 只并「心情项认识且当前更弱」的项——不覆盖她此刻真实更高的情绪，
+   * 迁移只是把历史搬个位置，不该在迁移瞬间改变她的状态。
+   */
+  function importEmotions(raw, { at = 0, now = Date.now() } = {}) {
+    const cfg = getConfig()
+    if (!raw || typeof raw !== 'object') return null
+    const list = emotions()
+    const known = emotionKeys(list)
+    const s = load()
+    const incoming = normalizeEmotionVector(raw, list)
+    if (!Object.keys(incoming).length) return null
+    const merged = { ...(s.emotions || {}) }
+    for (const [key, value] of Object.entries(incoming)) {
+      if (!known.has(key)) continue
+      if (!(Number(merged[key]) >= value)) merged[key] = value
+    }
+    s.emotions = merged
+    // 迁移不重置衰减起点：优先沿用旧向量自己的时间戳，没有就按传入值/现在
+    s.emotionsAt = Number(s.emotionsAt) || Number(at) || now
+    if (!cfg.debug) save(s)
+    return s.emotions
+  }
   return {
     current,
     label: () => moodLabel(current()),
-    state: () => ({ ...load(), value: current(), label: moodLabel(current()) }),
+    state: () => {
+      const s = load()
+      const es = emotionState()
+      return {
+        ...s,
+        value: current(),
+        label: moodLabel(current()),
+        // 情绪向量摘要：面板画十条进度条 + 一行「此刻最强的那一项」
+        emotions: es.vector,
+        emotionsAt: es.at,
+        emotionsItems: es.list.map((item) => ({ ...item, icon: item.icon || FALLBACK_EMOTION_ICON, value: es.vector[item.key] || 0 })),
+        emotionTop: es.top,
+      }
+    },
     effects: () => (getConfig().mood.enabled ? moodEffects(current()) : moodEffects(base())),
     nudge,
+    feel,
+    importEmotions,
+    emotions: () => emotions(),
+    /** 情绪强弱画像（桌宠气泡辉光、提示词措辞用）；未知键回中性偏弱。 */
+    emotionProfile: (key) => {
+      const list = emotions()
+      const item = list.find((x) => x.key === String(key || ''))
+      return item ? { valence: item.valence, arousal: item.arousal } : { valence: 0, arousal: 0.4 }
+    },
     /**
      * 聊天里的一句话。direct = 是对她说的（私聊、@她、叫她）；owner = 主人说的。
      * 不是对她说的群聊只算三成，主人的话算 1.5 倍。

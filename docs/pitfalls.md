@@ -81,3 +81,22 @@ ode --test "test/replay/**/*.test.js"。
 - 解决：三处用法（聊天页 2998/3006/3016、记忆页三处）全部去掉包裹，`Row` 直接纵向排列；CSS 三行整段删除（无任何剩余使用者、无测试引用），原位留注释说明为什么移除，防止以后有人再引入。
 - 教训：**「容器类改写了子组件形状」是面板布局类 bug 的常见源**——看到某个 Row 变竖排/控件撑满，先查它父容器的 class 有没有针对 `.ab-row` 的覆盖规则，别去改 Row 组件本身。全局样式删除前先 `Select-String test/*.test.js` 确认无断言依赖。
 - 涉及文件/命令：`repo/client/client.js`（CSS L724-729 改注释、聊天页 L2996-3020 去包裹）；验证 47/47。
+
+## 2026-11-17 心情有两套状态、两个半衰期、两块面板（合并时踩到的口径问题）
+
+- **现象**：面板上「心情」出现在两处——人设 › 心情页的 0~100 数值条，和人设 › 目的引擎 › 状态卡里的十条情绪进度条。两处数值经常对不上：目的引擎那边只有主动搭话后才跳一下、且淡得慢；心情页那边每条聊天消息都在动。用户报「心情模块和目的引擎的心情能不能合并」。
+- **原因**：两套状态各写各的——心情模块 `persona-data/<人格>/mood.json` 的单标量（半衰期 `mood.halfLifeHours`，默认 3h，影响表情/语音/延迟/插话、进提示词），目的引擎 `purpose-state.json` 的 `moods` 十维向量（`deriveMoods` 里**硬编码 6h**，不进提示词、不影响任何行为，只被面板画进度条）。同一个概念（她此刻的心情）在两处独立演化，衰减常数还不一样，必然漂移。
+- **解决**：向量下沉到心情模块，目的引擎只上报。
+  - 新增 `src/features/mood-emotions.js`（纯函数：默认十项、`normalizeEmotions`、`deriveEmotionVector`、`resolveEmotion`、`topEmotion`），心情项改成配置 `mood.emotions`（可增删改名、调 valence/arousal，上限 24 项）。
+  - `mood.json` 增 `emotions/emotionsAt`；`createMood` 增 `feel/importEmotions/emotions`，衰减复用 `mood.halfLifeHours`。
+  - 目的引擎删掉 `deriveMoods` 的调用点（函数留作兼容薄壳），`applyPurposeOutcome` 不再写向量；接线层 `nudgeMood` 改名 `reportMood`，同时调 `mood.feel`（向量）+ `mood.nudge`（标量）。`lastEmotion/lastEmotionText` 留在引擎（语义是「上一轮的情绪」）。
+  - 旧向量一次性迁移：`loadState` 里 `migrateLegacyMoods` 搬到心情模块后清空自身字段并写 `moodsMigratedAt`（**不清空会每次启动重复搬，把刚衰减下来的向量又抬回去**）。`state()` 也改走 `loadState`，否则只有主动搭话才触发迁移。
+  - 面板：情绪条 + 心情项编辑器搬到心情页；目的引擎状态卡只留「上一轮的情绪」一行。
+- **教训**：
+  1. **同一个概念只能有一份持久状态**。要合并时先问「谁是唯一真相」——这里是心情模块（核心 hub 的表情/语音/插话倍率都消费它，且目的引擎可关可缺），不是反过来。
+  2. 迁移必须先落「迁移标记」再清旧字段，否则每次 load 都重搬一遍。
+  3. 面板取值要防「只有摘要的残对象」：`st.mood` 在心情模块没跑时是 `{value,label,reason}` 空壳，直接 `st.mood.emotionsItems` 会让整页崩（`memory-style-panel.test.js` 立刻抓到）。凡进渲染的 API 结果一律可选链 + 数组兜底（同族坑见 2026-11-17「内容平台页整页崩」）。
+- **附带修复**：心情页的「历史」列表从来没显示过——面板读 `st.mood.history`，但 `/state` 早在 e2e 里锁了「不含 history」，模块自己的 `/mood/history` 路由一直没人调。现改为心情页挂载时拉 `/mood/history`。
+- **涉及文件**：`src/features/mood-emotions.js`（新）、`src/features/mood.js`、`src/modules/mood/index.js`、`src/core/config.js`、`src/purpose/engine.js`、`src/purpose/module.js`、`client/client.js`；测试 `test/mood-emotions.test.js`、`test/panel-mood-emotions.test.js`。
+- **验证**：`node --test "test/**/*.test.js"` → 3008 项 / 2998 过 / 4 挂（全是已知环境失败：`backup.test.js` 2 项 + `song-cpu-profile.test.js` 2 项，动工前 stash 到干净 HEAD 复现过同一批）。
+

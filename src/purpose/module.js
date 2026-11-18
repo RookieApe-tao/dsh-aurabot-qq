@@ -20,7 +20,7 @@ import { followUpHint } from '../features/memory.js'
 import { selfName, selfNames, personaDataDir, personaNow } from '../persona/personas.js'
 import { normalizeSelection } from '../chat/chat-model.js'
 import {
-  DEFAULT_PURPOSE_CONFIG, PURPOSE_NEEDS, NEED_LABELS, EMOTION_LABELS, EMOTION_PROFILES,
+  DEFAULT_PURPOSE_CONFIG, PURPOSE_NEEDS, NEED_LABELS,
   normalizePurposeConfig, createPurposeState, normalizePurposeState,
   ensurePurposeDay, ensurePurposeSchedule, planNextFire, evaluatePurposeTick,
   markPurposeDelivered, markPurposeSkip, applyPurposeOutcome,
@@ -29,6 +29,8 @@ import {
   minePurposeSeeds, selectPurpose, buildPurposePrompt, parsePurposeMemo, emotionProfile,
   summarizePurposeState, recordOwnerReplyHours, formatMaterialLine,
 } from './engine.js'
+// 心情项的唯一真相在心情模块：这里只读配置、不自己存一份情绪表。
+import { normalizeEmotions, resolveEmotion } from '../features/mood-emotions.js'
 
 const MINUTE = 60_000
 // mood 模块靠 userText 的「【系统提醒」前缀把主动回合判成 origin='speak-up'（mood/index.js 的判定），
@@ -108,6 +110,8 @@ export function cleanReply(raw, options, cfg) {
 
 export function createPurpose({ getConfig, setConfig, hub, log, isMuted, mood, memory, personaText, pet: petOf, use, identity, routeOwner }) {
   const moodOf = () => { try { return mood?.() || null } catch { return null } }
+  // 心情项：用户配的情绪表（心情页可增删改名）。引擎只读，不自己存一份。
+  const emotionItems = () => normalizeEmotions(getConfig().mood?.emotions)
   const memoryOf = () => { try { return memory?.() || null } catch { return null } }
   const ownerId = () => identity?.owner?.() || null
   const resolveOwnerChat = () => (typeof routeOwner === 'function' ? routeOwner() : hub?.ownerChat?.()) || ''
@@ -292,6 +296,34 @@ export function createPurpose({ getConfig, setConfig, hub, log, isMuted, mood, m
   }
 
   // ---------- 状态 ----------
+  // 【一次性迁移】2026-11-17 之前心情向量存在目的引擎的状态文件里（moods/moodsAt）；
+  // 之后归心情模块所有（persona-data/<人格>/mood.json 的 emotions/emotionsAt）。
+  // 这里在第一次读到带旧向量、且目的状态还没打迁移标记的存档时，把它并进心情模块，
+  // 然后**清空自己这份**并打标记——不清空的话下次启动会再并一次，把刚衰减下来的向量又抬回去。
+  // 只在主状态（friend===''）做：朋友的引擎状态不承载心情。
+  function migrateLegacyMoods(state, friend = '') {
+    if (friend) return false
+    if (state.moodsMigratedAt) return false
+    const legacy = state.moods && typeof state.moods === 'object' ? state.moods : null
+    const hasLegacy = legacy && Object.values(legacy).some((v) => Number(v) > 0)
+    if (hasLegacy) {
+      const m = moodOf()
+      if (typeof m?.importEmotions === 'function') {
+        try {
+          m.importEmotions(legacy, { at: Number(state.moodsAt) || 0 })
+          log.info?.('目的：旧的心情向量已迁移到心情模块')
+        } catch (error) {
+          log.warn?.('目的：心情向量迁移失败（不影响运行）：', error?.message)
+          return false // 迁移没成功就不打标记，下次再试
+        }
+      }
+    }
+    state.moods = {}
+    state.moodsAt = 0
+    state.moodsMigratedAt = Date.now()
+    return true
+  }
+
   function loadState(config, now = Date.now(), friend = '') {
     const raw = readJson(stateFile(friend), null)
     const state = normalizePurposeState(raw, now)
@@ -307,6 +339,9 @@ export function createPurpose({ getConfig, setConfig, hub, log, isMuted, mood, m
     }
     ensurePurposeDay(state, now)
     ensurePurposeSchedule(state, { now, config })
+    // 迁移必须在 normalize 之后：normalize 只把旧向量原样读回来，不解释它的语义。
+    const migrated = migrateLegacyMoods(state, friend)
+    if (migrated) writeJson(stateFile(friend), state) // 立刻落盘，避免每次 load 都重跑迁移
     return state
   }
   const saveState = (state, friend = '') => writeJson(stateFile(friend), state)
@@ -383,10 +418,12 @@ export function createPurpose({ getConfig, setConfig, hub, log, isMuted, mood, m
     if (!sel || !Array.isArray(materials) || !materials.length) return materials
     const list = materials.slice(0, 28)
     const lines = list.map((m, i) => `${i + 1}. ${formatMaterialLine(m, now)}`)
+    // 情绪候选按「用户配的心情项」给——删掉的项不该再让模型产出（也给不出标签）。
+    const emotionItems = normalizeEmotions(getConfig().mood?.emotions)
     const prompt = [
       `下面是 AI 伙伴「${selfName(getConfig())}」最近看到/经历的事情列表（已脱敏）。给每一条判断：`,
       `① 它最指向哪种内心需要（只能是：${PURPOSE_NEEDS.join('/')}）；`,
-      `② 它让${selfName(getConfig())}产生什么情绪（只能是：${Object.keys(EMOTION_LABELS).join('/')}）。`,
+      `② 它让${selfName(getConfig())}产生什么情绪（只能是：${emotionItems.map((e) => e.key).join('/')}）。`,
       '只输出一个 JSON 数组，不要解释：[{"i":1,"need":"play","emotion":"curious"}, …]，i 对应条目序号。',
       '',
       ...lines,
@@ -402,11 +439,12 @@ export function createPurpose({ getConfig, setConfig, hub, log, isMuted, mood, m
         if (!m || !PURPOSE_NEEDS.includes(item?.need)) continue
         hit += 1
         m.needAffinity = Object.fromEntries(PURPOSE_NEEDS.map((n) => [n, n === item.need ? 1 : 0]))
-        const emotion = EMOTION_LABELS[item?.emotion] ? item.emotion : ''
+        // 模型可能仍吐出已删除的键（旧提示词缓存/自由发挥）：按画像映射到最接近的一项
+        const emotion = emotionItems.some((e) => e.key === item?.emotion) ? item.emotion : resolveEmotion(emotionItems, item?.emotion)
         if (emotion) {
           m.scoredEmotion = emotion
           // 情绪画像回写 cues：后续 appraiseMaterial 直接吃模型判的情绪强弱。
-          const p = EMOTION_PROFILES[emotion]
+          const p = emotionProfile(emotion, emotionItems)
           m.cues = { positive: p.valence > 0.1, negative: p.valence < -0.1, arousal: p.arousal }
         }
       }
@@ -456,7 +494,10 @@ export function createPurpose({ getConfig, setConfig, hub, log, isMuted, mood, m
       now, config,
       ownerUin: chatIdOf(cfg, friend) || targetPerson,
       roleName: selfName(cfg),
-      roleAliases: selfNames(cfg),
+      // 【本机私有改动（local/de-identify-fish 分支，勿提 PR）】：旧称「大肥鱼/肥鱼/鱼鱼」不再作为
+      // 「在说我」的判定素材——群里提到旧名会命中 identity 需求驱动、被当成叫自己而接话，鱼设露馅。
+      // 旧称仍保留在 personas.selfNames 里，只供记忆层归类历史数据（isSelfName）。
+      roleAliases: [selfName(cfg)],
       conversations: conversations(cfg, now, friend),
       biliEntries: rssEntries(friend), // 浏览型模块的素材口（rss-reader「自主上网」等）；空数组=与从前一致
       memoryRecords: memoryRecords(friend),
@@ -503,6 +544,7 @@ export function createPurpose({ getConfig, setConfig, hub, log, isMuted, mood, m
       history: state.history,
       stats: ctx.materials.stats,
       drives: ctx.drives,
+      emotions: emotionItems(),
     }) + `\n6) 这一轮不能用任何工具：直接输出你要发的那句话即可（会自动转发给${name}）。不想说就整段只输出 ${SILENCE}。`
     const body = friend ? prompt.replaceAll('主人', name) : prompt // 朋友不是她的主人
     return [`你是「${selfName(cfg)}」。`, body, selected?.kind === 'memory-follow-up' ? followUpHint(ctx.followUp) : ''].filter(Boolean).join('\n')
@@ -592,7 +634,7 @@ export function createPurpose({ getConfig, setConfig, hub, log, isMuted, mood, m
 
     const picked = selectPurpose({
       seeds: ctx.seeds, goals: ctx.goals, pending: state.pending, history: state.history,
-      config, drives: ctx.drives, now, lastMasterAt: ctx.lastMasterAt,
+      config, drives: ctx.drives, now, lastMasterAt: ctx.lastMasterAt, emotions: emotionItems(),
     })
     state.lastMaterialCount = ctx.materials.items.length
     state.lastCandidateCount = picked.candidates.length
@@ -701,7 +743,7 @@ export function createPurpose({ getConfig, setConfig, hub, log, isMuted, mood, m
     if (following && outcome === 'sent') memoryOf()?.markFollowUpAsked?.(ctx.followUp.id)
     // 模型的「待续」不能把事实跟进再复制进 purpose.pending。
     applyPurposeOutcome(state, { now: Date.now(), config, outcome, text, memo: following ? null : memo, planned: picked.purpose })
-    if (!friend) nudgeMood(picked.purpose, outcome, memo, chatIdOf(cfg, friend))
+    if (!friend) reportMood(picked.purpose, outcome, memo, chatIdOf(cfg, friend))
     saveState(state, friend)
     log.info?.(`目的：回合结束 ${outcome}（今天第 ${state.countToday} 次）`)
     return { outcome, text, memo }
@@ -926,14 +968,23 @@ export function createPurpose({ getConfig, setConfig, hub, log, isMuted, mood, m
     }
   }
 
-  // 9 维驱动 → mood 单标量。mood 关闭时 nudge 自静默。
-  // memo 里的【感受】喜/−喜（feelings.moodDelta ±10）会叠加在情绪表之上。
-  function nudgeMood(purpose, outcome, memo = null, chatId = '') {
+  // 一轮结束后的心情上报（2026-11-17 改口径）：
+  //   ① 情绪向量：把这一轮的情绪交给心情模块（mood.feel），它是唯一真相；
+  //   ② 心情标量：按情绪表折算成 ±N 交给 mood.nudge（沿用旧口径，只是现在和向量同源）；
+  //   ③ memo 里的【感受】喜/−喜（feelings.moodDelta ±10）叠加在标量之上。
+  // 心情模块关着时 feel/nudge 自己静默（旧行为：mood 关闭 nudge 自静默）。
+  function reportMood(purpose, outcome, memo = null, chatId = '') {
     if (outcome !== 'sent') return
     const m = moodOf()
-    if (!m?.nudge) return
+    if (!m) return
+    const emotion = resolveEmotion(emotionItems(), purpose?.emotion)
+    // 向量：这一轮的情绪抬一手（它自己会按心情的半衰期衰减）
+    if (emotion && typeof m.feel === 'function') {
+      try { m.feel(emotion, { weight: 0.45 }) } catch {}
+    }
+    if (typeof m.nudge !== 'function') return
     const table = { affectionate: 5, excited: 5, proud: 4, amused: 4, lonely: -3, bored: -2, worried: -2, envious: -2, content: 0 }
-    const delta = table[purpose?.emotion] || 0
+    const delta = table[emotion] || 0
     const feel = Math.max(-10, Math.min(10, Number(memo?.feelings?.moodDelta) || 0))
     const total = delta + feel
     if (!total) return
@@ -1120,8 +1171,9 @@ export function createPurpose({ getConfig, setConfig, hub, log, isMuted, mood, m
 
   /** 同步返回（host.js:401 / 概览页依赖），至少含 count。 */
   function state() {
-    const s = readJson(stateFile(), null)
-    const normalized = normalizePurposeState(s)
+    // 走 loadState 而不是裸 readJson：心情向量的一次性迁移挂在 loadState 上，
+    // 面板/命令先调 state() 的路径也必须触发它（否则只有主动搭话才会迁移）。
+    const normalized = loadState(purposeConfig(getConfig()))
     return {
       count: normalized.countToday,
       countToday: normalized.countToday,
@@ -1137,7 +1189,7 @@ export function createPurpose({ getConfig, setConfig, hub, log, isMuted, mood, m
   /** 面板摘要（不含提示词全文）。 */
   function status() {
     const config = purposeConfig(getConfig())
-    return summarizePurposeState(loadState(config), { config })
+    return summarizePurposeState(loadState(config), { config, emotions: emotionItems() })
   }
 
   /** 零副作用预览：真收素材、真拼提示词，但不写状态、不生成、不投递。 */
@@ -1150,7 +1202,7 @@ export function createPurpose({ getConfig, setConfig, hub, log, isMuted, mood, m
     const lastMasterAt = ctx.lastMasterAt
     const picked = selectPurpose({
       seeds: ctx.seeds, goals: ctx.goals, pending: state.pending, history: state.history,
-      config, drives: ctx.drives, now, lastMasterAt,
+      config, drives: ctx.drives, now, lastMasterAt, emotions: emotionItems(),
     })
     const prompt = picked.purpose ? promptFor(cfg, config, picked.purpose, { ...ctx, candidates: picked.candidates }, state, now) : ''
     return {

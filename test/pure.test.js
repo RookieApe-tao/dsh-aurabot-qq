@@ -73,7 +73,7 @@ const base = (o) => ({
 test('群聊：@、引用、唤醒词必回', () => {
   assert.equal(decideGroupReply(base({ mentioned: true, rand: () => 0.99 })).mode, 'must')
   assert.equal(decideGroupReply(base({ repliedToBot: true, rand: () => 0.99 })).mode, 'must')
-  assert.equal(decideGroupReply(base({ text: '肥鱼在吗', rand: () => 0.99 })).mode, 'must')
+  assert.equal(decideGroupReply(base({ text: '咕嘟在吗', rand: () => 0.99 })).mode, 'must')
   // 必回不受静默时段影响
   assert.equal(decideGroupReply(base({ mentioned: true, hour: 3 })).reply, true)
 })
@@ -83,7 +83,7 @@ test('群聊：每小时 @/唤醒词必回上限，超过不回，主人除外',
   // 超上限：@、引用、叫名字都不回了
   assert.match(decideGroupReply(cap({ mentioned: true })).reason, /回够了/)
   assert.match(decideGroupReply(cap({ repliedToBot: true })).reason, /回够了/)
-  assert.match(decideGroupReply(cap({ text: '肥鱼在吗' })).reason, /回够了/)
+  assert.match(decideGroupReply(cap({ text: '咕嘟在吗' })).reason, /回够了/)
   // 主人说话不受限
   assert.equal(decideGroupReply(cap({ mentioned: true, fromOwner: true })).mode, 'must')
   // 小时滚过去就又能回了
@@ -122,7 +122,7 @@ test('群聊安全刹车：短时间说太多就歇着，但明确被叫到的�
   // 刹车只拦她主动接话：@、引用、叫名字、主人 @ 都能叫动
   assert.equal(decideGroupReply(base({ mentioned: true, botReplyTimes: eight })).mode, 'must')
   assert.equal(decideGroupReply(base({ repliedToBot: true, botReplyTimes: eight })).mode, 'must')
-  assert.equal(decideGroupReply(base({ text: '肥鱼 露馅你很自豪吗', botReplyTimes: eight, rand: () => 0.99 })).mode, 'must')
+  assert.equal(decideGroupReply(base({ text: '咕嘟 露馅你很自豪吗', botReplyTimes: eight, rand: () => 0.99 })).mode, 'must')
   assert.equal(decideGroupReply(base({ mentioned: true, fromOwner: true, botReplyTimes: eight })).mode, 'must')
   // 没被叫到、纯自己想说：照常刹车
   assert.match(decideGroupReply(base({ botReplyTimes: eight, rand: () => 0.99 })).reason, /歇一会儿/)

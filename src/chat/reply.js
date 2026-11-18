@@ -654,7 +654,13 @@ export function parseReply(text, options) {
   // 模型偶尔把换行写成 HTML `<br>`：当真正的换行处理；代码示例里的字面量保留。
   const cleaned = stripModelArtifacts(cleanOutboundText(forwarded, options))
   const code = codeRanges(cleaned)
-  const raw = cleaned.replace(/<br\s*\/?>/gi, (tag, offset) => insideCode(code, offset, offset + tag.length) ? tag : '\n').trim()
+  // 模型偶尔把气泡分隔符 ||| 少打成 | 或 ||：不构成分隔符会原样漏进正文（实测输出过「正发呆呢|你这儿热闹了?」）。
+  // 只转「紧贴文字」的 1~2 根竖线（两侧都是非空白非竖线字符）——中文聊天里这种写法只可能是想分条；
+  // 带空格的装饰性写法（A | B）和孤零零的竖线仍按字面保留（见 reply-separator.test.js）。
+  const raw = cleaned
+    .replace(/<br\s*\/?>/gi, (tag, offset) => insideCode(code, offset, offset + tag.length) ? tag : '\n')
+    .replace(/(?<=[^\s|])\|{1,2}(?=[^\s|])/g, (pipes, offset) => insideCode(code, offset, offset + pipes.length) ? pipes : '\n')
+    .trim()
   if (isSilence(raw)) return { silent: true, items: [] }
   // 工具显式指定语音：仍经过同一份清洗，但正文不再当作媒体/气泡指令解析。
   if (options?.voice === true) {

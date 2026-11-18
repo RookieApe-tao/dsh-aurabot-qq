@@ -34,7 +34,7 @@ test('可以只主动加入而不窗口接话；两个都关闭不影响明确�
   assert.equal(decide({ engagedEnabled: false, proactiveEnabled: true }).mode, 'interject')
   const off = { engagedEnabled: false, proactiveEnabled: false }
   assert.equal(decide(off).reply, false)
-  for (const direct of [{ mentioned: true }, { repliedToBot: true }, { text: '肥鱼来啦' }, { text: '人呢', lastIsBot: true, botReplyTimes: [now - 1000] }]) {
+  for (const direct of [{ mentioned: true }, { repliedToBot: true }, { text: '咕嘟来啦' }, { text: '人呢', lastIsBot: true, botReplyTimes: [now - 1000] }]) {
     assert.equal(decide(off, direct).mode, 'must')
   }
 })

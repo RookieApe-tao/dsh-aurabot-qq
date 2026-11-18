@@ -27,7 +27,7 @@ export default {
   platforms: ['*'],
   description: '她的心情：会随聊天起伏，影响表情 / 语音频率和回复快慢',
   tab: 'mood',
-  files: ['features/mood.js', 'features/mood-context.js'],
+  files: ['features/mood.js', 'features/mood-context.js', 'features/mood-emotions.js'],
   setup(api) {
     const mood = createMood({ getConfig: api.config, dsh: api.dsh, log: api.log })
     // 理由的相对时间每轮变化，和相关记忆一样放进本轮消息，避免上下文快照膨胀（#79）。
@@ -51,6 +51,12 @@ export default {
     })
     // 心情历史单独取：/state 只带摘要，避免面板轮询把最多 200 条历史一起传
     api.route('/mood/history', async () => ({ ok: true, history: mood.state().history || [] }))
+    // 心情项（情绪向量）单独取：面板「此刻的情绪」按需拉，不塞进 /state 轮询。
+    // 与 /mood/history 同一口径：/state 只给摘要（emotionsItems 已随 state 下发，这里是完整版）。
+    api.route('/mood/emotions', async () => {
+      const s = mood.state()
+      return { ok: true, items: s.emotionsItems, vector: s.emotions, at: s.emotionsAt, top: s.emotionTop }
+    })
     return mood
   },
 }

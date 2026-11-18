@@ -43,6 +43,11 @@
 
 - 路径：`api.dataDir('purpose', 'purpose-state.json')` → `~/.dsh/plugins-data/aurabot/purpose/purpose-state.json`
 - 结构照 surfcore 引擎（`createPurposeState`）：`version, day, countToday, lastRunAt, lastAttemptAt, lastSentAt, lastOutcome('sent'|'silent'|'failed'|'delivery-failed'|'interrupted'|'pending'), lastPurpose, lastText, nextFireAt, attempts, drives{9维0~1}, drivesAt, lastEmotion(+Text), lastGoalId, lastMaterialCount, lastCandidateCount, goals[], observations[], pending[], history[], lastSkip`
+- **心情向量已迁出（2026-11-17）**：`moods/moodsAt` 不再是引擎字段，跨轮心情归心情模块
+  （`persona-data/<人格>/mood.json` 的 `emotions/emotionsAt`）。遗留字段只为迁移：
+  第一次 `loadState` 读到非零旧向量时交给 `mood.importEmotions()`，随后清空并写 `moodsMigratedAt`，
+  之后不再读也不再写。`lastEmotion/lastEmotionText` 留在引擎里，语义是「上一轮主动搭话时的情绪」
+  （提示词强弱措辞、桌宠气泡辉光用它），不是跨轮心情。
 - 行为学习字段：`replyHours[24]`（主人私聊时刻直方图）与 `replyWeekday[7]`（星期分桶，
   两者共用 `replyHoursSeen` 记已计素材 id 防重复）——排程在间隔基础上向主人更常回话的小时轻推
   （最多 3h，样本 <5 不偏置）、向更常回话的日子轻推（≤7 天，样本 <7 不偏置）；
@@ -62,14 +67,20 @@
   中文需要词/英文 need 键直接叠加进九维驱动（每项 ±0.5 封顶，叠加在满足衰减之后）；
   「喜」折算成 moodDelta（±10）由接线层 `mood.nudge` 执行，叠加在情绪表之上；
   「欲/意」按本次目的的【需求】维度结算，写不出维度就丢弃，不瞎猜。
-- **mood 对接**：`sent` 后按情绪 nudge `api.use('mood').nudge(delta, '主动搭话：<目的前20字>')`——
+- **mood 对接（2026-11-17 改口径：只上报，不持有）**：`sent` 后接线层 `reportMood()` 做两件事——
+  ① 情绪向量：`api.use('mood').feel(<emotion>)`，把这一轮的情绪交给心情模块记账（衰减/抬升都在那边）；
+  ② 心情标量：`api.use('mood').nudge(delta, '主动搭话：<目的前20字>')`——
   `affectionate/excited +5、proud/amused +4、lonely -3、bored/worried/envious -2、content 0`；silent 不推。
+  心情模块关着时 `feel/nudge` 自己静默（与旧行为一致）。情绪键一律先经 `resolveEmotion()`
+  映射到用户配的心情项：用户在面板删掉的项不会产出，而是落到 valence/arousal 最接近的那一项。
 - **心情判定兼容**：投递走 `hub.runSystemTurn` + `hub.deliver(text, { own:true, userText:'【系统提醒，…】' })`，
   userText 带前缀所以 mood.judge 的 `origin='speak-up'` 判定照常生效。
 - top2 驱动（≥0.35）附在每轮消息末尾（和心情一样，不进系统提示词，免得驱动一变整段前缀缓存失效）：「你最近心里比较想要：玩、陪」。
 - **情绪画像**：每个情绪标签带 `valence`（-1~1）与 `arousal`（0~1）二维数值
-  （`emotionProfile()`），候选与面板摘要都会带；提示词的强弱措辞（强烈地/明显/隐约）跟 arousal 走，
-  桌宠端表情/语气强度可以直接吃这两个数。
+  （`emotionProfile(emotion, emotions)`），候选与面板摘要都会带；提示词的强弱措辞（强烈地/明显/隐约）跟 arousal 走，
+  桌宠端表情/语气强度可以直接吃这两个数。情绪字典不再写死在引擎里，而是读 `config.mood.emotions`
+  （心情页「心情项」可配，见 `src/features/mood-emotions.js`）；引擎里的 `EMOTION_LABELS/EMOTION_PROFILES`
+  只是出厂十项的快照，新代码一律传 emotions 参数。
 - **人格覆写**（`analyzePersona` 的 `overrides` + `applyPersonaOverrides`）：人格卡里写了
   「胆小/谨慎」→ riskScale ×1.25，「大胆/爱折腾」→ ×0.8；「话痨/话多」→ dailyMax +1
   （「高冷/少打扰」→ -1；dailyMax=0 不限时不动）；「黏人/怕孤独」→ connect 驱动地板 +0.1。

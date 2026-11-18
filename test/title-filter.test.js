@@ -66,9 +66,9 @@ test('拉取头衔：合并各群、按人数从多到少，拉不到的群单�
 })
 
 test('配置：默认开着但没勾群（等于不起作用）；群号去重去非法（和群白名单同一套规则）；头衔空了回到默认', () => {
-  assert.deepEqual(normalize({}).titleFilter, { enabled: true, groups: [], title: '大肥鱼' })
+  assert.deepEqual(normalize({}).titleFilter, { enabled: true, groups: [], title: '咕嘟' })
   const c = normalize({ titleFilter: { groups: ['123456', 123456, 'abc'], title: '  ' } }).titleFilter
   assert.deepEqual(c.groups, ['123456'])
-  assert.equal(c.title, '大肥鱼')
+  assert.equal(c.title, '咕嘟')
   assert.equal(normTitle('﻿机器人 '), '机器人')
 })

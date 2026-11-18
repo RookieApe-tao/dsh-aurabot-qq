@@ -244,7 +244,7 @@ test('群聊：没叫她不回；@她必回（群聊 preset，只有主人那一
 
 test('群聊：叫名字（唤醒词）必回', async () => {
   const n = sentTo('group', '555').length
-  mock.push(grp('555', '778', text('肥鱼 在吗')))
+  mock.push(grp('555', '778', text('咕嘟 在吗')))
   await until(() => sentTo('group', '555').length > n)
 })
 
@@ -483,7 +483,7 @@ test('群聊刹车：主动接话才歇着，群友 @ / 叫名字 / 追问都能
   // 等她的回复真的发出去（groupSaid 记上时间），「最近一条是不是她说的」才准
   let sends = sentTo('group', '559').length
   turns = fake.turns.length
-  mock.push(grp('559', '712', text('肥鱼 你刚才说啥')))
+  mock.push(grp('559', '712', text('咕嘟 你刚才说啥')))
   await until(() => fake.turns.length > turns, 5000)
   await until(() => sentTo('group', '559').length > sends, 5000)
   // 等这一轮的发送彻底安静下来：她要先说完，「最近一条是不是她说的」才稳定
@@ -1664,7 +1664,7 @@ test('群聊：同一段里群友发的图也能看到（限 5 分钟、最多 2
   for (let i = 0; i < 3; i++) mock.push(grp('555', String(810 + i), img(21 + i), '发图' + i))
   await sleep(800)
   let turns = fake.turns.length
-  mock.push(grp('555', '820', text('肥鱼 看看刚才的图')))
+  mock.push(grp('555', '820', text('咕嘟 看看刚才的图')))
   await until(() => fake.turns.length > turns)
   const t = fake.turns.at(-1)
   assert.equal(t.images, 2, '同一段里的群图最多带 2 张：' + t.userText)
@@ -1675,7 +1675,7 @@ test('群聊：同一段里群友发的图也能看到（限 5 分钟、最多 2
     mock.push(grp('555', '821', img(31), '发图4'))
     await sleep(800)
     turns = fake.turns.length
-    mock.push(grp('555', '822', text('肥鱼 这张是啥')))
+    mock.push(grp('555', '822', text('咕嘟 这张是啥')))
     await until(() => fake.turns.length > turns)
     const t2 = fake.turns.at(-1)
     assert.equal(t2.images, 0, '看不了图的模型不塞图片块')

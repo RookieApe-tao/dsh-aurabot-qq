@@ -2506,7 +2506,7 @@ export function apply(ctx) {
     if (!identity.owner()) return { ok: false, message: '还没配置主人身份' }
     const to = routeOwner() || primaryOwnerChatId()
     if (!to) return { ok: false, message: '当前联系不上主人' }
-    const r = await hub.sendText(to, '【Aurabot 自测】大肥鱼到此一游～')
+    const r = await hub.sendText(to, '【Aurabot 自测】咕嘟到此一游～') // 【本机私有改动（local/de-identify-fish）：自测文案跟本机人格名】
     return r ? { ok: true, message: '发给主人了，查看一下消息吧' } : { ok: false, message: '没发出去（看日志）' }
   })
 
@@ -2792,7 +2792,7 @@ export function apply(ctx) {
     const slot = String((await readBody(req)).slot || '')
     try {
       if (slot === 'tts') {
-        const file = fileOf(await local.call('tts', { text: '你好呀，我是大肥鱼，这是本地语音测试。' }))
+        const file = fileOf(await local.call('tts', { text: '你好呀，我是咕嘟，这是本地语音测试。' }))
         if (!file || !existsSync(file)) return { ok: false, message: '脚本没返回音频文件' }
         return { ok: true, message: `念好了：${file}` }
       }
