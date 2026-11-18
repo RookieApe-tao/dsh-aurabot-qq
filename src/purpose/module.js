@@ -74,7 +74,9 @@ export function purposeConfig(cfg = {}) {
       gapMinMs: clampInt(ext.minIntervalMinutes ?? su.minIntervalMinutes, 90, 5, 2880) * MINUTE,
       gapMaxMs: clampInt(ext.maxIntervalMinutes ?? su.maxIntervalMinutes, 240, 5, 2880) * MINUTE,
       initialDelayMinMs: clampInt(ext.initialDelayMinutes, 15, 1, 720) * MINUTE,
-      dailyMax: clampInt(ext.maxPerDay ?? su.maxPerDay, 3, 0, 20),
+      // 【本机私有改动（local/de-identify-fish，勿提 PR）】：dailyMax 上限从 20 放宽到 24（与引擎层
+      // normalizePurposeConfig 的 0~24 对齐）——面板填 30 会被 20 静默截断，hint 还写着「不封顶」。
+      dailyMax: clampInt(ext.maxPerDay ?? su.maxPerDay, 3, 0, 24),
       idleThresholdMs: clampInt(ext.idleMinutes ?? su.idleMinutes, 40, 0, 1440) * MINUTE,
       minMaterials: clampInt(ext.minMaterials, DEFAULT_PURPOSE_CONFIG.minMaterials, 0, 20),
       maxMaterials: clampInt(ext.maxMaterials, DEFAULT_PURPOSE_CONFIG.maxMaterials, 6, 80),

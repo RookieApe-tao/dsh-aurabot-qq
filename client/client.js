@@ -4188,12 +4188,14 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         // ===== 设置 tab：什么时候来找你 / 找谁 / 小闹钟与追问 / 引擎参数 =====
         ...(tab === '设置' ? [
           // 组一：什么时候来找你（全部行式：label 左、控件右）
+          // 【本机私有改动（local/de-identify-fish，勿提 PR）】：绑 ext.purpose.*（引擎首选读取点），
+          // 不再写 speakUp.* 旧键——迁移期双键里 speakUp 只是回落位，绑它会出现「面板设了不生效」的歧义。
           h(Card, { title: '什么时候来找你',
             desc: '闲下来多久才来找你、两次之间隔多久、每天上限，以及只在哪个时段打扰你。' },
-            h(Row, { label: '多久没聊才找你' }, f.num('speakUp.idleMinutes', { min: 5 }), h('span', { className: 'ab-muted' }, '分钟')),
-            h(Row, { label: '两次之间隔', hint: '在这个范围里随机' }, f.num('speakUp.minIntervalMinutes', { min: 5 }), h('span', { className: 'ab-muted' }, '到'), f.num('speakUp.maxIntervalMinutes', { min: 5 }), h('span', { className: 'ab-muted' }, '分钟')),
-            h(Row, { label: '每天最多', hint: '每个人单独算；留空就是 20，不封顶' }, f.num('speakUp.maxPerDay', { min: 0 }), h('span', { className: 'ab-muted' }, '次')),
-            h(Row, { label: 'ta醒着的时间', hint: '这段时间外不打扰你；终点填 24 表示醒到午夜（比如 7 到 24 = 早上 7 点到当天结束，0 点到 7 点不打扰）；起止相同 = 全天不打扰关闭；小闹钟按她定的时间触发，不受这里限制' }, f.num('speakUp.awakeFrom', { min: 0, max: 23 }), h('span', { className: 'ab-muted' }, '点到'), f.num('speakUp.awakeTo', { min: 1, max: 24 }), h('span', { className: 'ab-muted' }, '点')),
+            h(Row, { label: '多久没聊才找你' }, f.num('ext.purpose.idleMinutes', { min: 5 }), h('span', { className: 'ab-muted' }, '分钟')),
+            h(Row, { label: '两次之间隔', hint: '在这个范围里随机' }, f.num('ext.purpose.minIntervalMinutes', { min: 5 }), h('span', { className: 'ab-muted' }, '到'), f.num('ext.purpose.maxIntervalMinutes', { min: 5 }), h('span', { className: 'ab-muted' }, '分钟')),
+            h(Row, { label: '每天最多', hint: '每个人单独算；每人每天最多 24 次' }, f.num('ext.purpose.maxPerDay', { min: 0, max: 24 }), h('span', { className: 'ab-muted' }, '次')),
+            h(Row, { label: 'ta醒着的时间', hint: '这段时间外不打扰你；终点填 24 表示醒到午夜（比如 7 到 24 = 早上 7 点到当天结束，0 点到 7 点不打扰）；起止相同 = 全天不打扰关闭；小闹钟按她定的时间触发，不受这里限制' }, f.num('ext.purpose.awakeFrom', { min: 0, max: 23 }), h('span', { className: 'ab-muted' }, '点到'), f.num('ext.purpose.awakeTo', { min: 1, max: 24 }), h('span', { className: 'ab-muted' }, '点')),
           ),
           // 组二：找谁
           h(Card, { title: '找谁',
