@@ -716,8 +716,15 @@ export function createModules({ ctx, core, getConfig, setConfig, logger, version
     //  ② 旧式配置（gateway/snowluma 连接字段还在，且用户没手写过 platforms map——normalize 会
     //     合成 platforms.qq 且 enabled 镜像总开关，总开关关着不能把 QQ 平台判成「未启用」而丢掉
     //     内置模块）。用户明确手写了 platforms（qq 以外还有键）时以配置为准，全关就是全关。
+    //  ③【2026-11-18 止血】宿主直连 QQ（snowluma 子进程实际在跑、onebotState=connected）时，
+    //     platforms.qq.enabled=false 只说明「G1 网关不托管这个实例」（isExternalInstance 托管给
+    //     宿主直连，见 gateway/index.js idle.set(state:'connected')），不代表 QQ 平台不存在——
+    //     把它判成未启用会让模块作用域的 onebot.state 恒为 stopped，purpose/bili 的定时守卫
+    //     被静默跳过（状态文件不写、日志零记录，「到点不来找」）。真实网关状态优先于配置快照。
     const userWrotePlatforms = hasPlatMap && Object.keys(plats).some((k) => k !== 'qq')
-    if (!set.size && !userWrotePlatforms && (!core.gateway || cfg.gateway || cfg.snowluma?.httpUrl || cfg.snowluma?.wsUrl)) set.add('qq')
+    const hostDirectConnected = core.onebot?.state === 'connected' // 宿主直连路径真实连着
+    if (!set.size && hostDirectConnected) set.add('qq')
+    else if (!set.size && !userWrotePlatforms && (!core.gateway || cfg.gateway || cfg.snowluma?.httpUrl || cfg.snowluma?.wsUrl)) set.add('qq')
     return set
   }
   const qqEnabled = () => activePlatforms().has('qq')
